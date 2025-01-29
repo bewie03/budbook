@@ -100,17 +100,17 @@ async function requestPayment() {
 async function loadWallets() {
   return new Promise((resolve, reject) => {
     try {
+      // Load wallet index and slots from sync storage
       chrome.storage.sync.get(['wallet_index', 'unlockedSlots'], async (data) => {
         if (chrome.runtime.lastError) {
           reject(chrome.runtime.lastError);
           return;
         }
         
-        // Load wallet index
         const walletIndex = data.wallet_index || [];
         unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
 
-        // Load each wallet individually
+        // Load wallet metadata from sync storage
         const walletPromises = walletIndex.map(address => 
           new Promise((resolve) => {
             chrome.storage.sync.get(`wallet_${address}`, (result) => {
@@ -119,7 +119,27 @@ async function loadWallets() {
           })
         );
 
-        wallets = (await Promise.all(walletPromises)).filter(Boolean);
+        // Load assets from local storage
+        const assetPromises = walletIndex.map(address => 
+          new Promise((resolve) => {
+            chrome.storage.local.get(`assets_${address}`, (result) => {
+              resolve(result[`assets_${address}`]);
+            });
+          })
+        );
+
+        // Wait for all data to load
+        const [walletData, assetData] = await Promise.all([
+          Promise.all(walletPromises),
+          Promise.all(assetPromises)
+        ]);
+
+        // Combine wallet data with assets
+        wallets = walletData.map((wallet, index) => ({
+          ...wallet,
+          assets: assetData[index] || []
+        })).filter(Boolean);
+
         resolve();
       });
     } catch (error) {
@@ -133,41 +153,24 @@ async function saveWallets() {
     try {
       // Create a wallet index (just addresses)
       const walletIndex = wallets.map(w => w.address);
-      console.log('Saving wallet index:', walletIndex);
 
       // Prepare individual wallet saves
-      const savePromises = wallets.map(wallet => 
+      const syncPromises = wallets.map(wallet => 
         new Promise((resolve, reject) => {
-          // Clean up wallet data before saving
-          const cleanWallet = {
+          // Store minimal wallet data in sync storage
+          const syncData = {
             address: wallet.address,
             name: wallet.name,
             balance: wallet.balance,
             stake_address: wallet.stake_address,
             timestamp: wallet.timestamp,
-            walletType: wallet.walletType,
-            // Only store essential asset data
-            assets: wallet.assets ? wallet.assets.map(asset => ({
-              unit: asset.unit,
-              quantity: asset.quantity,
-              decimals: asset.decimals,
-              display_name: asset.display_name,
-              ticker: asset.ticker,
-              readable_amount: asset.readable_amount
-            })) : []
+            walletType: wallet.walletType
           };
 
-          console.log(`Saving wallet ${wallet.address}:`, {
-            dataSize: JSON.stringify(cleanWallet).length,
-            numAssets: cleanWallet.assets.length,
-            sampleAsset: cleanWallet.assets[0]
-          });
-
           chrome.storage.sync.set({ 
-            [`wallet_${wallet.address}`]: cleanWallet 
+            [`wallet_${wallet.address}`]: syncData 
           }, () => {
             if (chrome.runtime.lastError) {
-              console.error('Storage error for wallet:', wallet.address, chrome.runtime.lastError);
               reject(chrome.runtime.lastError);
               return;
             }
@@ -176,7 +179,22 @@ async function saveWallets() {
         })
       );
 
-      // Save the index and wait for all wallet saves
+      // Store assets in local storage
+      const localPromises = wallets.map(wallet => 
+        new Promise((resolve, reject) => {
+          chrome.storage.local.set({ 
+            [`assets_${wallet.address}`]: wallet.assets 
+          }, () => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+              return;
+            }
+            resolve();
+          });
+        })
+      );
+
+      // Save the index and wait for all saves
       Promise.all([
         new Promise((resolve, reject) => {
           chrome.storage.sync.set({ 
@@ -184,20 +202,97 @@ async function saveWallets() {
             unlockedSlots 
           }, () => {
             if (chrome.runtime.lastError) {
-              console.error('Storage error for index:', chrome.runtime.lastError);
               reject(chrome.runtime.lastError);
               return;
             }
             resolve();
           });
         }),
-        ...savePromises
+        ...syncPromises,
+        ...localPromises
       ]).then(() => resolve()).catch(reject);
     } catch (error) {
-      console.error('Save error:', error);
       reject(error);
     }
   });
+}
+
+async function addWallet() {
+  const addressInput = document.getElementById('addressInput');
+  const nameInput = document.getElementById('nameInput');
+  const walletTypeSelect = document.getElementById('walletType');
+  
+  const address = addressInput?.value?.trim();
+  const name = nameInput?.value?.trim();
+  const walletType = walletTypeSelect?.value;
+
+  try {
+    if (!address) {
+      throw new Error('Please enter a wallet address');
+    }
+    if (!name) {
+      throw new Error('Please enter a wallet name');
+    }
+    if (wallets.length >= unlockedSlots) {
+      throw new Error('No available slots. Please unlock more slots.');
+    }
+    if (wallets.some(w => w.address === address)) {
+      throw new Error('This wallet address is already in your address book');
+    }
+
+    showSuccess('Adding wallet...');
+    console.log('Fetching wallet data for:', address);
+    const walletData = await fetchWalletData(address);
+    console.log('Received wallet data:', {
+      hasBalance: !!walletData.balance,
+      numAssets: walletData.assets?.length
+    });
+    
+    // Store wallet data
+    const wallet = {
+      address,
+      name,
+      walletType,
+      balance: walletData.balance || '0',
+      stake_address: walletData.stake_address || '',
+      timestamp: Date.now(),
+      // Store all assets
+      assets: (walletData.assets || []).map(asset => ({
+        unit: asset.unit,
+        quantity: asset.quantity,
+        decimals: asset.decimals,
+        display_name: asset.display_name,
+        ticker: asset.ticker,
+        readable_amount: asset.readable_amount
+      }))
+    };
+
+    console.log('Processed wallet data:', {
+      dataSize: JSON.stringify(wallet).length,
+      numAssets: wallet.assets.length
+    });
+
+    // Add to wallets array
+    wallets.push(wallet);
+    
+    try {
+      await saveWallets();
+      
+      // Clear inputs
+      addressInput.value = '';
+      nameInput.value = '';
+      walletTypeSelect.value = 'None';
+      
+      showSuccess('Wallet added successfully!');
+    } catch (storageError) {
+      // Remove from array if save failed
+      wallets.pop();
+      throw new Error(`Failed to save wallet: ${storageError.message}`);
+    }
+  } catch (error) {
+    console.error('Failed to add wallet:', error);
+    showError(error.message || 'Failed to add wallet. Please try again.');
+  }
 }
 
 // UI Functions
@@ -249,86 +344,6 @@ function showSuccess(message) {
 
 function validateAddress(address) {
   return address && address.startsWith('addr1') && address.length >= 59;
-}
-
-async function addWallet() {
-  const addressInput = document.getElementById('addressInput');
-  const nameInput = document.getElementById('nameInput');
-  const walletTypeSelect = document.getElementById('walletType');
-  
-  const address = addressInput?.value?.trim();
-  const name = nameInput?.value?.trim();
-  const walletType = walletTypeSelect?.value;
-
-  try {
-    if (!address) {
-      throw new Error('Please enter a wallet address');
-    }
-    if (!name) {
-      throw new Error('Please enter a wallet name');
-    }
-    if (wallets.length >= unlockedSlots) {
-      throw new Error('No available slots. Please unlock more slots.');
-    }
-    if (wallets.some(w => w.address === address)) {
-      throw new Error('This wallet address is already in your address book');
-    }
-
-    showSuccess('Adding wallet...');
-    console.log('Fetching wallet data for:', address);
-    const walletData = await fetchWalletData(address);
-    console.log('Received wallet data:', {
-      hasBalance: !!walletData.balance,
-      numAssets: walletData.assets?.length
-    });
-    
-    // Store only essential wallet data
-    const wallet = {
-      address,
-      name,
-      walletType,
-      balance: walletData.balance || '0',
-      stake_address: walletData.stake_address || '',
-      timestamp: Date.now(),
-      // Take top 5 assets by value
-      assets: (walletData.assets || [])
-        .slice(0, 5) // Assets are already sorted by value from server
-        .map(asset => ({
-          unit: asset.unit,
-          quantity: asset.quantity,
-          decimals: asset.decimals,
-          display_name: asset.display_name,
-          ticker: asset.ticker,
-          readable_amount: asset.readable_amount
-        }))
-    };
-
-    console.log('Processed wallet data:', {
-      dataSize: JSON.stringify(wallet).length,
-      numAssets: wallet.assets.length
-    });
-
-    // Add to wallets array
-    wallets.push(wallet);
-    
-    try {
-      await saveWallets();
-      
-      // Clear inputs
-      addressInput.value = '';
-      nameInput.value = '';
-      walletTypeSelect.value = 'None';
-      
-      showSuccess('Wallet added successfully!');
-    } catch (storageError) {
-      // Remove from array if save failed
-      wallets.pop();
-      throw new Error(`Failed to save wallet: ${storageError.message}`);
-    }
-  } catch (error) {
-    console.error('Failed to add wallet:', error);
-    showError(error.message || 'Failed to add wallet. Please try again.');
-  }
 }
 
 function convertIpfsUrl(url) {
