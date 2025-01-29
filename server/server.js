@@ -20,6 +20,23 @@ app.use(cors({
 
 app.use(express.json());
 
+// Root route
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'Cardano Address Book API Server',
+    endpoints: {
+      '/api/wallet/:address': 'Get wallet information',
+      '/api/verify-payment/:address': 'Verify payment for slot unlock'
+    }
+  });
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
+
 // Middleware to verify origin
 // app.use((req, res, next) => {
 //   const origin = req.get('origin');
@@ -35,6 +52,11 @@ app.use(express.json());
 app.get('/api/wallet/:address', async (req, res) => {
   try {
     console.log('Fetching wallet data for:', req.params.address);
+    
+    if (!BLOCKFROST_API_KEY) {
+      throw new Error('BLOCKFROST_API_KEY not configured');
+    }
+
     const response = await fetch(`${BLOCKFROST_BASE_URL}/addresses/${req.params.address}`, {
       headers: {
         'project_id': BLOCKFROST_API_KEY
@@ -42,7 +64,8 @@ app.get('/api/wallet/:address', async (req, res) => {
     });
     
     if (!response.ok) {
-      throw new Error('Failed to fetch wallet data');
+      const error = await response.json().catch(() => ({ message: 'Unknown error' }));
+      throw new Error(error.message || `HTTP error! status: ${response.status}`);
     }
     
     const data = await response.json();
@@ -50,7 +73,10 @@ app.get('/api/wallet/:address', async (req, res) => {
     res.json(data);
   } catch (error) {
     console.error('Error fetching wallet data:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
@@ -58,7 +84,15 @@ app.get('/api/wallet/:address', async (req, res) => {
 app.get('/api/verify-payment/:address', async (req, res) => {
   try {
     console.log('Verifying payment from:', req.params.address);
-    // Get transactions for the payment address
+    
+    if (!BLOCKFROST_API_KEY) {
+      throw new Error('BLOCKFROST_API_KEY not configured');
+    }
+
+    if (!PAYMENT_ADDRESS) {
+      throw new Error('PAYMENT_ADDRESS not configured');
+    }
+
     const response = await fetch(`${BLOCKFROST_BASE_URL}/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`, {
       headers: {
         'project_id': BLOCKFROST_API_KEY
@@ -66,7 +100,8 @@ app.get('/api/verify-payment/:address', async (req, res) => {
     });
     
     if (!response.ok) {
-      throw new Error('Failed to fetch transaction data');
+      const error = await response.json().catch(() => ({ message: 'Unknown error' }));
+      throw new Error(error.message || `HTTP error! status: ${response.status}`);
     }
     
     const transactions = await response.json();
@@ -82,10 +117,27 @@ app.get('/api/verify-payment/:address', async (req, res) => {
     }
   } catch (error) {
     console.error('Error verifying payment:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ 
+    error: 'Internal server error',
+    message: err.message,
+    details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+});
+
+// Start server
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
+  console.log('Environment:', process.env.NODE_ENV || 'development');
+  console.log('Blockfrost API configured:', !!BLOCKFROST_API_KEY);
+  console.log('Payment address configured:', !!PAYMENT_ADDRESS);
 });
