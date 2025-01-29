@@ -356,3 +356,16 @@ button.delete:hover {
   color: #fff;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 }
+
+.error-container {
+  margin: 20px;
+  text-align: center;
+}
+
+.error-container .error {
+  margin-bottom: 15px;
+}
+
+.retry-button {
+  margin-top: 10px;
+}

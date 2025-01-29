@@ -349,9 +349,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (root) {
       root.innerHTML = `
         <div class="container">
-          <div class="error" style="margin: 20px;">
-            Failed to initialize: ${error.message}
-            <button class="primary" style="margin-top: 10px;" onclick="location.reload()">Retry</button>
+          <div class="error-container">
+            <div class="error visible">
+              Failed to initialize: ${error.message}
+            </div>
+            <button class="primary retry-button" onclick="location.reload()">Retry</button>
           </div>
         </div>
       `;
