@@ -20,6 +20,7 @@ const WALLET_LOGOS = {
 // Global state
 let wallets = [];
 let unlockedSlots = MAX_FREE_SLOTS;
+let currentPaymentId = null;
 
 // API Functions
 async function fetchWalletData(address) {
@@ -48,9 +49,9 @@ async function fetchWalletData(address) {
   }
 }
 
-async function verifyPayment(address) {
+async function verifyPayment(paymentId) {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/verify-payment/${address}`, {
+    const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
@@ -70,11 +71,34 @@ async function verifyPayment(address) {
   }
 }
 
+async function requestPayment() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/request-payment`, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Origin': chrome.runtime.getURL('')
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to generate payment request');
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Error requesting payment:', error);
+    throw error;
+  }
+}
+
 // Storage Functions
 async function loadWallets() {
   return new Promise((resolve, reject) => {
     try {
-      chrome.storage.local.get(['wallets', 'unlockedSlots'], (data) => {
+      chrome.storage.sync.get(['wallets', 'unlockedSlots'], (data) => {
         if (chrome.runtime.lastError) {
           reject(chrome.runtime.lastError);
           return;
@@ -113,7 +137,7 @@ async function saveWallets() {
         })) : []
       }));
 
-      chrome.storage.local.set({ 
+      chrome.storage.sync.set({ 
         wallets: cleanWallets, 
         unlockedSlots 
       }, () => {
@@ -352,34 +376,58 @@ async function refreshWallet(index) {
 }
 
 function updateUI() {
-  const availableSlotsElement = document.getElementById('availableSlots');
-  const walletListElement = document.getElementById('walletList');
-  const unlockButtonElement = document.getElementById('unlockButton');
-  const walletTypeSelect = document.getElementById('walletType');
-  
-  if (!availableSlotsElement || !walletListElement) {
-    console.error('Required DOM elements not found');
-    return;
+  const slotsDisplay = document.getElementById('availableSlots');
+  if (slotsDisplay) {
+    slotsDisplay.textContent = `${wallets.length} / ${unlockedSlots}`;
   }
 
-  // Update available slots
-  availableSlotsElement.textContent = `${wallets.length} / ${unlockedSlots}`;
-  
-  // Update wallet list
-  walletListElement.innerHTML = renderWallets();
-  
-  // Update wallet type selector
+  const addWalletBtn = document.getElementById('addWallet');
+  if (addWalletBtn) {
+    addWalletBtn.disabled = wallets.length >= unlockedSlots;
+  }
+
+  const walletTypeSelect = document.getElementById('walletType');
   if (walletTypeSelect) {
     walletTypeSelect.innerHTML = renderWalletSelector();
   }
-  
-  // Update unlock button visibility
-  if (unlockButtonElement) {
-    unlockButtonElement.classList.toggle('hidden', unlockedSlots >= MAX_TOTAL_SLOTS);
-  }
+}
 
-  // Setup event listeners for the newly rendered elements
-  setupEventListeners();
+async function checkPaymentStatus() {
+  try {
+    if (!currentPaymentId) {
+      showError('No active payment request found. Please try again.');
+      return;
+    }
+
+    const result = await verifyPayment(currentPaymentId);
+    
+    if (result.verified) {
+      // Update unlocked slots
+      unlockedSlots += SLOTS_PER_PAYMENT;
+      
+      // Save to storage
+      await chrome.storage.sync.set({ unlockedSlots });
+      
+      // Update UI
+      updateUI();
+      
+      showSuccess(`Payment verified! You now have ${SLOTS_PER_PAYMENT} more wallet slots available.`);
+      
+      // Close payment instructions if open
+      const instructions = document.querySelector('.modal');
+      if (instructions) {
+        instructions.remove();
+      }
+
+      // Reset payment ID
+      currentPaymentId = null;
+    } else {
+      showError('Payment not yet verified. Please make sure you sent the exact amount and try verifying again.');
+    }
+  } catch (error) {
+    console.error('Error checking payment:', error);
+    showError('Failed to verify payment. Please try again.');
+  }
 }
 
 function setupEventListeners() {
@@ -388,10 +436,53 @@ function setupEventListeners() {
     addWalletBtn.addEventListener('click', addWallet);
   }
 
-  const viewAllBtn = document.getElementById('viewAll');
-  if (viewAllBtn) {
-    viewAllBtn.addEventListener('click', () => {
+  const openFullviewBtn = document.getElementById('openFullview');
+  if (openFullviewBtn) {
+    openFullviewBtn.addEventListener('click', () => {
       chrome.tabs.create({ url: chrome.runtime.getURL('fullview.html') });
+    });
+  }
+
+  const unlockButton = document.getElementById('unlockButton');
+  if (unlockButton) {
+    unlockButton.addEventListener('click', async () => {
+      try {
+        // Request new payment with random amount
+        const paymentRequest = await requestPayment();
+        currentPaymentId = paymentRequest.paymentId;
+
+        const instructions = document.createElement('div');
+        instructions.innerHTML = `
+          <div class="modal">
+            <h3>Unlock More Slots</h3>
+            <p class="important">Send EXACTLY ${paymentRequest.amount} ₳</p>
+            <p class="warning">The amount must be exact for verification!</p>
+            <code>${paymentRequest.address}</code>
+            <p>You will receive ${SLOTS_PER_PAYMENT} additional wallet slots after payment confirmation.</p>
+            <button class="verify-payment">Check Payment Status</button>
+            <button class="close">Close</button>
+          </div>
+        `;
+        document.body.appendChild(instructions);
+
+        // Add event listeners for the new buttons
+        const verifyBtn = instructions.querySelector('.verify-payment');
+        const closeBtn = instructions.querySelector('.close');
+        
+        if (verifyBtn) {
+          verifyBtn.addEventListener('click', checkPaymentStatus);
+        }
+        
+        if (closeBtn) {
+          closeBtn.addEventListener('click', () => {
+            instructions.remove();
+            currentPaymentId = null; // Reset payment ID when modal is closed
+          });
+        }
+      } catch (error) {
+        console.error('Error setting up payment:', error);
+        showError('Failed to generate payment request. Please try again.');
+      }
     });
   }
 
@@ -410,74 +501,25 @@ function setupEventListeners() {
       button.addEventListener('click', () => refreshWallet(parseInt(index)));
     }
   });
-
-  const unlockButton = document.getElementById('unlockButton');
-  if (unlockButton) {
-    unlockButton.addEventListener('click', () => {
-      const paymentAddress = 'addr1qxdwefvjc4yw7sdtytmwx0lpp8sqsjdw5cl7kjcfz0zscdhl7mgsy7u7fva533d0uv7vctc8lh76hv5wgh7ascfwvmnqmsd04y';
-      const instructions = document.createElement('div');
-      instructions.className = 'payment-instructions';
-      instructions.innerHTML = `
-        <div class="modal">
-          <h3>Unlock More Slots</h3>
-          <p>Send 2 ₳ to:</p>
-          <code>${paymentAddress}</code>
-          <p>You will receive 6 additional wallet slots after payment confirmation.</p>
-          <button class="close">Close</button>
-        </div>
-      `;
-      
-      const root = document.getElementById('root');
-      if (root) {
-        root.appendChild(instructions);
-        const closeBtn = instructions.querySelector('.close');
-        if (closeBtn) {
-          closeBtn.addEventListener('click', () => instructions.remove());
-        }
-      }
-    });
-  }
 }
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {
+    // Reset storage to ensure we're using the new default slots
+    const data = await chrome.storage.sync.get(['wallets', 'unlockedSlots']);
+    if (!data.unlockedSlots || data.unlockedSlots === 5) {
+      await chrome.storage.sync.set({
+        wallets: data.wallets || [],
+        unlockedSlots: MAX_FREE_SLOTS
+      });
+    }
+    
     await loadWallets();
-    
-    // Initialize wallet type selector
-    const walletTypeSelect = document.getElementById('walletType');
-    if (walletTypeSelect) {
-      walletTypeSelect.innerHTML = renderWalletSelector();
-    }
-    
-    // Update slots count
-    const availableSlotsElement = document.getElementById('availableSlots');
-    if (availableSlotsElement) {
-      availableSlotsElement.textContent = `${wallets.length} / ${unlockedSlots}`;
-    }
-    
-    // Add event listeners
-    document.getElementById('openFullview')?.addEventListener('click', () => {
-      chrome.tabs.create({ url: 'fullview.html' });
-    });
-    
-    document.getElementById('quickAdd')?.addEventListener('click', () => {
-      const form = document.getElementById('quickAddForm');
-      if (form) {
-        form.classList.toggle('hidden');
-      }
-    });
-    
-    document.getElementById('addWallet')?.addEventListener('click', async () => {
-      await addWallet();
-      // Hide form after adding
-      const form = document.getElementById('quickAddForm');
-      if (form) {
-        form.classList.add('hidden');
-      }
-    });
+    updateUI();
+    setupEventListeners();
   } catch (error) {
-    console.error('Failed to initialize:', error);
-    showError('Failed to initialize: ' + error.message);
+    console.error('Error initializing popup:', error);
+    showError('Failed to initialize. Please try again.');
   }
 });

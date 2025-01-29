@@ -6,6 +6,7 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const NodeCache = require('node-cache');
 const fs = require('fs').promises;
+const crypto = require('crypto');
 
 dotenv.config();
 
@@ -19,6 +20,8 @@ const BLOCKFROST_API_KEY = process.env.BLOCKFROST_API_KEY;
 const BLOCKFROST_BASE_URL = 'https://cardano-mainnet.blockfrost.io/api/v0';
 const PAYMENT_ADDRESS = process.env.PAYMENT_ADDRESS;
 const REQUIRED_PAYMENT = 2000000; // 2 ADA in lovelace
+const BLOCKFROST_WEBHOOK_ID = process.env.BLOCKFROST_WEBHOOK_ID;
+const BLOCKFROST_WEBHOOK_TOKEN = process.env.BLOCKFROST_WEBHOOK_TOKEN;
 
 // Initialize caches
 const walletCache = new NodeCache({ stdTTL: 300 }); // 5 minutes for wallet data
@@ -258,50 +261,152 @@ app.get('/api/wallet/:address', async (req, res) => {
   }
 });
 
-// Verify payment for slot unlock
-app.get('/api/verify-payment/:address', async (req, res) => {
+// Payment verification
+const MIN_PAYMENT = 2;
+const MAX_PAYMENT = 3;
+const pendingPayments = new Map(); // Store pending payments with their exact amounts
+
+app.post('/api/request-payment', async (req, res) => {
   try {
-    const userAddress = req.params.address;
-    console.log('Verifying payment from:', userAddress);
+    // Generate random amount between MIN_PAYMENT and MAX_PAYMENT
+    const exactAmount = (Math.random() * (MAX_PAYMENT - MIN_PAYMENT) + MIN_PAYMENT).toFixed(2);
+    const paymentId = crypto.randomBytes(16).toString('hex');
     
-    if (!PAYMENT_ADDRESS) {
-      throw new Error('PAYMENT_ADDRESS not configured');
+    // Store the payment request with timestamp
+    pendingPayments.set(paymentId, {
+      amount: exactAmount,
+      timestamp: Date.now(),
+      verified: false
+    });
+
+    // Clean up old pending payments (older than 1 hour)
+    const oneHourAgo = Date.now() - (60 * 60 * 1000);
+    for (const [id, payment] of pendingPayments) {
+      if (payment.timestamp < oneHourAgo) {
+        pendingPayments.delete(id);
+      }
     }
 
-    // Get transactions for the payment address
-    const transactions = await fetchBlockfrost(
-      `/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`,
-      'verify payment'
-    );
-    console.log('Transaction data:', transactions);
-    
-    // Find transaction from the user's address within last 24 hours
-    const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-    const recentTx = transactions.find(tx => {
-      const txTime = new Date(tx.block_time * 1000).getTime();
-      return tx.from === userAddress && 
-             tx.amount === REQUIRED_PAYMENT &&
-             txTime > oneDayAgo;
+    res.json({
+      paymentId,
+      amount: exactAmount,
+      address: PAYMENT_ADDRESS
     });
-    
-    if (recentTx) {
-      res.json({ 
-        verified: true,
-        txHash: recentTx.tx_hash,
-        amount: recentTx.amount
-      });
-    } else {
-      res.json({ 
-        verified: false,
-        reason: 'No matching payment found in the last 24 hours'
-      });
+  } catch (error) {
+    console.error('Error generating payment request:', error);
+    res.status(500).json({ error: 'Failed to generate payment request' });
+  }
+});
+
+app.get('/api/verify-payment/:paymentId', async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const payment = pendingPayments.get(paymentId);
+
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment request not found or expired' });
     }
+
+    if (payment.verified) {
+      return res.json({ verified: true });
+    }
+
+    // Get recent transactions
+    const response = await fetch(`${BLOCKFROST_BASE_URL}/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`, {
+      headers: { 'project_id': BLOCKFROST_API_KEY }
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch transactions');
+    }
+
+    const transactions = await response.json();
+
+    // Check recent transactions for the exact amount
+    for (const tx of transactions) {
+      const txResponse = await fetch(`${BLOCKFROST_BASE_URL}/txs/${tx.tx_hash}/utxos`, {
+        headers: { 'project_id': BLOCKFROST_API_KEY }
+      });
+
+      if (!txResponse.ok) continue;
+
+      const txData = await txResponse.json();
+      
+      // Calculate total ADA sent to our address in this transaction
+      const amountReceived = txData.outputs
+        .filter(output => output.address === PAYMENT_ADDRESS)
+        .reduce((sum, output) => {
+          return sum + (parseInt(output.amount[0].quantity) / 1000000); // Convert lovelace to ADA
+        }, 0);
+
+      // Check if amount matches exactly
+      if (amountReceived === parseFloat(payment.amount)) {
+        payment.verified = true;
+        pendingPayments.set(paymentId, payment);
+        console.log('Payment verified for ID:', paymentId);
+        break;
+      }
+    }
+
+    res.json({ verified: false });
   } catch (error) {
     console.error('Error verifying payment:', error);
-    res.status(500).json({ 
-      error: error.message,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+    res.status(500).json({ error: 'Failed to verify payment' });
+  }
+});
+
+// Webhook endpoint for payment verification
+app.post('/webhook', express.json(), async (req, res) => {
+  try {
+    // Verify webhook authenticity
+    const webhookId = req.headers['blockfrost-webhook-id'];
+    const signature = req.headers['blockfrost-signature'];
+    
+    if (!webhookId || webhookId !== BLOCKFROST_WEBHOOK_ID) {
+      console.error('Invalid webhook ID');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (!signature || signature !== BLOCKFROST_WEBHOOK_TOKEN) {
+      console.error('Invalid signature');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const payload = req.body;
+    console.log('Received webhook payload:', payload);
+
+    // Extract transaction details
+    const tx = payload.payload;
+    if (!tx || !tx.outputs) {
+      console.error('Invalid webhook payload');
+      return res.status(400).json({ error: 'Invalid payload' });
+    }
+
+    // Find the output to our payment address
+    const paymentOutput = tx.outputs.find(output => output.address === PAYMENT_ADDRESS);
+    if (!paymentOutput) {
+      console.error('No payment to verification address found');
+      return res.status(400).json({ error: 'No relevant payment found' });
+    }
+
+    // Calculate amount in ADA
+    const amountAda = parseInt(paymentOutput.amount[0].quantity) / 1000000;
+    console.log('Payment received:', amountAda, 'ADA');
+
+    // Check pending payments for matching amount
+    for (const [paymentId, payment] of pendingPayments) {
+      if (Math.abs(parseFloat(payment.amount) - amountAda) < 0.000001) { // Account for floating point precision
+        payment.verified = true;
+        pendingPayments.set(paymentId, payment);
+        console.log('Payment verified for ID:', paymentId);
+        break;
+      }
+    }
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Error processing webhook:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -24,7 +24,7 @@ const ASSET_CACHE_KEY = 'walletpup_asset_cache';
 
 async function getAssetCache() {
   try {
-    const cache = await chrome.storage.local.get(ASSET_CACHE_KEY);
+    const cache = await chrome.storage.sync.get(ASSET_CACHE_KEY);
     return cache[ASSET_CACHE_KEY] || {};
   } catch (error) {
     console.error('Error reading asset cache:', error);
@@ -39,7 +39,7 @@ async function setAssetCache(assetId, data) {
       data,
       timestamp: Date.now() // Keep timestamp for debugging purposes
     };
-    await chrome.storage.local.set({ [ASSET_CACHE_KEY]: cache });
+    await chrome.storage.sync.set({ [ASSET_CACHE_KEY]: cache });
   } catch (error) {
     console.error('Error writing to asset cache:', error);
   }
@@ -61,62 +61,23 @@ async function getAssetFromCache(assetId) {
 }
 
 async function loadWallets() {
-  return new Promise((resolve, reject) => {
-    try {
-      chrome.storage.local.get(['wallets', 'unlockedSlots'], (data) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
-          return;
-        }
-        wallets = data.wallets || [];
-        unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
-        resolve();
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
+  try {
+    const data = await chrome.storage.sync.get(['wallets', 'unlockedSlots']);
+    wallets = data.wallets || [];
+    unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
+  } catch (error) {
+    console.error('Error loading wallets:', error);
+    showError('Failed to load wallets');
+  }
 }
 
 async function saveWallets() {
-  return new Promise((resolve, reject) => {
-    try {
-      // Clean up wallet data before saving
-      const cleanWallets = wallets.map(wallet => ({
-        address: wallet.address,
-        name: wallet.name,
-        balance: wallet.balance,
-        stake_address: wallet.stake_address,
-        timestamp: wallet.timestamp,
-        walletType: wallet.walletType,
-        logo: wallet.logo,
-        assets: wallet.assets ? wallet.assets.map(asset => ({
-          unit: asset.unit,
-          quantity: asset.quantity,
-          display_name: asset.display_name,
-          asset_name: asset.asset_name,
-          metadata: asset.metadata,
-          onchain_metadata: asset.onchain_metadata,
-          decimals: asset.metadata?.decimals || asset.onchain_metadata?.decimals || 0,
-          fingerprint: asset.fingerprint,
-          policy_id: asset.policy_id
-        })) : []
-      }));
-
-      chrome.storage.local.set({
-        wallets: cleanWallets,
-        unlockedSlots
-      }, () => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
-          return;
-        }
-        resolve();
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
+  try {
+    await chrome.storage.sync.set({ wallets, unlockedSlots });
+  } catch (error) {
+    console.error('Error saving wallets:', error);
+    showError('Failed to save wallet changes');
+  }
 }
 
 function showError(message) {
@@ -630,7 +591,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Listen for storage changes to auto-refresh
     chrome.storage.onChanged.addListener(async (changes, namespace) => {
-      if (namespace === 'local' && changes.wallets) {
+      if (namespace === 'sync' && changes.wallets) {
         console.log('Wallet data changed, refreshing...');
         await loadWallets();
         updateUI();
