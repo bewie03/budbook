@@ -78,16 +78,18 @@ process.on('SIGINT', async () => {
 });
 
 // Redis client setup
-const redisUrl = process.env.REDIS_URL || process.env.REDISCLOUD_URL;
+const redisUrl = (process.env.REDIS_URL || process.env.REDISCLOUD_URL || '').replace('rediss://', 'redis://');
+console.log('Connecting to Redis URL (without sensitive info):', redisUrl.replace(/\/\/.*@/, '//<credentials>@'));
+
 const redis = new Redis(redisUrl, {
-  tls: {
-    rejectUnauthorized: false
-  },
   retryStrategy(times) {
     const delay = Math.min(times * 50, 2000);
     return delay;
   },
-  maxRetriesPerRequest: 3
+  maxRetriesPerRequest: 3,
+  enableOfflineQueue: true,
+  connectTimeout: 10000,
+  disconnectTimeout: 2000
 });
 
 redis.on('error', err => {
@@ -97,6 +99,14 @@ redis.on('error', err => {
 
 redis.on('connect', () => {
   console.log('Connected to Redis Cloud');
+});
+
+redis.on('ready', () => {
+  console.log('Redis client is ready');
+});
+
+redis.on('reconnecting', () => {
+  console.log('Redis client is reconnecting...');
 });
 
 // Test Redis connection
