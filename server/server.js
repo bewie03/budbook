@@ -146,18 +146,50 @@ async function getAssetInfo(assetId) {
         // Fetch from Blockfrost if not in cache
         const assetData = await fetchBlockfrost(`/assets/${assetId}`, 'fetch asset data');
         
+        // Helper to check if string might be base64 or too long
+        const isValidString = (str) => {
+            if (!str || typeof str !== 'string') return false;
+            if (str.length > 1000) return false; // Skip very long strings
+            if (str.match(/^[A-Za-z0-9+/=]{50,}$/)) return false; // Skip likely base64
+            return true;
+        };
+
         // Extract the important fields
         const metadata = {
             unit: assetId,
-            name: assetData.onchain_metadata?.name || assetData.metadata?.name || assetData.asset_name,
-            decimals: assetData.metadata?.decimals || assetData.onchain_metadata?.decimals || 0,
-            ticker: assetData.metadata?.ticker,
-            image: assetData.onchain_metadata?.image || assetData.metadata?.logo
+            name: '',
+            decimals: 0,
+            ticker: '',
+            image: ''
         };
 
-        // Convert IPFS image URL if needed
-        if (metadata.image && metadata.image.startsWith('ipfs://')) {
-            metadata.image = `https://ipfs.io/ipfs/${metadata.image.slice(7)}`;
+        // Get name from various sources, ensuring it's not too long or base64
+        const possibleNames = [
+            assetData.onchain_metadata?.name,
+            assetData.metadata?.name,
+            assetData.asset_name
+        ].filter(isValidString);
+        metadata.name = possibleNames[0] || assetId.slice(-8); // Use last 8 chars of asset ID if no valid name
+
+        // Get decimals
+        metadata.decimals = parseInt(assetData.metadata?.decimals || assetData.onchain_metadata?.decimals) || 0;
+        if (isNaN(metadata.decimals) || metadata.decimals > 18) metadata.decimals = 0;
+
+        // Get ticker if it's a reasonable length
+        const ticker = assetData.metadata?.ticker;
+        if (ticker && typeof ticker === 'string' && ticker.length <= 10) {
+            metadata.ticker = ticker;
+        }
+
+        // Get image URL, ensuring it's a valid web URL
+        const image = assetData.onchain_metadata?.image || assetData.metadata?.logo;
+        if (image && typeof image === 'string') {
+            if (image.startsWith('ipfs://')) {
+                metadata.image = `https://ipfs.io/ipfs/${image.slice(7)}`;
+            } else if (image.startsWith('https://') || image.startsWith('http://')) {
+                // Only accept web URLs, not base64 or other formats
+                metadata.image = image;
+            }
         }
 
         // Cache it (assets are immutable)
@@ -290,22 +322,28 @@ app.get('/api/wallet/:address', async (req, res) => {
             const assetInfo = await getAssetInfo(token.unit);
             if (!assetInfo) continue;
 
-            // Calculate readable amount based on decimals
-            const quantity = BigInt(token.quantity);
-            const decimals = assetInfo.decimals || 0;
-            const divisor = BigInt(10 ** decimals);
-            const wholePart = (quantity / divisor).toString();
-            const decimalPart = decimals > 0 ? (quantity % divisor).toString().padStart(decimals, '0') : '';
+            try {
+                // Calculate readable amount based on decimals
+                const quantity = BigInt(token.quantity);
+                const decimals = assetInfo.decimals || 0;
+                const divisor = BigInt(10 ** decimals);
+                const wholePart = (quantity / divisor).toString();
+                const decimalPart = decimals > 0 ? (quantity % divisor).toString().padStart(decimals, '0') : '';
 
-            assets.push({
-                unit: token.unit,
-                quantity: token.quantity,
-                name: assetInfo.name,
-                decimals: decimals,
-                ticker: assetInfo.ticker,
-                image: assetInfo.image,
-                readable_amount: decimals > 0 ? `${wholePart}.${decimalPart}` : wholePart
-            });
+                assets.push({
+                    unit: token.unit,
+                    quantity: token.quantity,
+                    name: assetInfo.name,
+                    decimals: decimals,
+                    ticker: assetInfo.ticker,
+                    image: assetInfo.image,
+                    readable_amount: decimals > 0 ? `${wholePart}.${decimalPart}` : wholePart
+                });
+            } catch (error) {
+                console.error(`Error processing amount for asset ${token.unit}:`, error);
+                // Skip this asset if there's an error processing its amount
+                continue;
+            }
         }
 
         // 4. Prepare and cache response
@@ -313,7 +351,13 @@ app.get('/api/wallet/:address', async (req, res) => {
             address,
             stake_address: walletData.stake_address,
             balance: `${adaWholePart}.${adaDecimalPart}`,
-            assets: assets.sort((a, b) => BigInt(b.quantity) - BigInt(a.quantity))
+            assets: assets.sort((a, b) => {
+                try {
+                    return BigInt(b.quantity) - BigInt(a.quantity);
+                } catch (error) {
+                    return 0; // If comparison fails, don't change order
+                }
+            })
         };
 
         await redis.set(`wallet:${address}`, JSON.stringify(response), 'EX', 300); // Cache for 5 minutes

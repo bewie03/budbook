@@ -242,7 +242,7 @@ function isNFT(asset) {
   }
 
   // Rule 2: Check if it has an image
-  if (asset.image_url) {
+  if (asset.image) {
     return true;
   }
 
@@ -445,13 +445,13 @@ function renderAssetsList(walletIndex, type = 'tokens') {
 
   return assets.map(asset => `
     <div class="asset-item">
-      ${asset.image_url ? `
+      ${asset.image ? `
         <div class="asset-image">
-          <img src="${asset.image_url}" alt="${asset.display_name}" onerror="this.style.display='none'">
+          <img src="${asset.image}" alt="${asset.name}" onerror="this.style.display='none'">
         </div>
       ` : ''}
       <div class="asset-info">
-        <h4>${asset.display_name}</h4>
+        <h4>${asset.name}</h4>
         <p class="asset-amount">${asset.readable_amount} ${asset.ticker || ''}</p>
         ${!isNFTList ? `<p class="asset-policy">Policy: ${asset.unit.substring(0, 56)}</p>` : ''}
       </div>

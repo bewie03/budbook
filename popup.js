@@ -386,34 +386,25 @@ function renderWallets() {
 
   return wallets.map((wallet, index) => `
     <div class="wallet-item">
-      <div class="wallet-actions">
-        <button class="refresh-btn" data-index="${index}" title="Refresh Balance">↻</button>
-        <button class="delete delete-btn" data-index="${index}">×</button>
-      </div>
       <div class="wallet-header">
-        ${wallet.walletType !== 'None' && WALLET_LOGOS[wallet.walletType] ? 
-          `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-logo">` : 
-          ''}
         <h3>${wallet.name}</h3>
       </div>
       <p class="address">Address: ${wallet.address}</p>
-      <p class="balance">Balance: ${formatBalance(wallet.balance)}</p>
+      <p class="balance">Balance: ${wallet.balance} ₳</p>
       ${wallet.stake_address ? 
         `<p class="stake">Stake Address: ${wallet.stake_address}</p>` : 
         ''}
-      ${wallet.assets && wallet.assets.length > 0 ? `
-        <div class="assets">
-          <p>Top Assets:</p>
-          <ul>
-            ${wallet.assets.map(asset => `
-              <li>
-                ${asset.display_name}: ${asset.readable_amount}
-                ${asset.ticker ? `(${asset.ticker})` : ''}
-              </li>
-            `).join('')}
-          </ul>
-        </div>
-      ` : ''}
+      ${wallet.assets?.length ? 
+        `<p class="assets-count">Assets: ${wallet.assets.length}</p>` : 
+        ''}
+      <div class="wallet-actions">
+        <button class="refresh-btn" data-index="${index}">
+          <i class="fas fa-sync-alt"></i>
+        </button>
+        <button class="delete-btn" data-index="${index}">
+          <i class="fas fa-trash"></i>
+        </button>
+      </div>
     </div>
   `).join('');
 }
