@@ -5,9 +5,22 @@ const MAX_TOTAL_SLOTS = 100;
 const ADA_PAYMENT_AMOUNT = 10;
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 
+// Available wallet logos
+const WALLET_LOGOS = {
+  'Nami': 'icons/Nami.png',
+  'Eternal': 'icons/Eternal.png',
+  'Lace': 'icons/lace.png',
+  'Gero': 'icons/gero.png',
+  'Vesper': 'icons/Vesper.png',
+  'AdaLite': 'icons/Adalite.png',
+  'Daedalus': 'icons/daedalus.png',
+  'Custom': 'custom'
+};
+
 // Global state
 let wallets = [];
 let unlockedSlots = MAX_FREE_SLOTS;
+let customLogoData = null;
 
 // API Functions
 async function fetchWalletData(address) {
@@ -122,16 +135,28 @@ function validateAddress(address) {
   return address && address.startsWith('addr1') && address.length >= 59;
 }
 
+async function handleCustomLogo(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 async function addWallet() {
   try {
     const addressInput = document.querySelector('#walletAddress');
     const nameInput = document.querySelector('#walletName');
-    if (!addressInput || !nameInput) {
+    const walletSelect = document.querySelector('#walletType');
+    
+    if (!addressInput || !nameInput || !walletSelect) {
       throw new Error('UI elements not found');
     }
 
     const address = addressInput.value.trim();
     const name = nameInput.value.trim();
+    const selectedWallet = walletSelect.value;
 
     if (!validateAddress(address)) {
       showError('Invalid Cardano address');
@@ -153,20 +178,31 @@ async function addWallet() {
       return;
     }
 
-    console.log('Adding wallet:', { name, address });
+    console.log('Adding wallet:', { name, address, selectedWallet });
     const walletData = await fetchWalletData(address);
+
+    // Handle custom logo upload
+    let logoPath = WALLET_LOGOS[selectedWallet];
+    if (selectedWallet === 'Custom' && customLogoData) {
+      logoPath = customLogoData;
+    }
+
     wallets.push({
       address,
       name,
       balance: walletData.balance || 0,
       stake_address: walletData.stake_address,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      walletType: selectedWallet,
+      logo: logoPath
     });
 
     await saveWallets();
     updateUI();
     addressInput.value = '';
     nameInput.value = '';
+    walletSelect.value = 'Nami'; // Reset to default
+    customLogoData = null;
     showSuccess('Wallet added successfully!');
   } catch (error) {
     showError(error.message || 'Failed to add wallet');
@@ -181,7 +217,10 @@ function renderWallets() {
   return wallets.map((wallet, index) => `
     <div class="wallet-item">
       <button class="delete delete-btn" data-index="${index}">×</button>
-      <h3>${wallet.name}</h3>
+      <div class="wallet-header">
+        <img src="${wallet.logo}" alt="${wallet.walletType}" class="wallet-logo">
+        <h3>${wallet.name}</h3>
+      </div>
       <p class="address">Address: ${wallet.address.substring(0, 20)}...</p>
       <p class="balance">Balance: ${(wallet.balance / 1000000).toFixed(2)} ₳</p>
       ${wallet.stake_address ? 
@@ -190,6 +229,16 @@ function renderWallets() {
       <p class="timestamp">Added: ${new Date(wallet.timestamp).toLocaleString()}</p>
     </div>
   `).join('');
+}
+
+function renderWalletSelector() {
+  return `
+    <select id="walletType" class="wallet-select">
+      ${Object.keys(WALLET_LOGOS).map(wallet => 
+        `<option value="${wallet}">${wallet}</option>`
+      ).join('')}
+    </select>
+  `;
 }
 
 async function deleteWallet(index) {
@@ -221,7 +270,9 @@ function updateUI() {
       <div class="input-group">
         <input type="text" id="walletAddress" placeholder="Enter Cardano Address" />
         <input type="text" id="walletName" placeholder="Enter Wallet Name" />
+        ${renderWalletSelector()}
         <button id="addWallet" class="primary">Add Wallet</button>
+        <input type="file" id="customLogo" style="display: none;">
       </div>
 
       ${unlockedSlots < MAX_TOTAL_SLOTS ? `
@@ -247,6 +298,27 @@ function updateUI() {
         deleteWallet(index);
       }
     });
+  });
+
+  // Add wallet type change listener
+  document.getElementById('walletType')?.addEventListener('change', (e) => {
+    if (e.target.value === 'Custom') {
+      document.getElementById('customLogo')?.click();
+    }
+  });
+
+  // Add custom logo upload listener
+  document.getElementById('customLogo')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      try {
+        customLogoData = await handleCustomLogo(file);
+        showSuccess('Custom logo uploaded!');
+      } catch (error) {
+        showError('Failed to upload custom logo');
+        document.getElementById('walletType').value = 'Nami';
+      }
+    }
   });
 
   document.getElementById('unlockSlots')?.addEventListener('click', () => {

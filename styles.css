@@ -136,6 +136,35 @@ button.delete:hover {
   right: 12px;
 }
 
+.wallet-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.wallet-logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.wallet-select {
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 14px;
+  background: white;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.wallet-select:focus {
+  outline: none;
+  border-color: #5b73e8;
+}
+
 .error, .success {
   padding: 12px;
   border-radius: 8px;
