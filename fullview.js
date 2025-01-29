@@ -127,26 +127,114 @@ function validateAddress(address) {
   return address && address.startsWith('addr1') && address.length >= 59;
 }
 
-function convertIpfsUrl(url) {
-  if (!url || typeof url !== 'string') return '';
+function getAssetImage(asset) {
+  if (!asset) return null;
   
+  // Check onchain_metadata first
+  if (asset.onchain_metadata?.image) {
+    return convertIpfsUrl(asset.onchain_metadata.image);
+  }
+  
+  // Check metadata
+  if (asset.metadata?.image || asset.metadata?.logo) {
+    return convertIpfsUrl(asset.metadata.image || asset.metadata.logo);
+  }
+
+  // Check files array if present
+  if (asset.metadata?.files && asset.metadata.files.length > 0) {
+    const file = asset.metadata.files[0];
+    if (typeof file === 'string') {
+      return convertIpfsUrl(file);
+    }
+    if (file.src || file.uri) {
+      return convertIpfsUrl(file.src || file.uri);
+    }
+  }
+
+  return null;
+}
+
+function isNFT(asset) {
+  // Rule 1: If quantity > 1, it's a token
+  const quantity = parseInt(asset.quantity);
+  if (!isNaN(quantity) && quantity > 1) {
+    return false;
+  }
+
+  // Rule 2: Check onchain_metadata for NFT properties
+  if (asset.onchain_metadata) {
+    // Check for media properties
+    if (asset.onchain_metadata.image || 
+        asset.onchain_metadata.mediaType || 
+        asset.onchain_metadata.files) {
+      return true;
+    }
+    
+    // Check for NFT collection properties
+    if (asset.onchain_metadata.name && 
+        (asset.onchain_metadata.series || 
+         asset.onchain_metadata.edition || 
+         asset.onchain_metadata.collection)) {
+      return true;
+    }
+  }
+
+  // Rule 3: Check regular metadata
+  if (asset.metadata) {
+    if (asset.metadata.image || asset.metadata.files) {
+      return true;
+    }
+  }
+
+  // Rule 4: Check name patterns
+  const name = asset.display_name || asset.asset_name || '';
+  if (/#\d+$/.test(name) ||           // Ends with #123
+      /\(\d+(?:\/\d+)?\)$/.test(name) // Ends with (123) or (123/456)
+  ) {
+    return true;
+  }
+
+  // If none of the above rules match, consider it a token
+  return false;
+}
+
+function convertIpfsUrl(url) {
+  // Return null for invalid inputs
+  if (!url || typeof url !== 'string') return null;
+
   // Handle ipfs:// protocol
   if (url.startsWith('ipfs://')) {
-    const hash = url.replace('ipfs://', '');
-    return `https://ipfs.io/ipfs/${hash}`;
+    const ipfsId = url.replace('ipfs://', '');
+    return `https://ipfs.io/ipfs/${ipfsId}`;
   }
-  
-  // If it's already a gateway URL, return as is
-  if (url.includes('/ipfs/')) {
-    return url;
+
+  // Handle IPFS paths
+  if (url.startsWith('/ipfs/')) {
+    return `https://ipfs.io${url}`;
   }
-  
-  // If it looks like a raw IPFS hash, add the gateway prefix
-  if (url.startsWith('Qm') || url.startsWith('bafy')) {
+
+  // Handle direct IPFS hashes
+  if (/^Qm[1-9A-HJ-NP-Za-km-z]{44,}/.test(url)) {
     return `https://ipfs.io/ipfs/${url}`;
   }
-  
-  return url;
+
+  // Handle URLs that are already using an IPFS gateway
+  if (url.includes('ipfs.io') || url.includes('cloudflare-ipfs.com')) {
+    return url;
+  }
+
+  // Handle base64 images
+  if (url.startsWith('data:image/')) {
+    return url;
+  }
+
+  // Handle regular HTTP(S) URLs
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+
+  // If we can't handle the URL format, return null
+  return null;
 }
 
 function truncateAddress(address, startLength = 8, endLength = 8) {
@@ -166,83 +254,217 @@ async function copyToClipboard(text) {
 }
 
 function renderWallets() {
-  if (!wallets.length) {
+  if (!wallets || wallets.length === 0) {
     return '<p class="no-wallets">No wallets added yet</p>';
   }
 
+  // Create assets panel
+  const assetsPanel = document.createElement('div');
+  assetsPanel.className = 'assets-panel';
+  assetsPanel.innerHTML = `
+    <div class="assets-header">
+      <h3>Assets</h3>
+      <button class="close-assets">×</button>
+    </div>
+    <div class="assets-tabs">
+      <button class="assets-tab active" data-tab="nfts">NFTs</button>
+      <button class="assets-tab" data-tab="tokens">Tokens</button>
+    </div>
+    <div class="assets-content">
+      <div class="assets-list"></div>
+    </div>
+  `;
+  document.body.appendChild(assetsPanel);
+
   return wallets.map((wallet, index) => `
     <div class="wallet-item">
-      <div class="wallet-actions">
-        <button class="refresh-btn" data-index="${index}" title="Refresh Balance">↻</button>
-        <button class="delete delete-btn" data-index="${index}">×</button>
-      </div>
-      
       <div class="wallet-header">
-        ${wallet.walletType !== 'None' && WALLET_LOGOS[wallet.walletType] ? 
-          `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-logo">` : 
-          ''}
-        <h3>${wallet.name}</h3>
+        <div class="wallet-info">
+          <img src="icons/nami.png" alt="Wallet Logo" class="wallet-logo">
+          <h3>${wallet.name}</h3>
+        </div>
+        <div class="wallet-actions">
+          <button class="refresh-btn" data-index="${index}">
+            <i class="fas fa-sync-alt"></i>
+          </button>
+          <button class="delete-btn" data-index="${index}">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
       </div>
-      
+
       <div class="address-group">
         <div class="address-label">Address</div>
         <div class="address-container">
           <span class="address">${truncateAddress(wallet.address)}</span>
-          <button class="copy-btn" data-copy="${wallet.address}" title="Copy Address">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-            </svg>
+          <button class="copy-btn" data-copy="${wallet.address}">
+            <i class="fas fa-copy"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="address-group">
+        <div class="address-label">Stake Address</div>
+        <div class="address-container">
+          <span class="stake">${truncateAddress(wallet.stake_address)}</span>
+          <button class="copy-btn" data-copy="${wallet.stake_address}">
+            <i class="fas fa-copy"></i>
           </button>
         </div>
       </div>
 
       <div class="balance-container">
-        <span class="balance">${(parseInt(wallet.balance) / 1000000).toFixed(2)} ₳</span>
+        <span class="balance">${formatBalance(wallet.balance)} ₳</span>
       </div>
-      
-      ${wallet.stake_address ? `
-        <div class="address-group">
-          <div class="address-label">Stake Address</div>
-          <div class="address-container">
-            <span class="stake">${truncateAddress(wallet.stake_address)}</span>
-            <button class="copy-btn" data-copy="${wallet.stake_address}" title="Copy Stake Address">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-              </svg>
-            </button>
-          </div>
-        </div>
-      ` : ''}
-      
+
       ${wallet.assets && wallet.assets.length > 0 ? `
         <button class="assets-toggle" data-index="${index}">
-          <span class="arrow">▼</span>
-          Assets (${wallet.assets.length})
+          View Assets (${wallet.assets.length})
         </button>
-        <div class="assets" id="assets-${index}">
-          <div class="assets-list">
-            ${wallet.assets.map(asset => `
-              <div class="asset-item" title="${asset.unit}">
-                <span class="asset-quantity">${asset.quantity}×</span>
-                <span class="asset-name">${
-                  asset.display_name || 
-                  asset.asset_name || 
-                  truncateAddress(asset.unit, 6, 6)
-                }</span>
-                ${asset.onchain_metadata?.image ? 
-                  `<img src="${convertIpfsUrl(asset.onchain_metadata.image)}" alt="${asset.display_name || 'Asset'}" class="asset-image">` : 
-                  ''}
-              </div>
-            `).join('')}
-          </div>
-        </div>
       ` : ''}
-      
-      <p class="timestamp">Last updated: ${new Date(wallet.timestamp).toLocaleString()}</p>
     </div>
   `).join('');
+}
+
+function setupAssetsPanelListeners() {
+  const panel = document.querySelector('.assets-panel');
+  const closeBtn = panel.querySelector('.close-assets');
+  const tabs = panel.querySelectorAll('.assets-tab');
+  
+  closeBtn.addEventListener('click', () => {
+    panel.classList.remove('expanded');
+  });
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const currentWallet = panel.dataset.walletIndex;
+      const tabType = tab.dataset.tab;
+      
+      // Update active tab
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+
+      // Render assets for the selected tab
+      renderAssetsList(currentWallet, tabType);
+    });
+  });
+}
+
+function getFirstLetter(name) {
+  return (name || 'A').charAt(0).toUpperCase();
+}
+
+function getRandomColor(text) {
+  // Generate a consistent color based on text
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = text.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = hash % 360;
+  return `hsl(${hue}, 70%, 60%)`; // Consistent but random-looking color
+}
+
+function renderAssetsList(walletIndex, type = 'nfts') {
+  const wallet = wallets[walletIndex];
+  const assetsList = document.querySelector('.assets-list');
+  
+  if (!wallet || !wallet.assets) return '';
+
+  // Filter and sort assets
+  const filteredAssets = wallet.assets.filter(asset => {
+    const isNftAsset = isNFT(asset);
+    return type === 'nfts' ? isNftAsset : !isNftAsset;
+  });
+
+  if (filteredAssets.length === 0) {
+    assetsList.innerHTML = `<p class="no-assets">No ${type === 'nfts' ? 'NFTs' : 'tokens'} found</p>`;
+    return;
+  }
+
+  assetsList.innerHTML = filteredAssets.map(asset => {
+    const assetName = asset.display_name || asset.asset_name || '';
+    const firstLetter = getFirstLetter(assetName);
+    const bgColor = getRandomColor(assetName);
+    const imageUrl = getAssetImage(asset);
+    const quantity = formatTokenAmount(asset.quantity, asset.metadata?.decimals || asset.onchain_metadata?.decimals || 0);
+
+    return `
+      <div class="asset-item">
+        <div class="asset-image-container">
+          ${imageUrl ? `
+            <img src="${imageUrl}" 
+                 alt="${assetName}" 
+                 class="asset-image"
+                 onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'asset-placeholder full\\' style=\\'background-color: ${bgColor}\\'>${firstLetter}</div>';">
+          ` : `
+            <div class="asset-placeholder full" style="background-color: ${bgColor}">
+              ${firstLetter}
+            </div>
+          `}
+        </div>
+        <div class="asset-info">
+          <span class="asset-name">${assetName}</span>
+          <span class="asset-quantity">${isNFT(asset) ? '' : `${quantity}x`}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function setupEventListeners() {
+  // Add copy button listeners
+  document.querySelectorAll('.copy-btn').forEach(button => {
+    button.addEventListener('click', async () => {
+      const textToCopy = button.dataset.copy;
+      if (textToCopy) {
+        await copyToClipboard(textToCopy);
+      }
+    });
+  });
+
+  // Add refresh button listeners
+  document.querySelectorAll('.refresh-btn').forEach(button => {
+    button.addEventListener('click', async () => {
+      const index = parseInt(button.dataset.index);
+      if (!isNaN(index)) {
+        await refreshWallet(index);
+      }
+    });
+  });
+
+  // Add delete button listeners
+  document.querySelectorAll('.delete-btn').forEach(button => {
+    button.addEventListener('click', async () => {
+      const index = parseInt(button.dataset.index);
+      if (!isNaN(index)) {
+        await deleteWallet(index);
+      }
+    });
+  });
+
+  // Add assets toggle listeners
+  document.querySelectorAll('.assets-toggle').forEach(button => {
+    button.addEventListener('click', () => {
+      const index = button.dataset.index;
+      const panel = document.querySelector('.assets-panel');
+      
+      // If panel is already showing this wallet's assets, close it
+      if (panel.classList.contains('expanded') && panel.dataset.walletIndex === index) {
+        panel.classList.remove('expanded');
+        return;
+      }
+      
+      // Otherwise, show the panel with this wallet's assets
+      panel.dataset.walletIndex = index;
+      panel.classList.add('expanded');
+      
+      // Show NFTs by default
+      const nftsTab = panel.querySelector('[data-tab="nfts"]');
+      nftsTab.click();
+    });
+  });
+
+  setupAssetsPanelListeners();
 }
 
 async function refreshWallet(index) {
@@ -336,48 +558,37 @@ function updateUI() {
   setupEventListeners();
 }
 
-function setupEventListeners() {
-  // Add copy button listeners
-  document.querySelectorAll('.copy-btn').forEach(button => {
-    button.addEventListener('click', async () => {
-      const textToCopy = button.dataset.copy;
-      if (textToCopy) {
-        await copyToClipboard(textToCopy);
-      }
-    });
-  });
+function formatBalance(balance) {
+  if (!balance) return '0.00';
+  return (balance / 1000000).toFixed(2);
+}
 
-  // Add refresh button listeners
-  document.querySelectorAll('.refresh-btn').forEach(button => {
-    button.addEventListener('click', async () => {
-      const index = parseInt(button.dataset.index);
-      if (!isNaN(index)) {
-        await refreshWallet(index);
+function formatTokenAmount(amount, decimals = 0) {
+  if (!amount) return '0';
+  
+  // Convert to number and handle decimals
+  const num = BigInt(amount);
+  if (decimals > 0) {
+    const divisor = BigInt(10 ** decimals);
+    const wholePart = num / divisor;
+    const fractionalPart = num % divisor;
+    
+    // Convert to string with proper decimal places
+    let formatted = wholePart.toString();
+    if (fractionalPart > 0) {
+      // Pad with leading zeros if needed
+      let fraction = fractionalPart.toString().padStart(decimals, '0');
+      // Remove trailing zeros
+      fraction = fraction.replace(/0+$/, '');
+      if (fraction.length > 0) {
+        formatted += '.' + fraction;
       }
-    });
-  });
-
-  // Add delete button listeners
-  document.querySelectorAll('.delete-btn').forEach(button => {
-    button.addEventListener('click', async () => {
-      const index = parseInt(button.dataset.index);
-      if (!isNaN(index)) {
-        await deleteWallet(index);
-      }
-    });
-  });
-
-  // Add asset toggle listeners
-  document.querySelectorAll('.assets-toggle').forEach(toggle => {
-    toggle.addEventListener('click', () => {
-      const index = toggle.dataset.index;
-      const assets = document.getElementById(`assets-${index}`);
-      if (assets) {
-        assets.classList.toggle('expanded');
-        toggle.classList.toggle('expanded');
-      }
-    });
-  });
+    }
+    return formatted;
+  }
+  
+  // For non-decimal numbers, just add commas
+  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
 async function deleteWallet(index) {

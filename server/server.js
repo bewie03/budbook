@@ -132,6 +132,7 @@ app.get('/api/wallet/:address', async (req, res) => {
               ...asset,
               metadata: assetData.metadata || null,
               onchain_metadata: assetData.onchain_metadata || null,
+              decimals: assetData.metadata?.decimals || assetData.onchain_metadata?.decimals || 0,
               asset_name: assetData.asset_name ? 
                 Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
                 asset.unit.substring(56),

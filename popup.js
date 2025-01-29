@@ -259,7 +259,7 @@ function renderWallets() {
           <div class="assets-list">
             ${wallet.assets.map(asset => `
               <div class="asset-item" title="${asset.unit}">
-                <span class="asset-quantity">${asset.quantity}×</span>
+                <span class="asset-quantity">${asset.quantity !== 1 ? `${asset.quantity}x` : ''}</span>
                 <span class="asset-name">${
                   asset.display_name || 
                   asset.asset_name || 

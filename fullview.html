@@ -7,16 +7,18 @@
   <title>Cardano Address Book</title>
 </head>
 <body>
-  <div class="full-container">
-    <div class="header">
-      <img src="icons/extensionlogo.png" alt="Logo" class="logo">
-      <h1>Cardano Address Book</h1>
+  <div id="root">
+    <div class="full-container">
+      <div class="header">
+        <img src="icons/extensionlogo.png" alt="Logo" class="logo">
+        <h1>Cardano Address Book</h1>
+      </div>
+
+      <div id="walletList"></div>
+
+      <div id="errorMsg" class="error" style="display: none;"></div>
+      <div id="successMsg" class="success" style="display: none;"></div>
     </div>
-
-    <div id="walletList"></div>
-
-    <div id="errorMsg" class="error" style="display: none;"></div>
-    <div id="successMsg" class="success" style="display: none;"></div>
   </div>
   <script src="fullview.js" type="module"></script>
 </body>
