@@ -543,6 +543,18 @@ app.get('/api/cache', async (req, res) => {
   }
 });
 
+// Clear Redis cache
+app.post('/api/clear-cache', async (req, res) => {
+  try {
+    await redis.flushall();
+    console.log('Redis cache cleared');
+    res.json({ message: 'Cache cleared successfully' });
+  } catch (error) {
+    console.error('Error clearing cache:', error);
+    res.status(500).json({ error: 'Failed to clear cache' });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
