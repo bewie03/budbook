@@ -177,26 +177,36 @@ async function getAssetInfo(assetId) {
                 logoUrl = logo;
             }
         }
+
+        // Filter metadata to remove large fields
+        const filteredMetadata = {
+            name: assetData.metadata?.name,
+            ticker: assetData.metadata?.ticker,
+            url: assetData.metadata?.url,
+            description: assetData.metadata?.description
+        };
+
+        // Filter onchain metadata to remove large fields
+        const filteredOnchainMetadata = assetData.onchain_metadata ? {
+            name: assetData.onchain_metadata.name,
+            description: assetData.onchain_metadata.description,
+            image: imageUrl,
+            attributes: assetData.onchain_metadata.attributes
+        } : null;
         
         // Process the asset data
         const processedData = {
-            metadata: {
-                decimals: decimals,
-                name: assetData.metadata?.name || assetData.onchain_metadata?.name,
-                ticker: assetData.metadata?.ticker,
-                description: assetData.metadata?.description || assetData.onchain_metadata?.description,
-                image: imageUrl,
-                logo: logoUrl
-            },
+            metadata: filteredMetadata,
+            onchain_metadata: filteredOnchainMetadata,
             decimals: decimals,
             asset_name: assetData.asset_name ? 
                 Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
                 assetId.substring(56),
             policy_id: assetId.substring(0, 56),
             fingerprint: assetData.fingerprint,
-            ticker: assetData.metadata?.ticker,
-            display_name: assetData.onchain_metadata?.name || 
-                        assetData.metadata?.name || 
+            ticker: filteredMetadata.ticker,
+            display_name: filteredOnchainMetadata?.name || 
+                        filteredMetadata.name || 
                         (assetData.asset_name ? Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
                         assetId.substring(56))
         };
@@ -205,8 +215,7 @@ async function getAssetInfo(assetId) {
             display_name: processedData.display_name,
             decimals: processedData.decimals,
             ticker: processedData.ticker,
-            has_image: !!imageUrl,
-            has_logo: !!logoUrl
+            has_image: !!imageUrl
         });
         
         // Store in Redis cache PERMANENTLY - no expiry since assets are immutable
