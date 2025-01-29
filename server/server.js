@@ -113,13 +113,25 @@ app.get('/api/wallet/:address', async (req, res) => {
       return res.json(cachedData);
     }
     
-    const data = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
-    console.log('Wallet data:', data);
+    // Fetch address data
+    const addressData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
+    console.log('Address data:', addressData);
+    
+    // Extract lovelace (ADA) amount from the amounts array
+    const lovelaceAmount = addressData.amount?.find(amt => amt.unit === 'lovelace')?.quantity || '0';
+    
+    // Format response
+    const response = {
+      address: addressData.address,
+      balance: lovelaceAmount,
+      stake_address: addressData.stake_address,
+      assets: addressData.amount?.filter(amt => amt.unit !== 'lovelace') || []
+    };
     
     // Cache the result
-    walletCache.set(address, data);
+    walletCache.set(address, response);
     
-    res.json(data);
+    res.json(response);
   } catch (error) {
     console.error('Error fetching wallet data:', error);
     res.status(error.message.includes('not found') ? 404 : 500).json({ 
