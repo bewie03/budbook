@@ -201,68 +201,11 @@ function validateAddress(address) {
 
 function getAssetImage(asset) {
   if (!asset) return null;
-  
-  try {
-    // Check onchain_metadata first
-    if (asset.onchain_metadata?.image) {
-      const image = asset.onchain_metadata.image;
-      return typeof image === 'string' ? convertIpfsUrl(image) : null;
-    }
-    
-    // Check metadata
-    if (asset.metadata?.image || asset.metadata?.logo) {
-      const image = asset.metadata.image || asset.metadata.logo;
-      return typeof image === 'string' ? convertIpfsUrl(image) : null;
-    }
-
-    // Check files array if present
-    if (asset.metadata?.files && Array.isArray(asset.metadata.files) && asset.metadata.files.length > 0) {
-      const file = asset.metadata.files[0];
-      if (typeof file === 'string') {
-        return convertIpfsUrl(file);
-      }
-      if (file && typeof file === 'object') {
-        const fileUrl = file.src || file.uri || file.url || file.image;
-        return typeof fileUrl === 'string' ? convertIpfsUrl(fileUrl) : null;
-      }
-    }
-
-    return null;
-  } catch (error) {
-    console.error('Error getting asset image:', error, 'Asset:', asset);
-    return null;
-  }
+  return asset.image ? convertIpfsUrl(asset.image) : null;
 }
 
 function isNFT(asset) {
-  // Rule 1: If quantity > 1, it's a token
-  const quantity = BigInt(asset.quantity);
-  if (quantity > BigInt(1)) {
-    return false;
-  }
-
-  // Rule 2: Check if it has an image
-  if (asset.image) {
-    return true;
-  }
-
-  // Rule 3: Check metadata for NFT properties
-  if (asset.onchain_metadata) {
-    // Check for media properties
-    if (asset.onchain_metadata.image || 
-        asset.onchain_metadata.mediaType || 
-        asset.onchain_metadata.files) {
-      return true;
-    }
-    
-    // Check for common NFT attributes
-    if (asset.onchain_metadata.attributes || 
-        asset.onchain_metadata.traits) {
-      return true;
-    }
-  }
-
-  return false;
+  return asset.is_nft || false;
 }
 
 function convertIpfsUrl(url) {
@@ -855,8 +798,10 @@ async function fetchWalletData(address) {
         quantity: asset.quantity,
         decimals: asset.decimals,
         readable_amount: asset.readable_amount,
-        display_name: asset.display_name,
-        ticker: asset.ticker
+        name: asset.name,  // Get name from server
+        image: asset.image,  // Get image from server
+        ticker: asset.ticker,
+        is_nft: asset.is_nft  // Get NFT flag from server
       })) || []
     };
   } catch (error) {
