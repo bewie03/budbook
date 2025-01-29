@@ -18,7 +18,7 @@ const port = process.env.PORT || 3000;
 const BLOCKFROST_API_KEY = process.env.BLOCKFROST_API_KEY;
 const BLOCKFROST_BASE_URL = 'https://cardano-mainnet.blockfrost.io/api/v0';
 const PAYMENT_ADDRESS = process.env.PAYMENT_ADDRESS;
-const REQUIRED_PAYMENT = 10000000; // 10 ADA in lovelace
+const REQUIRED_PAYMENT = 2000000; // 2 ADA in lovelace
 
 // Initialize caches
 const walletCache = new NodeCache({ stdTTL: 300 }); // 5 minutes for wallet data

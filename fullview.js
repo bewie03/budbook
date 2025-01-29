@@ -1,8 +1,8 @@
 // Import the shared constants and functions
-const MAX_FREE_SLOTS = 5;
-const SLOTS_PER_PAYMENT = 10;
+const MAX_FREE_SLOTS = 6;
+const SLOTS_PER_PAYMENT = 6;
 const MAX_TOTAL_SLOTS = 100;
-const ADA_PAYMENT_AMOUNT = 10;
+const ADA_PAYMENT_AMOUNT = 2;
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 
 const WALLET_LOGOS = {

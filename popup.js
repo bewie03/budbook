@@ -1,8 +1,8 @@
 // Constants
-const MAX_FREE_SLOTS = 5;
-const SLOTS_PER_PAYMENT = 10;
+const MAX_FREE_SLOTS = 6;
+const SLOTS_PER_PAYMENT = 6;
 const MAX_TOTAL_SLOTS = 100;
-const ADA_PAYMENT_AMOUNT = 10;
+const ADA_PAYMENT_AMOUNT = 2;
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 
 // Available wallet logos
@@ -131,25 +131,47 @@ async function saveWallets() {
 
 // UI Functions
 function showError(message) {
-  console.error('Error:', message);
   const errorDiv = document.getElementById('errorMsg');
   if (errorDiv) {
+    // Remove any existing visible messages
+    const visibleMessages = document.querySelectorAll('.error.visible, .success.visible');
+    visibleMessages.forEach(msg => msg.classList.remove('visible'));
+    
     errorDiv.textContent = message;
+    errorDiv.style.display = 'block';
+    
+    // Force a reflow before adding the visible class
+    errorDiv.offsetHeight;
     errorDiv.classList.add('visible');
+    
     setTimeout(() => {
       errorDiv.classList.remove('visible');
+      setTimeout(() => {
+        errorDiv.style.display = 'none';
+      }, 300); // Wait for transition to finish
     }, 3000);
   }
 }
 
 function showSuccess(message) {
-  console.log('Success:', message);
   const successDiv = document.getElementById('successMsg');
   if (successDiv) {
+    // Remove any existing visible messages
+    const visibleMessages = document.querySelectorAll('.error.visible, .success.visible');
+    visibleMessages.forEach(msg => msg.classList.remove('visible'));
+    
     successDiv.textContent = message;
+    successDiv.style.display = 'block';
+    
+    // Force a reflow before adding the visible class
+    successDiv.offsetHeight;
     successDiv.classList.add('visible');
+    
     setTimeout(() => {
       successDiv.classList.remove('visible');
+      setTimeout(() => {
+        successDiv.style.display = 'none';
+      }, 300); // Wait for transition to finish
     }, 3000);
   }
 }
@@ -398,9 +420,9 @@ function setupEventListeners() {
       instructions.innerHTML = `
         <div class="modal">
           <h3>Unlock More Slots</h3>
-          <p>Send 10 ₳ to:</p>
+          <p>Send 2 ₳ to:</p>
           <code>${paymentAddress}</code>
-          <p>You will receive 10 additional wallet slots after payment confirmation.</p>
+          <p>You will receive 6 additional wallet slots after payment confirmation.</p>
           <button class="close">Close</button>
         </div>
       `;

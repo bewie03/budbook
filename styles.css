@@ -74,39 +74,34 @@ html, body {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding-bottom: 20px;
+  padding: 24px;
   margin-bottom: 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  position: sticky;
-  top: 0;
-  background-color: #1a1b1f;
-  z-index: 10;
-  width: 100%;
-  padding: 16px;
-  background: #1e1f23;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
-  margin-bottom: 16px;
+  background: linear-gradient(to right, #1e1f23, #2a2b31);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
 }
 
 .header h1 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
   color: #ffffff;
-  margin: 0;
-  font-size: 20px;
-  font-weight: 500;
+  letter-spacing: -0.5px;
 }
 
-.logo {
-  width: 32px;
-  height: 32px;
+.header .logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease;
 }
 
-#walletList {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-  width: 100%;
-  padding: 0;
-  margin: 0;
+.header .logo:hover {
+  transform: scale(1.05);
 }
 
 .wallet-item {
@@ -165,7 +160,7 @@ html, body {
 }
 
 .delete-btn:hover {
-  background: rgba(255, 71, 87, 0.1);
+  background: rgba(255, 0, 0, 0.1);
   color: #ff4757;
 }
 
@@ -463,28 +458,60 @@ html, body {
 }
 
 .error, .success {
-  display: none;
-  padding: 10px;
-  border-radius: 6px;
-  margin: 8px 0;
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  padding: 12px;
   font-size: 13px;
+  font-weight: 500;
   text-align: center;
-}
-
-.error.visible, .success.visible {
-  display: block;
+  transform: translateY(-100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 9999;
+  border-radius: 0 0 6px 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
 .error {
-  background: rgba(255, 59, 48, 0.1);
-  color: #ff3b30;
-  border: 1px solid rgba(255, 59, 48, 0.2);
+  background: #dc3545;
+  color: #ffffff !important;
 }
 
 .success {
-  background: rgba(76, 217, 100, 0.1);
-  color: #4cd964;
-  border: 1px solid rgba(76, 217, 100, 0.2);
+  background: #28a745;
+  color: #ffffff !important;
+}
+
+.error.visible, .success.visible {
+  transform: translateY(0);
+}
+
+#errorMsg, #successMsg {
+  padding: 12px;
+  border-radius: var(--border-radius);
+  margin: 16px 0;
+  font-size: 14px;
+  color: #ffffff !important;
+}
+
+#errorMsg {
+  background-color: #dc3545;
+  border: 1px solid #dc3545;
+}
+
+#successMsg {
+  background-color: #28a745;
+  border: 1px solid #28a745;
+}
+
+.popup-container {
+  position: relative;
+  width: 100%;
+  min-height: 100%;
+  padding: 16px;
+  background: var(--background-color);
+  overflow: hidden;
 }
 
 .payment-instructions {
@@ -776,15 +803,19 @@ select {
 }
 
 .error {
-  background: rgba(255, 71, 87, 0.1);
+  background: #dc3545;
   color: #ff4757;
-  border: 1px solid rgba(255, 71, 87, 0.2);
+  border: 1px solid #dc3545;
 }
 
 .success {
-  background: rgba(46, 213, 115, 0.1);
+  background: #28a745;
   color: #2ed573;
-  border: 1px solid rgba(46, 213, 115, 0.2);
+  border: 1px solid #28a745;
+}
+
+.error.visible, .success.visible {
+  display: block;
 }
 
 .full-container {
@@ -1191,17 +1222,16 @@ select {
   border-radius: var(--border-radius);
   margin: 16px 0;
   font-size: 14px;
+  color: #ffffff !important;
 }
 
 #errorMsg {
-  background-color: rgba(220, 53, 69, 0.1);
-  color: var(--error-color);
+  background-color: #dc3545;
   border: 1px solid var(--error-color);
 }
 
 #successMsg {
-  background-color: rgba(40, 167, 69, 0.1);
-  color: var(--success-color);
+  background-color: #28a745;
   border: 1px solid var(--success-color);
 }
 
@@ -1332,150 +1362,17 @@ select {
   border-radius: 8px;
   margin-top: 16px;
   font-size: 14px;
+  color: #ffffff !important;
 }
 
 #errorMsg {
-  background: rgba(220, 53, 69, 0.1);
-  color: #dc3545;
-  border: 1px solid rgba(220, 53, 69, 0.2);
+  background: #dc3545;
+  border: 1px solid #dc3545;
 }
 
 #successMsg {
-  background: rgba(40, 167, 69, 0.1);
-  color: #28a745;
-  border: 1px solid rgba(40, 167, 69, 0.2);
-}
-
-.header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 24px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.header img.logo {
-  width: 32px;
-  height: 32px;
-}
-
-.header h1 {
-  color: #ffffff;
-  font-size: 20px;
-  font-weight: 500;
-  margin: 0;
-}
-
-.wallet-list {
-  display: grid;
-  gap: 12px;
-  padding: 0;
-}
-
-.wallet-item {
-  background: #1e1e1e;
-  border-radius: 8px;
-  padding: 16px;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.wallet-item:hover {
-  border-color: #4c6ef5;
-}
-
-.wallet-name {
-  font-size: 15px;
-  font-weight: 500;
-  color: #ffffff;
-  margin: 0;
-  padding-right: 80px;
-}
-
-.wallet-address {
-  color: #808080;
-  font-size: 13px;
-  word-break: break-all;
-  margin: 0;
-  line-height: 1.4;
-}
-
-.balance {
-  color: #4ade80;
-  font-size: 16px;
-  font-weight: 500;
-  margin: 4px 0;
-  text-align: center;
-}
-
-.copy-btn, .delete-btn {
-  position: absolute;
-  top: 14px;
-  background: none;
-  border: none;
-  color: #808080;
-  cursor: pointer;
-  padding: 6px;
-  border-radius: 4px;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.copy-btn {
-  right: 44px;
-}
-
-.delete-btn {
-  right: 12px;
-}
-
-.copy-btn:hover, .delete-btn:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.view-assets {
-  background: rgba(255, 255, 255, 0.05);
-  border: none;
-  border-radius: 6px;
-  color: #808080;
-  cursor: pointer;
-  padding: 8px;
-  width: 100%;
-  text-align: left;
-  font-size: 13px;
-  transition: all 0.2s;
-  margin-top: 4px;
-}
-
-.view-assets:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ffffff;
-}
-
-#errorMsg, #successMsg {
-  padding: 12px;
-  border-radius: 8px;
-  margin-top: 16px;
-  font-size: 14px;
-}
-
-#errorMsg {
-  background: rgba(220, 53, 69, 0.1);
-  color: #dc3545;
-  border: 1px solid rgba(220, 53, 69, 0.2);
-}
-
-#successMsg {
-  background: rgba(40, 167, 69, 0.1);
-  color: #28a745;
-  border: 1px solid rgba(40, 167, 69, 0.2);
+  background: #28a745;
+  border: 1px solid #28a745;
 }
 
 .no-wallets {
