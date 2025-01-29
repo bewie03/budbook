@@ -128,12 +128,15 @@ async function getAssetInfo(assetId) {
             return JSON.parse(cachedData);
         }
 
-        // Fetch from Blockfrost if not in cache
-        const assetData = await fetchBlockfrost(`/assets/${assetId}`, 'fetch asset data');
+        // Fetch both basic asset data and metadata from Blockfrost
+        const [assetData, assetMetadata] = await Promise.all([
+            fetchBlockfrost(`/assets/${assetId}`, 'fetch asset data'),
+            fetchBlockfrost(`/assets/${assetId}/metadata`, 'fetch asset metadata')
+        ]);
         
         // Process asset metadata
         const onchainMetadata = assetData.onchain_metadata || {};
-        const metadata = assetData.metadata || {};
+        const metadata = assetMetadata || {};
         
         // Determine if NFT based on quantity
         const isNft = assetData.quantity === '1';
@@ -154,10 +157,10 @@ async function getAssetInfo(assetId) {
         let name = null;
         if (isNft) {
             // For NFTs, prefer onchain_metadata name
-            name = onchainMetadata.name || metadata.name;
+            name = onchainMetadata.name || metadata.name || assetData.asset_name;
         } else {
             // For tokens, prefer metadata name
-            name = metadata.name || onchainMetadata.name;
+            name = metadata.name || onchainMetadata.name || assetData.asset_name;
         }
         
         // If no name found, try to decode from hex
@@ -184,7 +187,8 @@ async function getAssetInfo(assetId) {
             onchainMetadata.image,
             onchainMetadata.mediaUrl,
             metadata.logo,
-            metadata.icon
+            metadata.icon,
+            metadata.image
         ];
         
         for (const url of possibleUrls) {
