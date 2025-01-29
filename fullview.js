@@ -397,12 +397,9 @@ function renderAssetsList(walletIndex, type = 'tokens') {
     const imageUrl = getAssetImage(asset);
     
     // Get display name from metadata or fallback to unit
-    const displayName = asset.name || 
-                       asset.metadata?.name || 
-                       asset.metadata?.display_name || 
-                       asset.unit.slice(-8);
+    const displayName = asset.name || asset.unit.slice(-8);
     
-    const displayAmount = `${asset.readable_amount}${asset.ticker ? ` ${asset.ticker}` : ''}`;
+    const displayAmount = formatTokenAmount(asset.quantity, asset.decimals) + (asset.ticker ? ` ${asset.ticker}` : '');
     
     return `
       <div class="asset-item">
@@ -581,31 +578,18 @@ function formatBalance(balance) {
 }
 
 function formatTokenAmount(amount, decimals = 0) {
-  if (!amount) return '0';
-  
-  // Convert to number and handle decimals
-  const num = BigInt(amount);
-  if (decimals > 0) {
+  try {
+    if (!amount) return '0';
+    const value = BigInt(amount);
+    if (decimals === 0) return value.toString();
     const divisor = BigInt(10 ** decimals);
-    const wholePart = num / divisor;
-    const fractionalPart = num % divisor;
-    
-    // Convert to string with proper decimal places
-    let formatted = wholePart.toString();
-    if (fractionalPart > 0) {
-      // Pad with leading zeros if needed
-      let fraction = fractionalPart.toString().padStart(decimals, '0');
-      // Remove trailing zeros
-      fraction = fraction.replace(/0+$/, '');
-      if (fraction.length > 0) {
-        formatted += '.' + fraction;
-      }
-    }
-    return formatted;
+    const wholePart = (value / divisor).toString();
+    const fractionalPart = (value % divisor).toString().padStart(decimals, '0');
+    return `${wholePart}.${fractionalPart}`;
+  } catch (error) {
+    console.error('Error formatting token amount:', error);
+    return amount;
   }
-  
-  // For non-decimal numbers, just add commas
-  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
 async function deleteWallet(index) {
@@ -820,10 +804,9 @@ async function fetchWalletData(address) {
         unit: asset.unit,
         quantity: asset.quantity,
         decimals: asset.decimals,
-        readable_amount: asset.readable_amount,
+        ticker: asset.ticker,
         name: asset.name,  // Get name from server
         image: asset.image,  // Get image from server
-        ticker: asset.ticker,
         is_nft: asset.is_nft  // Get NFT flag from server
       })) || []
     };

@@ -412,69 +412,46 @@ app.get('/api/wallet/:address', async (req, res) => {
             return res.status(400).json({ error: 'Invalid Cardano address' });
         }
 
-        // Fetch wallet data from Blockfrost
-        const [walletData, utxos] = await Promise.all([
-            fetchBlockfrost(`/addresses/${address}`, 'fetch address data'),
-            fetchBlockfrost(`/addresses/${address}/utxos`, 'fetch UTXOs')
-        ]);
+        // 1. Get address data from Blockfrost
+        const addressData = await fetchBlockfrost(`/addresses/${address}`, 'fetch address data');
+        
+        // 2. Process assets and get their details
+        const assets = [];
+        for (const amount of addressData.amount) {
+            try {
+                if (amount.unit === 'lovelace') continue;
 
-        // Process UTXOs to get token amounts
-        const assets = {};
-        let totalLovelace = 0;
-
-        for (const utxo of utxos) {
-            totalLovelace += parseInt(utxo.amount[0].quantity);
-            
-            // Process other assets in the UTXO
-            for (const asset of utxo.amount.slice(1)) {
-                const { unit, quantity } = asset;
-                if (!assets[unit]) {
-                    assets[unit] = '0';
+                // Get asset details from cache or Blockfrost
+                const cacheKey = `asset:${amount.unit}`;
+                let assetInfo = await getFromCache(cacheKey);
+                
+                if (!assetInfo) {
+                    // Fetch from Blockfrost if not in cache
+                    assetInfo = await fetchBlockfrost(`/assets/${amount.unit}`, 'fetch asset data');
+                    // Cache forever since Cardano assets are immutable
+                    await setInCache(cacheKey, assetInfo);
                 }
-                assets[unit] = (BigInt(assets[unit]) + BigInt(quantity)).toString();
+
+                assets.push({
+                    unit: amount.unit,
+                    quantity: amount.quantity,
+                    decimals: assetInfo.metadata?.decimals || 0,
+                    name: assetInfo.onchain_metadata?.name || assetInfo.metadata?.name || amount.unit,
+                    image: assetInfo.onchain_metadata?.image || assetInfo.metadata?.image || null,
+                    ticker: assetInfo.metadata?.ticker || null,
+                    is_nft: amount.quantity === '1'
+                });
+            } catch (error) {
+                console.error(`Error processing asset ${amount.unit}:`, error);
             }
         }
 
-        // Convert assets to array and fetch metadata for each
-        const assetList = await Promise.all(
-            Object.entries(assets).map(async ([unit, quantity]) => {
-                try {
-                    // Get asset info from cache or Blockfrost
-                    const assetInfo = await getAssetInfo(unit);
-                    
-                    return {
-                        unit,
-                        quantity,
-                        decimals: assetInfo.decimals || 0,
-                        readable_amount: formatAmount(quantity, assetInfo.decimals || 0),
-                        name: assetInfo.name || '',
-                        image: assetInfo.image || '',
-                        ticker: assetInfo.ticker || '',
-                        is_nft: assetInfo.is_nft || false,
-                        metadata: assetInfo.metadata || {}
-                    };
-                } catch (error) {
-                    console.error(`Error fetching asset info for ${unit}:`, error);
-                    return {
-                        unit,
-                        quantity,
-                        decimals: 0,
-                        readable_amount: quantity,
-                        name: '',
-                        image: '',
-                        ticker: '',
-                        is_nft: false,
-                        metadata: {}
-                    };
-                }
-            })
-        );
-
+        // 3. Send response
         res.json({
             address,
-            stake_address: walletData.stake_address,
-            balance: totalLovelace.toString(),
-            assets: assetList
+            stake_address: addressData.stake_address,
+            balance: addressData.amount.find(a => a.unit === 'lovelace')?.quantity || '0',
+            assets: assets
         });
 
     } catch (error) {
