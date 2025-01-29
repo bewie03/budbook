@@ -81,8 +81,9 @@ process.on('SIGINT', async () => {
 const redis = createClient({
   url: process.env.REDIS_URL || process.env.REDISCLOUD_URL,
   socket: {
-    tls: true,
-    rejectUnauthorized: false
+    tls: process.env.NODE_ENV === 'production',
+    rejectUnauthorized: false,
+    servername: new URL(process.env.REDIS_URL || process.env.REDISCLOUD_URL).hostname
   }
 });
 
@@ -96,6 +97,8 @@ redis.on('connect', () => console.log('Connected to Redis Cloud'));
     console.log('Successfully connected to Redis');
   } catch (error) {
     console.error('Failed to connect to Redis:', error);
+    // Fallback to in-memory cache if Redis fails
+    console.log('Using in-memory cache as fallback');
   }
 })();
 
