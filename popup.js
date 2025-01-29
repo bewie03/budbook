@@ -4,6 +4,8 @@ const SLOTS_PER_PAYMENT = 6;
 const MAX_TOTAL_SLOTS = 100;
 const ADA_PAYMENT_AMOUNT = 2;
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
+const MAX_STORED_ASSETS = 5; // Store only top 5 assets by value
+const ADA_LOVELACE = 1000000; // 1 ADA = 1,000,000 Lovelace
 
 // Available wallet logos
 const WALLET_LOGOS = {
@@ -131,6 +133,7 @@ async function saveWallets() {
     try {
       // Create a wallet index (just addresses)
       const walletIndex = wallets.map(w => w.address);
+      console.log('Saving wallet index:', walletIndex);
 
       // Prepare individual wallet saves
       const savePromises = wallets.map(wallet => 
@@ -148,16 +151,22 @@ async function saveWallets() {
               unit: asset.unit,
               quantity: asset.quantity,
               decimals: asset.decimals,
-              readable_amount: asset.readable_amount,
               display_name: asset.display_name,
               ticker: asset.ticker
             })) : []
           };
 
+          console.log(`Saving wallet ${wallet.address}:`, {
+            dataSize: JSON.stringify(cleanWallet).length,
+            numAssets: cleanWallet.assets.length,
+            sampleAsset: cleanWallet.assets[0]
+          });
+
           chrome.storage.sync.set({ 
             [`wallet_${wallet.address}`]: cleanWallet 
           }, () => {
             if (chrome.runtime.lastError) {
+              console.error('Storage error for wallet:', wallet.address, chrome.runtime.lastError);
               reject(chrome.runtime.lastError);
               return;
             }
@@ -174,6 +183,7 @@ async function saveWallets() {
             unlockedSlots 
           }, () => {
             if (chrome.runtime.lastError) {
+              console.error('Storage error for index:', chrome.runtime.lastError);
               reject(chrome.runtime.lastError);
               return;
             }
@@ -183,6 +193,7 @@ async function saveWallets() {
         ...savePromises
       ]).then(() => resolve()).catch(reject);
     } catch (error) {
+      console.error('Save error:', error);
       reject(error);
     }
   });
@@ -263,7 +274,13 @@ async function addWallet() {
     }
 
     showSuccess('Adding wallet...');
+    console.log('Fetching wallet data for:', address);
     const walletData = await fetchWalletData(address);
+    console.log('Received wallet data:', {
+      hasBalance: !!walletData.balance,
+      numAssets: walletData.assets?.length,
+      sampleAsset: walletData.assets?.[0]
+    });
     
     // Store only essential wallet data
     const wallet = {
@@ -278,11 +295,15 @@ async function addWallet() {
         unit: asset.unit || '',
         quantity: asset.quantity || '0',
         decimals: parseInt(asset.decimals || '0'),
-        readable_amount: asset.readable_amount || '0',
         display_name: asset.display_name || asset.unit || '',
         ticker: asset.ticker || ''
       }))
     };
+
+    console.log('Processed wallet data:', {
+      dataSize: JSON.stringify(wallet).length,
+      numAssets: wallet.assets.length
+    });
 
     // Add to wallets array
     wallets.push(wallet);
@@ -347,31 +368,26 @@ function renderWallets() {
         <h3>${wallet.name}</h3>
       </div>
       <p class="address">Address: ${wallet.address}</p>
-      <p class="balance">Balance: ${(parseInt(wallet.balance) / 1000000).toFixed(2)} ₳</p>
+      <p class="balance">Balance: ${(parseInt(wallet.balance) / ADA_LOVELACE).toFixed(2)} ₳</p>
       ${wallet.stake_address ? 
         `<p class="stake">Stake Address: ${wallet.stake_address}</p>` : 
         ''}
       ${wallet.assets && wallet.assets.length > 0 ? `
         <div class="assets">
-          <p class="assets-title">Assets:</p>
-          <div class="assets-list">
+          <p>Top Assets (${wallet.assets.length} of ${wallet.total_assets}):</p>
+          <ul>
             ${wallet.assets.map(asset => `
-              <div class="asset-item" title="${asset.unit}">
-                <span class="asset-quantity">${asset.quantity !== 1 ? `${asset.quantity}x` : ''}</span>
-                <span class="asset-name">${
-                  asset.display_name || 
-                  asset.asset_name || 
-                  (asset.unit.length > 20 ? asset.unit.substring(0, 20) + '...' : asset.unit)
-                }</span>
-                ${asset.onchain_metadata?.image ? 
-                  `<img src="${convertIpfsUrl(asset.onchain_metadata.image)}" alt="${asset.display_name || 'Asset'}" class="asset-image">` : 
-                  ''}
-              </div>
+              <li>
+                ${asset.display_name}: ${asset.quantity} 
+                ${asset.ticker ? `(${asset.ticker})` : ''}
+              </li>
             `).join('')}
-          </div>
+          </ul>
+          ${wallet.total_assets > MAX_STORED_ASSETS ? 
+            `<p class="more-assets">+ ${wallet.total_assets - MAX_STORED_ASSETS} more assets</p>` : 
+            ''}
         </div>
       ` : ''}
-      <p class="timestamp">Added: ${new Date(wallet.timestamp).toLocaleString()}</p>
     </div>
   `).join('');
 }
@@ -552,6 +568,15 @@ function setupEventListeners() {
     if (index !== undefined) {
       button.addEventListener('click', () => refreshWallet(parseInt(index)));
     }
+  });
+}
+
+// Helper to sort assets by ADA value
+function sortAssetsByValue(assets) {
+  return assets.sort((a, b) => {
+    const aQuantity = BigInt(a.quantity || '0');
+    const bQuantity = BigInt(b.quantity || '0');
+    return bQuantity > aQuantity ? 1 : -1;
   });
 }
 
