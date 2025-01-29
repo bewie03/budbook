@@ -160,12 +160,12 @@ async function getAssetMetadata(assetId) {
     const [assetData, assetDetails] = await Promise.all([
       // Get basic asset data
       fetch(`${BLOCKFROST_BASE_URL}/assets/${assetId}`, {
-        headers: { 'project_id': BLOCKFROST_PROJECT_ID }
+        headers: { 'project_id': BLOCKFROST_API_KEY }
       }).then(res => res.json()),
       
       // Get detailed metadata including decimals
       fetch(`${BLOCKFROST_BASE_URL}/assets/${assetId}/metadata`, {
-        headers: { 'project_id': BLOCKFROST_PROJECT_ID }
+        headers: { 'project_id': BLOCKFROST_API_KEY }
       }).then(res => res.json())
     ]);
 
@@ -229,46 +229,58 @@ app.get('/health', (req, res) => {
 
 async function fetchBlockfrost(endpoint, errorContext = '') {
   try {
-    if (!BLOCKFROST_API_KEY) {
-      throw new Error('BLOCKFROST_API_KEY not configured');
-    }
+    console.log(`Fetching from Blockfrost: ${endpoint}`);
 
     const response = await fetch(`${BLOCKFROST_BASE_URL}${endpoint}`, {
       headers: {
-        'project_id': BLOCKFROST_PROJECT_ID
+        'project_id': BLOCKFROST_API_KEY
       }
     });
     
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: 'Unknown error' }));
-      
-      // Handle specific Blockfrost error codes
-      switch (response.status) {
-        case 400:
-          throw new Error('Invalid address format');
-        case 402:
-          throw new Error('Project exceeded daily request limit');
-        case 403:
-          throw new Error('Invalid project token');
-        case 404:
-          throw new Error('Address not found');
-        case 418:
-          throw new Error('IP has been auto-banned for extensive sending of requests');
-        case 429:
-          throw new Error('Too many requests');
-        case 500:
-          throw new Error('Internal Blockfrost error');
-        default:
-          throw new Error(error.message || `HTTP error! status: ${response.status}`);
-      }
+      const error = await response.json();
+      console.error(`Blockfrost API error (${errorContext}):`, error);
+      throw new Error(`Blockfrost API error: ${error.message || 'Unknown error'}`);
     }
-    
+
     return await response.json();
   } catch (error) {
     console.error(`Error in Blockfrost API call (${errorContext}):`, error);
     throw error;
   }
 }
+
+// Get wallet info
+app.get('/api/wallet/:address', async (req, res) => {
+  try {
+    const { address } = req.params;
+    
+    // Check cache first
+    const cached = walletCache.get(address);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    // Fetch wallet data from Blockfrost
+    const walletData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
+    const assetsData = await fetchBlockfrost(`/addresses/${address}/total`, 'fetch wallet assets');
+
+    // Format response
+    const response = {
+      address,
+      balance: assetsData.lovelace ? (parseInt(assetsData.lovelace) / 1000000).toFixed(6) : '0',
+      assets: []
+    };
+
+    // Cache response for 5 minutes
+    walletCache.set(address, response);
+    
+    res.json(response);
+  } catch (error) {
+    console.error('Error fetching wallet data:', error);
+    res.status(500).json({ error: 'Failed to fetch wallet data' });
+  }
+});
 
 async function getAssetInfo(assetId) {
     try {
@@ -320,50 +332,6 @@ async function getAssetInfo(assetId) {
         return null;
     }
 }
-
-// Get wallet info
-app.get('/api/wallet/:address', async (req, res) => {
-  try {
-    const { address } = req.params;
-    
-    // Fetch basic wallet data
-    const walletData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
-    
-    // If wallet has assets, fetch their metadata
-    if (walletData.amount && walletData.amount.length > 0) {
-      const assets = [];
-      
-      // Process each asset
-      for (const asset of walletData.amount) {
-        if (asset.unit !== 'lovelace') {
-          try {
-            // Get metadata from cache or Blockfrost
-            const metadata = await getAssetMetadata(asset.unit);
-            assets.push({
-              ...metadata,
-              quantity: asset.quantity
-            });
-          } catch (error) {
-            console.error(`Error fetching metadata for asset ${asset.unit}:`, error);
-            // Include basic asset info even if metadata fetch fails
-            assets.push({
-              unit: asset.unit,
-              quantity: asset.quantity
-            });
-          }
-        }
-      }
-      
-      // Add processed assets to response
-      walletData.assets = assets;
-    }
-
-    res.json(walletData);
-  } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({ error: 'Failed to fetch wallet data' });
-  }
-});
 
 // Payment initiation endpoint
 app.post('/api/initiate-payment', express.json(), async (req, res) => {
@@ -431,7 +399,7 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
 
     // Get recent transactions
     const response = await fetch(`${BLOCKFROST_BASE_URL}/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`, {
-      headers: { 'project_id': BLOCKFROST_PROJECT_ID }
+      headers: { 'project_id': BLOCKFROST_API_KEY }
     });
 
     if (!response.ok) {
@@ -443,7 +411,7 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
     // Check recent transactions for the exact amount
     for (const tx of transactions) {
       const txResponse = await fetch(`${BLOCKFROST_BASE_URL}/txs/${tx.tx_hash}/utxos`, {
-        headers: { 'project_id': BLOCKFROST_PROJECT_ID }
+        headers: { 'project_id': BLOCKFROST_API_KEY }
       });
 
       if (!txResponse.ok) continue;
@@ -590,6 +558,6 @@ app.use((err, req, res, next) => {
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
   console.log('Environment:', process.env.NODE_ENV || 'development');
-  console.log('Blockfrost API configured:', !!BLOCKFROST_API_KEY);
-  console.log('Payment address configured:', !!PAYMENT_ADDRESS);
+  console.log('Blockfrost API configured:', !!process.env.BLOCKFROST_API_KEY);
+  console.log('Payment address configured:', !!process.env.PAYMENT_ADDRESS);
 });
