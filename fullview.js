@@ -678,15 +678,15 @@ async function initiatePayment() {
           <div class="address-container">
             <span class="label">Send to this address:</span>
             <div class="address-box">
-              <span class="address">${address}</span>
-              <button class="copy-button" data-address="${address}">
+              <span class="address" title="${address}">${truncateAddress(address, 12, 8)}</span>
+              <button class="copy-button" onclick="copyToClipboard('${address}')">
                 <i class="fas fa-copy"></i>
               </button>
             </div>
           </div>
           
           <div class="payment-note">
-            Payment will be verified automatically once confirmed on the blockchain.
+            Payment will be verified automatically once confirmed on the blockchain. 
             This payment is linked to your extension installation and can only be used once.
           </div>
         </div>

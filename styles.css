@@ -1781,40 +1781,61 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--input-bg);
   padding: 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--border-radius);
+  border: 1px solid var(--border-color);
+  margin-top: 8px;
 }
 
-.address {
+.address-box .address {
   font-family: monospace;
-  color: #fff;
   font-size: 14px;
-  word-break: break-all;
+  color: var(--text-color);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.copy-button {
-  background: rgba(255, 255, 255, 0.1);
+.address-box .copy-button {
+  background: transparent;
   border: none;
-  color: #6b8afd;
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
+  color: var(--text-secondary);
   cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
   transition: all 0.2s ease;
-  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.copy-button:hover {
-  background: rgba(255, 255, 255, 0.15);
-  transform: translateY(-1px);
+.address-box .copy-button:hover {
+  color: var(--text-color);
+  background: rgba(255, 255, 255, 0.1);
 }
 
-.payment-note {
-  color: #a0aec0;
-  font-size: 13px;
+.payment-details {
+  padding: 24px;
+}
+
+.payment-details .label {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.payment-details .value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.payment-details .payment-note {
+  margin-top: 24px;
+  color: var(--text-secondary);
+  font-size: 14px;
   line-height: 1.5;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }

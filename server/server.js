@@ -229,23 +229,37 @@ app.get('/health', (req, res) => {
 async function fetchBlockfrost(endpoint, errorContext = '') {
   try {
     console.log(`Fetching from Blockfrost: ${endpoint}`);
-
     const response = await fetch(`${BLOCKFROST_BASE_URL}${endpoint}`, {
-      headers: {
-        'project_id': BLOCKFROST_API_KEY
+      headers: { 
+        'project_id': BLOCKFROST_API_KEY,
+        'Content-Type': 'application/json'
       }
     });
-    
+
     if (!response.ok) {
-      const error = await response.json();
-      console.error(`Blockfrost API error (${errorContext}):`, error);
-      throw new Error(`Blockfrost API error: ${error.message || 'Unknown error'}`);
+      const errorData = await response.json().catch(() => ({}));
+      console.error(`Blockfrost API error (${errorContext}):`, {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorData
+      });
+      
+      if (response.status === 429) {
+        throw new Error('Rate limit exceeded. Please try again in a few minutes.');
+      } else if (response.status === 403) {
+        throw new Error('API key invalid or unauthorized.');
+      } else if (response.status === 404) {
+        throw new Error('Resource not found.');
+      } else {
+        throw new Error(`Blockfrost API error (${response.status}): ${errorData.message || response.statusText}`);
+      }
     }
 
-    return await response.json();
+    const data = await response.json();
+    return data;
   } catch (error) {
     console.error(`Error in Blockfrost API call (${errorContext}):`, error);
-    throw error;
+    throw new Error(`Failed to ${errorContext}: ${error.message}`);
   }
 }
 
@@ -436,40 +450,40 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
     }
 
     // Get recent transactions
-    const response = await fetch(`${BLOCKFROST_BASE_URL}/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`, {
-      headers: { 'project_id': BLOCKFROST_API_KEY }
-    });
+    try {
+      const transactions = await fetchBlockfrost(
+        `/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`, 
+        'fetch payment address transactions'
+      );
 
-    if (!response.ok) {
-      throw new Error('Failed to fetch transactions');
-    }
+      // Check recent transactions for the exact amount
+      for (const tx of transactions) {
+        try {
+          const txData = await fetchBlockfrost(
+            `/txs/${tx.tx_hash}/utxos`,
+            'fetch transaction UTXOs'
+          );
+          
+          // Calculate total ADA sent to our address in this transaction
+          const amountReceived = txData.outputs
+            .filter(output => output.address === PAYMENT_ADDRESS)
+            .reduce((sum, output) => {
+              return sum + (parseInt(output.amount[0].quantity) / 1000000); // Convert lovelace to ADA
+            }, 0);
 
-    const transactions = await response.json();
-
-    // Check recent transactions for the exact amount
-    for (const tx of transactions) {
-      const txResponse = await fetch(`${BLOCKFROST_BASE_URL}/txs/${tx.tx_hash}/utxos`, {
-        headers: { 'project_id': BLOCKFROST_API_KEY }
-      });
-
-      if (!txResponse.ok) continue;
-
-      const txData = await txResponse.json();
-      
-      // Calculate total ADA sent to our address in this transaction
-      const amountReceived = txData.outputs
-        .filter(output => output.address === PAYMENT_ADDRESS)
-        .reduce((sum, output) => {
-          return sum + (parseInt(output.amount[0].quantity) / 1000000); // Convert lovelace to ADA
-        }, 0);
-
-      // Check if amount matches exactly
-      if (Math.abs(amountReceived - parseFloat(payment.amount)) < 0.000001) {
-        payment.verified = true;
-        await setInCache(`payment:${paymentId}`, payment);
-        console.log('Payment verified for ID:', paymentId, 'Installation:', payment.installId);
-        return res.json({ verified: true, used: false });
+          // Check if amount matches exactly
+          if (Math.abs(amountReceived - parseFloat(payment.amount)) < 0.000001) {
+            payment.verified = true;
+            await setInCache(`payment:${paymentId}`, payment);
+            console.log('Payment verified for ID:', paymentId, 'Installation:', payment.installId);
+            return res.json({ verified: true, used: false });
+          }
+        } catch (error) {
+          console.error('Error fetching transaction UTXOs:', error);
+        }
       }
+    } catch (error) {
+      console.error('Error fetching payment address transactions:', error);
     }
 
     res.json({ verified: false });
