@@ -294,24 +294,20 @@ app.get('/api/wallet/:address', async (req, res) => {
 
     // Fetch all wallet data in parallel
     console.log(`Fetching wallet data from Blockfrost for ${address}`);
-    const [walletData, assetsData] = await Promise.all([
-      fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data'),
-      fetchBlockfrost(`/addresses/${address}/total`, 'fetch wallet assets')
-    ]);
+    const walletData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
 
     console.log('Wallet data response:', JSON.stringify(walletData, null, 2));
-    console.log('Assets data response:', JSON.stringify(assetsData, null, 2));
 
     // Process assets data
     const assets = [];
-    if (assetsData && Array.isArray(assetsData.tokens)) {
-      console.log(`Processing ${assetsData.tokens.length} assets`);
-      for (const token of assetsData.tokens) {
+    if (walletData && Array.isArray(walletData.amount)) {
+      console.log(`Processing ${walletData.amount.length} assets`);
+      for (const token of walletData.amount) {
         try {
-          console.log(`Fetching info for asset: ${token.unit}`);
           // Skip lovelace entries as they're handled in the balance
           if (token.unit === 'lovelace') continue;
 
+          console.log(`Fetching info for asset: ${token.unit}`);
           const assetInfo = await getAssetInfo(token.unit);
           if (assetInfo) {
             const asset = {
@@ -346,7 +342,9 @@ app.get('/api/wallet/:address', async (req, res) => {
     const response = {
       address,
       stake_address: walletData.stake_address,
-      balance: assetsData.lovelace ? (parseInt(assetsData.lovelace) / 1000000).toFixed(6) : '0',
+      balance: walletData.amount.find(a => a.unit === 'lovelace') ? 
+        (parseInt(walletData.amount.find(a => a.unit === 'lovelace').quantity) / 1000000).toFixed(6) : 
+        '0',
       assets: assets.sort((a, b) => b.quantity - a.quantity) // Sort by quantity descending
     };
 
