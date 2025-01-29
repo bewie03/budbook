@@ -93,16 +93,14 @@ async function setInCache(key, value, expirySeconds = null) {
 }
 
 function isValidUrl(url) {
-    if (!url || typeof url !== 'string') {
-        return null;
-    }
+    if (!url || typeof url !== 'string') return null;
     
     // Remove whitespace
     url = url.trim();
     
     // Handle IPFS URLs
     if (url.startsWith('ipfs://')) {
-        const ipfsHash = url.slice(7).replace(/\//g, '');
+        const ipfsHash = url.slice(7).replace(/^\/+|\/+$/g, '');
         return `https://ipfs.io/ipfs/${ipfsHash}`;
     }
     
@@ -112,16 +110,16 @@ function isValidUrl(url) {
     }
     
     // Ensure HTTPS
-    if (!url.startsWith('https://')) {
-        return null;
-    }
+    if (!url.startsWith('https://')) return null;
     
     try {
-        new URL(url);
-        return url;
+        const parsed = new URL(url);
+        if (parsed.protocol && parsed.host) return url;
     } catch {
         return null;
     }
+    
+    return null;
 }
 
 async function getAssetInfo(assetId) {
@@ -432,13 +430,58 @@ app.get('/api/wallet/:address', async (req, res) => {
                     await setInCache(cacheKey, assetInfo);
                 }
 
+                // Process metadata like the Discord bot
+                const onchainMetadata = assetInfo.onchain_metadata || {};
+                const metadata = assetInfo.metadata || {};
+
+                // Get image URL
+                let imageUrl = null;
+                // For tokens, check metadata fields
+                if (metadata) {
+                    for (const field of ['logo', 'icon', 'image']) {
+                        if (metadata[field]) {
+                            const url = isValidUrl(metadata[field]);
+                            if (url) {
+                                imageUrl = url;
+                                break;
+                            }
+                        }
+                    }
+                }
+                // For NFTs, check onchain metadata
+                if (!imageUrl && onchainMetadata) {
+                    for (const field of ['image', 'mediaUrl', 'thumbnailUrl']) {
+                        if (onchainMetadata[field]) {
+                            const url = isValidUrl(onchainMetadata[field]);
+                            if (url) {
+                                imageUrl = url;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Get name from metadata or onchain_metadata
+                const name = onchainMetadata.name || 
+                            metadata.name || 
+                            (() => {
+                                try {
+                                    const hexName = amount.unit.split('.').pop();
+                                    if (hexName && /^[0-9a-fA-F]+$/.test(hexName)) {
+                                        const decoded = Buffer.from(hexName, 'hex').toString('utf8');
+                                        if (decoded && /^[\x20-\x7E]*$/.test(decoded)) return decoded;
+                                    }
+                                } catch {}
+                                return amount.unit;
+                            })();
+
                 assets.push({
                     unit: amount.unit,
                     quantity: amount.quantity,
-                    decimals: assetInfo.metadata?.decimals || 0,
-                    name: assetInfo.onchain_metadata?.name || assetInfo.metadata?.name || amount.unit,
-                    image: assetInfo.onchain_metadata?.image || assetInfo.metadata?.image || null,
-                    ticker: assetInfo.metadata?.ticker || null,
+                    decimals: metadata.decimals || 0,
+                    name: name,
+                    image: imageUrl,
+                    ticker: metadata.ticker || null,
                     is_nft: amount.quantity === '1'
                 });
             } catch (error) {
