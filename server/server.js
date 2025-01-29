@@ -18,7 +18,6 @@ app.set('trust proxy', 1);
 
 const port = process.env.PORT || 3000;
 const BLOCKFROST_API_KEY = process.env.BLOCKFROST_API_KEY;
-const BLOCKFROST_PROJECT_ID = process.env.BLOCKFROST_PROJECT_ID;
 const BLOCKFROST_BASE_URL = 'https://cardano-mainnet.blockfrost.io/api/v0';
 const PAYMENT_ADDRESS = process.env.PAYMENT_ADDRESS;
 const REQUIRED_PAYMENT = 2000000; // 2 ADA in lovelace
