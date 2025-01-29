@@ -669,15 +669,15 @@ async function initiatePayment() {
         
         <div class="payment-details">
           <div class="amount-display">
-            <span class="label">Amount:</span>
-            <span class="value">${amount} ADA</span>
+            <span class="label">AMOUNT:</span>
+            <span class="value">${parseFloat(amount).toFixed(6)} ADA</span>
           </div>
           
           <div class="address-container">
-            <span class="label">Send to this address:</span>
+            <span class="label">SEND TO THIS ADDRESS:</span>
             <div class="address-box">
               <span class="address" title="${address}">${truncateAddress(address, 12, 8)}</span>
-              <button class="copy-button" onclick="copyToClipboard('${address}')">
+              <button class="copy-button" data-address="${address}">
                 <i class="fas fa-copy"></i>
               </button>
             </div>
@@ -700,8 +700,10 @@ async function initiatePayment() {
     // Handle copy button
     modal.querySelector('.copy-button').addEventListener('click', async (e) => {
       const address = e.currentTarget.dataset.address;
-      await navigator.clipboard.writeText(address);
-      showSuccess('Address copied to clipboard!');
+      if (address) {
+        await copyToClipboard(address);
+        showSuccess('Address copied to clipboard!');
+      }
     });
     
     // Handle close button
