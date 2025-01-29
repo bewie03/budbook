@@ -550,8 +550,28 @@ app.get('/api/cache', async (req, res) => {
     for (const key of keys) {
       const value = await redis.get(key);
       try {
-        cacheData[key] = JSON.parse(value);
+        const parsed = JSON.parse(value);
+        // Filter out large data fields
+        if (parsed && typeof parsed === 'object') {
+          // For assets, only show essential metadata
+          if (key.startsWith('asset:')) {
+            cacheData[key] = {
+              display_name: parsed.display_name,
+              decimals: parsed.decimals,
+              ticker: parsed.ticker,
+              policy_id: parsed.policy_id,
+              fingerprint: parsed.fingerprint,
+              has_metadata: !!parsed.metadata,
+              has_image: !!(parsed.metadata?.image || parsed.metadata?.logo)
+            };
+          } else {
+            cacheData[key] = parsed;
+          }
+        } else {
+          cacheData[key] = value;
+        }
       } catch (e) {
+        // If not JSON, store as is
         cacheData[key] = value;
       }
     }

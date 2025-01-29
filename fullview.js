@@ -73,7 +73,26 @@ async function loadWallets() {
 
 async function saveWallets() {
   try {
-    await chrome.storage.sync.set({ wallets, unlockedSlots });
+    // Only store essential wallet data to avoid quota issues
+    const minimalWallets = wallets.map(wallet => ({
+      address: wallet.address,
+      stake_address: wallet.stake_address,
+      balance: wallet.balance,
+      // Only store essential asset data
+      assets: wallet.assets?.map(asset => ({
+        unit: asset.unit,
+        quantity: asset.quantity,
+        decimals: asset.decimals,
+        readable_amount: asset.readable_amount,
+        display_name: asset.display_name,
+        ticker: asset.ticker
+      })) || []
+    }));
+
+    await chrome.storage.sync.set({ 
+      wallets: minimalWallets, 
+      unlockedSlots 
+    });
   } catch (error) {
     console.error('Error saving wallets:', error);
     showError('Failed to save wallet changes');
@@ -762,15 +781,23 @@ async function fetchWalletData(address) {
   try {
     const response = await fetch(`${API_BASE_URL}/api/wallet/${address}`);
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Failed to fetch wallet data');
+      throw new Error(`HTTP error! status: ${response.status}`);
     }
     const data = await response.json();
+    
+    // Store only essential data
     return {
       address: data.address,
       stake_address: data.stake_address,
       balance: data.balance,
-      assets: data.assets || []
+      assets: data.assets?.map(asset => ({
+        unit: asset.unit,
+        quantity: asset.quantity,
+        decimals: asset.decimals,
+        readable_amount: asset.readable_amount,
+        display_name: asset.display_name,
+        ticker: asset.ticker
+      })) || []
     };
   } catch (error) {
     console.error('Error fetching wallet data:', error);
