@@ -188,6 +188,6 @@ class CardanoAddressBook {
 }
 
 // Initialize the app
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
   new CardanoAddressBook();
 });
