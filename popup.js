@@ -74,19 +74,16 @@ async function verifyPayment(address) {
 async function loadWallets() {
   return new Promise((resolve, reject) => {
     try {
-      chrome.storage.sync.get(['wallets', 'unlockedSlots'], (data) => {
+      chrome.storage.local.get(['wallets', 'unlockedSlots'], (data) => {
         if (chrome.runtime.lastError) {
-          console.error('Error loading from storage:', chrome.runtime.lastError);
           reject(chrome.runtime.lastError);
           return;
         }
-        console.log('Loaded from storage:', data);
         wallets = data.wallets || [];
         unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
         resolve();
       });
     } catch (error) {
-      console.error('Error in loadWallets:', error);
       reject(error);
     }
   });
@@ -95,17 +92,38 @@ async function loadWallets() {
 async function saveWallets() {
   return new Promise((resolve, reject) => {
     try {
-      chrome.storage.sync.set({ wallets, unlockedSlots }, () => {
+      // Clean up wallet data before saving
+      const cleanWallets = wallets.map(wallet => ({
+        address: wallet.address,
+        name: wallet.name,
+        balance: wallet.balance,
+        stake_address: wallet.stake_address,
+        timestamp: wallet.timestamp,
+        walletType: wallet.walletType,
+        logo: wallet.logo,
+        assets: wallet.assets ? wallet.assets.map(asset => ({
+          unit: asset.unit,
+          quantity: asset.quantity,
+          display_name: asset.display_name,
+          asset_name: asset.asset_name,
+          onchain_metadata: asset.onchain_metadata ? {
+            name: asset.onchain_metadata.name,
+            image: asset.onchain_metadata.image
+          } : null
+        })) : []
+      }));
+
+      chrome.storage.local.set({ 
+        wallets: cleanWallets, 
+        unlockedSlots 
+      }, () => {
         if (chrome.runtime.lastError) {
-          console.error('Error saving to storage:', chrome.runtime.lastError);
-          reject(chrome.runtime.lastError);
+          reject(new Error('Error saving to storage: ' + chrome.runtime.lastError.message));
           return;
         }
-        console.log('Saved to storage:', { wallets, unlockedSlots });
         resolve();
       });
     } catch (error) {
-      console.error('Error in saveWallets:', error);
       reject(error);
     }
   });
@@ -247,15 +265,11 @@ function renderWallets() {
 }
 
 function renderWalletSelector() {
-  return `
-    <select id="walletType">
-      ${Object.entries(WALLET_LOGOS).map(([name, logo]) => `
-        <option value="${name}" ${name === 'None' ? 'selected' : ''}>
-          ${name}
-        </option>
-      `).join('')}
-    </select>
-  `;
+  return Object.entries(WALLET_LOGOS).map(([name, logo]) => `
+    <option value="${name}" ${name === 'None' ? 'selected' : ''}>
+      ${name}
+    </option>
+  `).join('');
 }
 
 async function deleteWallet(index) {
@@ -295,6 +309,7 @@ function updateUI() {
   const availableSlotsElement = document.getElementById('availableSlots');
   const walletListElement = document.getElementById('walletList');
   const unlockButtonElement = document.getElementById('unlockButton');
+  const walletTypeSelect = document.getElementById('walletType');
   
   if (!availableSlotsElement || !walletListElement) {
     console.error('Required DOM elements not found');
@@ -306,6 +321,11 @@ function updateUI() {
   
   // Update wallet list
   walletListElement.innerHTML = renderWallets();
+  
+  // Update wallet type selector
+  if (walletTypeSelect) {
+    walletTypeSelect.innerHTML = renderWalletSelector();
+  }
   
   // Update unlock button visibility
   if (unlockButtonElement) {
@@ -376,23 +396,23 @@ function setupEventListeners() {
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    console.log('Extension popup opened');
     await loadWallets();
+    
+    // Initialize wallet type selector
+    const walletTypeSelect = document.getElementById('walletType');
+    if (walletTypeSelect) {
+      walletTypeSelect.innerHTML = renderWalletSelector();
+    }
+    
     updateUI();
+    
+    // Add event listeners
+    document.getElementById('addWallet')?.addEventListener('click', addWallet);
+    document.getElementById('viewAll')?.addEventListener('click', () => {
+      chrome.tabs.create({ url: 'fullview.html' });
+    });
   } catch (error) {
     console.error('Failed to initialize:', error);
-    const root = document.getElementById('root');
-    if (root) {
-      root.innerHTML = `
-        <div class="container">
-          <div class="error-container">
-            <div class="error visible">
-              Failed to initialize: ${error.message}
-            </div>
-            <button class="primary retry-button" onclick="location.reload()">Retry</button>
-          </div>
-        </div>
-      `;
-    }
+    showError('Failed to initialize: ' + error.message);
   }
 });

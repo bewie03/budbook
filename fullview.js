@@ -46,7 +46,7 @@ async function fetchWalletData(address) {
 async function loadWallets() {
   return new Promise((resolve, reject) => {
     try {
-      chrome.storage.sync.get(['wallets', 'unlockedSlots'], (data) => {
+      chrome.storage.local.get(['wallets', 'unlockedSlots'], (data) => {
         if (chrome.runtime.lastError) {
           reject(chrome.runtime.lastError);
           return;
@@ -64,9 +64,33 @@ async function loadWallets() {
 async function saveWallets() {
   return new Promise((resolve, reject) => {
     try {
-      chrome.storage.sync.set({ wallets, unlockedSlots }, () => {
+      // Clean up wallet data before saving
+      const cleanWallets = wallets.map(wallet => ({
+        address: wallet.address,
+        name: wallet.name,
+        balance: wallet.balance,
+        stake_address: wallet.stake_address,
+        timestamp: wallet.timestamp,
+        walletType: wallet.walletType,
+        logo: wallet.logo,
+        assets: wallet.assets ? wallet.assets.map(asset => ({
+          unit: asset.unit,
+          quantity: asset.quantity,
+          display_name: asset.display_name,
+          asset_name: asset.asset_name,
+          onchain_metadata: asset.onchain_metadata ? {
+            name: asset.onchain_metadata.name,
+            image: asset.onchain_metadata.image
+          } : null
+        })) : []
+      }));
+
+      chrome.storage.local.set({ 
+        wallets: cleanWallets, 
+        unlockedSlots 
+      }, () => {
         if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
+          reject(new Error('Error saving to storage: ' + chrome.runtime.lastError.message));
           return;
         }
         resolve();
@@ -103,26 +127,17 @@ function validateAddress(address) {
   return address && address.startsWith('addr1') && address.length >= 59;
 }
 
-function renderWalletSelector() {
-  return `
-    <select id="walletType">
-      ${Object.entries(WALLET_LOGOS).map(([name, logo]) => `
-        <option value="${name}" ${name === 'None' ? 'selected' : ''}>
-          ${name}
-        </option>
-      `).join('')}
-    </select>
-  `;
-}
-
 function renderWallets() {
   if (!wallets.length) {
-    return '<p style="text-align: center; color: #808080; font-style: italic;">No wallets added yet</p>';
+    return '<p class="no-wallets">No wallets added yet</p>';
   }
 
   return wallets.map((wallet, index) => `
     <div class="wallet-item">
-      <button class="delete delete-btn" data-index="${index}">×</button>
+      <div class="wallet-actions">
+        <button class="refresh-btn" data-index="${index}" title="Refresh Balance">↻</button>
+        <button class="delete delete-btn" data-index="${index}">×</button>
+      </div>
       <div class="wallet-header">
         ${wallet.walletType !== 'None' && WALLET_LOGOS[wallet.walletType] ? 
           `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-logo">` : 
@@ -130,13 +145,55 @@ function renderWallets() {
         <h3>${wallet.name}</h3>
       </div>
       <p class="address">Address: ${wallet.address}</p>
-      <p class="balance">Balance: ${(wallet.balance / 1000000).toFixed(2)} ₳</p>
+      <p class="balance">Balance: ${(parseInt(wallet.balance) / 1000000).toFixed(2)} ₳</p>
       ${wallet.stake_address ? 
         `<p class="stake">Stake Address: ${wallet.stake_address}</p>` : 
         ''}
+      ${wallet.assets && wallet.assets.length > 0 ? `
+        <div class="assets">
+          <p class="assets-title">Assets:</p>
+          <div class="assets-list">
+            ${wallet.assets.map(asset => `
+              <div class="asset-item" title="${asset.unit}">
+                <span class="asset-quantity">${asset.quantity}×</span>
+                <span class="asset-name">${
+                  asset.display_name || 
+                  asset.asset_name || 
+                  (asset.unit.length > 20 ? asset.unit.substring(0, 20) + '...' : asset.unit)
+                }</span>
+                ${asset.onchain_metadata?.image ? 
+                  `<img src="${asset.onchain_metadata.image}" alt="${asset.display_name || 'Asset'}" class="asset-image">` : 
+                  ''}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
       <p class="timestamp">Added: ${new Date(wallet.timestamp).toLocaleString()}</p>
     </div>
   `).join('');
+}
+
+async function refreshWallet(index) {
+  try {
+    const wallet = wallets[index];
+    if (!wallet) {
+      throw new Error('Wallet not found');
+    }
+
+    showSuccess('Refreshing wallet data...');
+    const walletData = await fetchWalletData(wallet.address);
+    
+    wallet.balance = walletData.balance;
+    wallet.assets = walletData.assets;
+    wallet.timestamp = Date.now();
+    
+    await saveWallets();
+    updateUI();
+    showSuccess('Wallet data updated!');
+  } catch (error) {
+    showError(error.message || 'Failed to refresh wallet');
+  }
 }
 
 async function addWallet() {
@@ -182,7 +239,8 @@ async function addWallet() {
       stake_address: walletData.stake_address,
       timestamp: Date.now(),
       walletType: selectedWallet,
-      logo: WALLET_LOGOS[selectedWallet]
+      logo: WALLET_LOGOS[selectedWallet],
+      assets: walletData.assets || []
     });
 
     await saveWallets();
@@ -196,20 +254,28 @@ async function addWallet() {
   }
 }
 
-async function deleteWallet(index) {
-  try {
-    wallets.splice(index, 1);
-    await saveWallets();
-    updateUI();
-    showSuccess('Wallet deleted successfully!');
-  } catch (error) {
-    showError('Failed to delete wallet');
-  }
-}
-
 function updateUI() {
-  document.getElementById('availableSlots').textContent = `${wallets.length} / ${unlockedSlots}`;
-  document.getElementById('walletList').innerHTML = renderWallets();
+  const availableSlotsElement = document.getElementById('availableSlots');
+  const walletListElement = document.getElementById('walletList');
+  const unlockButtonElement = document.getElementById('unlockButton');
+  
+  if (!availableSlotsElement || !walletListElement) {
+    console.error('Required DOM elements not found');
+    return;
+  }
+
+  // Update available slots
+  availableSlotsElement.textContent = `${wallets.length} / ${unlockedSlots}`;
+  
+  // Update wallet list
+  walletListElement.innerHTML = renderWallets();
+  
+  // Update unlock button visibility
+  if (unlockButtonElement) {
+    unlockButtonElement.classList.toggle('hidden', unlockedSlots >= MAX_TOTAL_SLOTS);
+  }
+
+  // Setup event listeners for the newly rendered elements
   setupEventListeners();
 }
 
@@ -224,6 +290,14 @@ function setupEventListeners() {
     const index = button.dataset.index;
     if (index !== undefined) {
       button.addEventListener('click', () => deleteWallet(parseInt(index)));
+    }
+  });
+
+  const refreshButtons = document.querySelectorAll('.refresh-btn');
+  refreshButtons.forEach(button => {
+    const index = button.dataset.index;
+    if (index !== undefined) {
+      button.addEventListener('click', () => refreshWallet(parseInt(index)));
     }
   });
 
@@ -242,28 +316,64 @@ function setupEventListeners() {
           <button class="close">Close</button>
         </div>
       `;
-      document.body.appendChild(instructions);
-      instructions.querySelector('.close')?.addEventListener('click', () => {
-        instructions.remove();
-      });
+      
+      const root = document.getElementById('root');
+      if (root) {
+        root.appendChild(instructions);
+        const closeBtn = instructions.querySelector('.close');
+        if (closeBtn) {
+          closeBtn.addEventListener('click', () => instructions.remove());
+        }
+      }
     });
   }
+}
+
+async function deleteWallet(index) {
+  try {
+    wallets.splice(index, 1);
+    await saveWallets();
+    updateUI();
+    showSuccess('Wallet deleted successfully!');
+  } catch (error) {
+    showError('Failed to delete wallet');
+  }
+}
+
+function renderWalletSelector() {
+  return Object.entries(WALLET_LOGOS).map(([name, logo]) => `
+    <option value="${name}" ${name === 'None' ? 'selected' : ''}>
+      ${name}
+    </option>
+  `).join('');
 }
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     await loadWallets();
+    
+    // Initialize wallet type selector
     const walletTypeSelect = document.getElementById('walletType');
     if (walletTypeSelect) {
-      walletTypeSelect.innerHTML = Object.entries(WALLET_LOGOS).map(([name, logo]) => `
-        <option value="${name}" ${name === 'None' ? 'selected' : ''}>
-          ${name}
-        </option>
-      `).join('');
+      walletTypeSelect.innerHTML = renderWalletSelector();
     }
+    
     updateUI();
   } catch (error) {
-    showError('Failed to initialize: ' + error.message);
+    console.error('Failed to initialize:', error);
+    const root = document.getElementById('root');
+    if (root) {
+      root.innerHTML = `
+        <div class="container">
+          <div class="error-container">
+            <div class="error visible">
+              Failed to initialize: ${error.message}
+            </div>
+            <button class="primary retry-button" onclick="location.reload()">Retry</button>
+          </div>
+        </div>
+      `;
+    }
   }
 });
