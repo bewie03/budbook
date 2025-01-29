@@ -114,18 +114,26 @@ async function getAssetMetadata(assetId) {
 
   try {
     // Fetch metadata from Blockfrost
-    const response = await fetch(`${BLOCKFROST_BASE_URL}/assets/${assetId}`, {
-      headers: {
-        'project_id': BLOCKFROST_PROJECT_ID
-      }
-    });
+    const [assetData, assetDetails] = await Promise.all([
+      // Get basic asset data
+      fetch(`${BLOCKFROST_BASE_URL}/assets/${assetId}`, {
+        headers: { 'project_id': BLOCKFROST_PROJECT_ID }
+      }).then(res => res.json()),
+      
+      // Get detailed metadata including decimals
+      fetch(`${BLOCKFROST_BASE_URL}/assets/${assetId}/metadata`, {
+        headers: { 'project_id': BLOCKFROST_PROJECT_ID }
+      }).then(res => res.json())
+    ]);
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
+    // Combine the data
+    const data = {
+      ...assetData,
+      decimals: assetDetails.decimals,
+      metadata: assetDetails
+    };
 
-    const data = await response.json();
-    console.log(`Caching metadata for asset ${assetId}`);
+    console.log(`Caching metadata for asset ${assetId}:`, data);
     
     // Cache the metadata permanently since it's immutable on Cardano
     await redis.set(cacheKey, JSON.stringify(data));
