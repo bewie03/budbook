@@ -95,19 +95,20 @@ async function saveWallets() {
           quantity: asset.quantity,
           display_name: asset.display_name,
           asset_name: asset.asset_name,
-          onchain_metadata: asset.onchain_metadata ? {
-            name: asset.onchain_metadata.name,
-            image: asset.onchain_metadata.image
-          } : null
+          metadata: asset.metadata,
+          onchain_metadata: asset.onchain_metadata,
+          decimals: asset.metadata?.decimals || asset.onchain_metadata?.decimals || 0,
+          fingerprint: asset.fingerprint,
+          policy_id: asset.policy_id
         })) : []
       }));
 
-      chrome.storage.local.set({ 
-        wallets: cleanWallets, 
-        unlockedSlots 
+      chrome.storage.local.set({
+        wallets: cleanWallets,
+        unlockedSlots
       }, () => {
         if (chrome.runtime.lastError) {
-          reject(new Error('Error saving to storage: ' + chrome.runtime.lastError.message));
+          reject(chrome.runtime.lastError);
           return;
         }
         resolve();

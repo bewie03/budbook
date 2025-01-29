@@ -10,6 +10,10 @@ const fs = require('fs').promises;
 dotenv.config();
 
 const app = express();
+
+// Trust proxy - required for Heroku
+app.set('trust proxy', 1);
+
 const port = process.env.PORT || 3000;
 const BLOCKFROST_API_KEY = process.env.BLOCKFROST_API_KEY;
 const BLOCKFROST_BASE_URL = 'https://cardano-mainnet.blockfrost.io/api/v0';
