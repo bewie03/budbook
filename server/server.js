@@ -78,27 +78,41 @@ process.on('SIGINT', async () => {
 });
 
 // Redis client setup
+const redisUrl = process.env.REDIS_URL || process.env.REDISCLOUD_URL;
 const redis = createClient({
-  url: process.env.REDIS_URL || process.env.REDISCLOUD_URL,
+  url: redisUrl,
   socket: {
-    tls: process.env.NODE_ENV === 'production',
+    tls: true,
+    servername: new URL(redisUrl).hostname,
     rejectUnauthorized: false,
-    servername: new URL(process.env.REDIS_URL || process.env.REDISCLOUD_URL).hostname
-  }
+    secureProtocol: 'TLSv1_2_method'
+  },
+  legacyMode: false
 });
 
-redis.on('error', err => console.error('Redis Client Error:', err));
-redis.on('connect', () => console.log('Connected to Redis Cloud'));
+redis.on('error', err => {
+  console.error('Redis Client Error:', err);
+  // Log full error details for debugging
+  console.error('Full error:', JSON.stringify(err, null, 2));
+});
+
+redis.on('connect', () => {
+  console.log('Connected to Redis Cloud at:', new URL(redisUrl).hostname);
+});
 
 // Connect to Redis
 (async () => {
   try {
     await redis.connect();
     console.log('Successfully connected to Redis');
+    
+    // Test the connection
+    await redis.set('test', 'working');
+    const testResult = await redis.get('test');
+    console.log('Redis test result:', testResult);
   } catch (error) {
     console.error('Failed to connect to Redis:', error);
-    // Fallback to in-memory cache if Redis fails
-    console.log('Using in-memory cache as fallback');
+    console.error('Full connection error:', JSON.stringify(error, null, 2));
   }
 })();
 
