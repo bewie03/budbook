@@ -4,8 +4,7 @@
   "version": "1.0.0",
   "description": "Store, name, and track Cardano wallet addresses with ease",
   "permissions": [
-    "storage",
-    "notifications"
+    "storage"
   ],
   "host_permissions": [
     "https://budbook-2410440cbb61.herokuapp.com/*",
@@ -14,11 +13,15 @@
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
-      "48": "icons/icon48.png"
+      "16": "icons/extensionlogo.png",
+      "48": "icons/extensionlogo.png",
+      "128": "icons/extensionlogo.png"
     }
   },
   "icons": {
-    "48": "icons/icon48.png"
+    "16": "icons/extensionlogo.png",
+    "48": "icons/extensionlogo.png",
+    "128": "icons/extensionlogo.png"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com/ https://cardano-mainnet.blockfrost.io/;"
