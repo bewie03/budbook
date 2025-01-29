@@ -2,6 +2,7 @@
   "name": "budbook",
   "version": "1.0.0",
   "description": "Cardano Address Book Chrome Extension",
+  "type": "module",
   "scripts": {
     "start": "node server/server.js"
   },
