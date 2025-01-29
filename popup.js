@@ -159,70 +159,75 @@ function validateAddress(address) {
 }
 
 async function addWallet() {
+  const addressInput = document.getElementById('addressInput');
+  const nameInput = document.getElementById('nameInput');
+  const walletTypeSelect = document.getElementById('walletType');
+  
+  const address = addressInput?.value?.trim();
+  const name = nameInput?.value?.trim();
+  const walletType = walletTypeSelect?.value;
+
   try {
-    const addressInput = document.getElementById('addressInput');
-    const nameInput = document.getElementById('nameInput');
-    const walletSelect = document.getElementById('walletType');
-    
-    if (!addressInput || !nameInput || !walletSelect) {
-      throw new Error('UI elements not found');
+    if (!address) {
+      throw new Error('Please enter a wallet address');
     }
-
-    const address = addressInput.value.trim();
-    const name = nameInput.value.trim();
-    const selectedWallet = walletSelect.value;
-
-    if (!validateAddress(address)) {
-      showError('Invalid Cardano address');
-      return;
-    }
-
     if (!name) {
-      showError('Please enter a wallet name');
-      return;
+      throw new Error('Please enter a wallet name');
     }
-
     if (wallets.length >= unlockedSlots) {
-      showError('Maximum wallet slots reached. Please unlock more slots.');
-      return;
+      throw new Error('No available slots. Please unlock more slots.');
     }
-
     if (wallets.some(w => w.address === address)) {
-      showError('This wallet is already in your address book');
-      return;
+      throw new Error('This wallet address is already in your address book');
     }
 
-    console.log('Adding wallet:', { name, address, selectedWallet });
+    showSuccess('Adding wallet...');
     const walletData = await fetchWalletData(address);
-
-    wallets.push({
+    
+    const wallet = {
       address,
       name,
-      balance: walletData.balance || 0,
+      walletType,
+      balance: walletData.balance,
       stake_address: walletData.stake_address,
-      timestamp: Date.now(),
-      walletType: selectedWallet,
-      logo: WALLET_LOGOS[selectedWallet],
-      assets: walletData.assets || []
-    });
+      assets: walletData.assets,
+      timestamp: Date.now()
+    };
 
+    wallets.push(wallet);
     await saveWallets();
-    updateUI();
+    
+    // Clear inputs
     addressInput.value = '';
     nameInput.value = '';
-    walletSelect.value = 'None';
+    walletTypeSelect.value = 'None';
+    
     showSuccess('Wallet added successfully!');
   } catch (error) {
+    console.error('Failed to add wallet:', error);
     showError(error.message || 'Failed to add wallet');
   }
 }
 
 function convertIpfsUrl(url) {
-  if (!url) return '';
+  if (!url || typeof url !== 'string') return '';
+  
+  // Handle ipfs:// protocol
   if (url.startsWith('ipfs://')) {
     const hash = url.replace('ipfs://', '');
     return `https://ipfs.io/ipfs/${hash}`;
   }
+  
+  // If it's already a gateway URL, return as is
+  if (url.includes('/ipfs/')) {
+    return url;
+  }
+  
+  // If it looks like a raw IPFS hash, add the gateway prefix
+  if (url.startsWith('Qm') || url.startsWith('bafy')) {
+    return `https://ipfs.io/ipfs/${url}`;
+  }
+  
   return url;
 }
 
@@ -302,6 +307,15 @@ async function refreshWallet(index) {
     showSuccess('Refreshing wallet data...');
     const walletData = await fetchWalletData(wallet.address);
     
+    console.log('Wallet data received:', walletData);
+    if (walletData.assets) {
+      console.log('Assets:', walletData.assets.map(asset => ({
+        unit: asset.unit,
+        metadata: asset.onchain_metadata,
+        image: asset.onchain_metadata?.image
+      })));
+    }
+    
     wallet.balance = walletData.balance;
     wallet.assets = walletData.assets;
     wallet.timestamp = Date.now();
@@ -310,6 +324,7 @@ async function refreshWallet(index) {
     updateUI();
     showSuccess('Wallet data updated!');
   } catch (error) {
+    console.error('Error refreshing wallet:', error);
     showError(error.message || 'Failed to refresh wallet');
   }
 }
@@ -413,12 +428,31 @@ document.addEventListener('DOMContentLoaded', async () => {
       walletTypeSelect.innerHTML = renderWalletSelector();
     }
     
-    updateUI();
+    // Update slots count
+    const availableSlotsElement = document.getElementById('availableSlots');
+    if (availableSlotsElement) {
+      availableSlotsElement.textContent = `${wallets.length} / ${unlockedSlots}`;
+    }
     
     // Add event listeners
-    document.getElementById('addWallet')?.addEventListener('click', addWallet);
-    document.getElementById('viewAll')?.addEventListener('click', () => {
+    document.getElementById('openFullview')?.addEventListener('click', () => {
       chrome.tabs.create({ url: 'fullview.html' });
+    });
+    
+    document.getElementById('quickAdd')?.addEventListener('click', () => {
+      const form = document.getElementById('quickAddForm');
+      if (form) {
+        form.classList.toggle('hidden');
+      }
+    });
+    
+    document.getElementById('addWallet')?.addEventListener('click', async () => {
+      await addWallet();
+      // Hide form after adding
+      const form = document.getElementById('quickAddForm');
+      if (form) {
+        form.classList.add('hidden');
+      }
     });
   } catch (error) {
     console.error('Failed to initialize:', error);

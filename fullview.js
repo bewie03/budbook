@@ -128,12 +128,41 @@ function validateAddress(address) {
 }
 
 function convertIpfsUrl(url) {
-  if (!url) return '';
+  if (!url || typeof url !== 'string') return '';
+  
+  // Handle ipfs:// protocol
   if (url.startsWith('ipfs://')) {
     const hash = url.replace('ipfs://', '');
     return `https://ipfs.io/ipfs/${hash}`;
   }
+  
+  // If it's already a gateway URL, return as is
+  if (url.includes('/ipfs/')) {
+    return url;
+  }
+  
+  // If it looks like a raw IPFS hash, add the gateway prefix
+  if (url.startsWith('Qm') || url.startsWith('bafy')) {
+    return `https://ipfs.io/ipfs/${url}`;
+  }
+  
   return url;
+}
+
+function truncateAddress(address, startLength = 8, endLength = 8) {
+  if (!address) return '';
+  if (address.length <= startLength + endLength) return address;
+  return `${address.slice(0, startLength)}...${address.slice(-endLength)}`;
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showSuccess('Copied to clipboard!');
+  } catch (err) {
+    console.error('Failed to copy:', err);
+    showError('Failed to copy to clipboard');
+  }
 }
 
 function renderWallets() {
@@ -147,20 +176,52 @@ function renderWallets() {
         <button class="refresh-btn" data-index="${index}" title="Refresh Balance">↻</button>
         <button class="delete delete-btn" data-index="${index}">×</button>
       </div>
+      
       <div class="wallet-header">
         ${wallet.walletType !== 'None' && WALLET_LOGOS[wallet.walletType] ? 
           `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-logo">` : 
           ''}
         <h3>${wallet.name}</h3>
       </div>
-      <p class="address">Address: ${wallet.address}</p>
-      <p class="balance">Balance: ${(parseInt(wallet.balance) / 1000000).toFixed(2)} ₳</p>
-      ${wallet.stake_address ? 
-        `<p class="stake">Stake Address: ${wallet.stake_address}</p>` : 
-        ''}
+      
+      <div class="address-group">
+        <div class="address-label">Address</div>
+        <div class="address-container">
+          <span class="address">${truncateAddress(wallet.address)}</span>
+          <button class="copy-btn" data-copy="${wallet.address}" title="Copy Address">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="balance-container">
+        <span class="balance">${(parseInt(wallet.balance) / 1000000).toFixed(2)} ₳</span>
+      </div>
+      
+      ${wallet.stake_address ? `
+        <div class="address-group">
+          <div class="address-label">Stake Address</div>
+          <div class="address-container">
+            <span class="stake">${truncateAddress(wallet.stake_address)}</span>
+            <button class="copy-btn" data-copy="${wallet.stake_address}" title="Copy Stake Address">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+      ` : ''}
+      
       ${wallet.assets && wallet.assets.length > 0 ? `
-        <div class="assets">
-          <p class="assets-title">Assets:</p>
+        <button class="assets-toggle" data-index="${index}">
+          <span class="arrow">▼</span>
+          Assets (${wallet.assets.length})
+        </button>
+        <div class="assets" id="assets-${index}">
           <div class="assets-list">
             ${wallet.assets.map(asset => `
               <div class="asset-item" title="${asset.unit}">
@@ -168,7 +229,7 @@ function renderWallets() {
                 <span class="asset-name">${
                   asset.display_name || 
                   asset.asset_name || 
-                  (asset.unit.length > 20 ? asset.unit.substring(0, 20) + '...' : asset.unit)
+                  truncateAddress(asset.unit, 6, 6)
                 }</span>
                 ${asset.onchain_metadata?.image ? 
                   `<img src="${convertIpfsUrl(asset.onchain_metadata.image)}" alt="${asset.display_name || 'Asset'}" class="asset-image">` : 
@@ -178,7 +239,8 @@ function renderWallets() {
           </div>
         </div>
       ` : ''}
-      <p class="timestamp">Added: ${new Date(wallet.timestamp).toLocaleString()}</p>
+      
+      <p class="timestamp">Last updated: ${new Date(wallet.timestamp).toLocaleString()}</p>
     </div>
   `).join('');
 }
@@ -264,78 +326,58 @@ async function addWallet() {
 }
 
 function updateUI() {
-  const availableSlotsElement = document.getElementById('availableSlots');
   const walletListElement = document.getElementById('walletList');
-  const unlockButtonElement = document.getElementById('unlockButton');
-  
-  if (!availableSlotsElement || !walletListElement) {
-    console.error('Required DOM elements not found');
+  if (!walletListElement) {
+    console.error('Wallet list element not found');
     return;
   }
 
-  // Update available slots
-  availableSlotsElement.textContent = `${wallets.length} / ${unlockedSlots}`;
-  
-  // Update wallet list
   walletListElement.innerHTML = renderWallets();
-  
-  // Update unlock button visibility
-  if (unlockButtonElement) {
-    unlockButtonElement.classList.toggle('hidden', unlockedSlots >= MAX_TOTAL_SLOTS);
-  }
-
-  // Setup event listeners for the newly rendered elements
   setupEventListeners();
 }
 
 function setupEventListeners() {
-  const addWalletBtn = document.getElementById('addWallet');
-  if (addWalletBtn) {
-    addWalletBtn.addEventListener('click', addWallet);
-  }
-
-  const deleteButtons = document.querySelectorAll('.delete-btn');
-  deleteButtons.forEach(button => {
-    const index = button.dataset.index;
-    if (index !== undefined) {
-      button.addEventListener('click', () => deleteWallet(parseInt(index)));
-    }
-  });
-
-  const refreshButtons = document.querySelectorAll('.refresh-btn');
-  refreshButtons.forEach(button => {
-    const index = button.dataset.index;
-    if (index !== undefined) {
-      button.addEventListener('click', () => refreshWallet(parseInt(index)));
-    }
-  });
-
-  const unlockButton = document.getElementById('unlockButton');
-  if (unlockButton) {
-    unlockButton.addEventListener('click', () => {
-      const paymentAddress = 'addr1qxdwefvjc4yw7sdtytmwx0lpp8sqsjdw5cl7kjcfz0zscdhl7mgsy7u7fva533d0uv7vctc8lh76hv5wgh7ascfwvmnqmsd04y';
-      const instructions = document.createElement('div');
-      instructions.className = 'payment-instructions';
-      instructions.innerHTML = `
-        <div class="modal">
-          <h3>Unlock More Slots</h3>
-          <p>Send 10 ₳ to:</p>
-          <code>${paymentAddress}</code>
-          <p>You will receive 10 additional wallet slots after payment confirmation.</p>
-          <button class="close">Close</button>
-        </div>
-      `;
-      
-      const root = document.getElementById('root');
-      if (root) {
-        root.appendChild(instructions);
-        const closeBtn = instructions.querySelector('.close');
-        if (closeBtn) {
-          closeBtn.addEventListener('click', () => instructions.remove());
-        }
+  // Add copy button listeners
+  document.querySelectorAll('.copy-btn').forEach(button => {
+    button.addEventListener('click', async () => {
+      const textToCopy = button.dataset.copy;
+      if (textToCopy) {
+        await copyToClipboard(textToCopy);
       }
     });
-  }
+  });
+
+  // Add refresh button listeners
+  document.querySelectorAll('.refresh-btn').forEach(button => {
+    button.addEventListener('click', async () => {
+      const index = parseInt(button.dataset.index);
+      if (!isNaN(index)) {
+        await refreshWallet(index);
+      }
+    });
+  });
+
+  // Add delete button listeners
+  document.querySelectorAll('.delete-btn').forEach(button => {
+    button.addEventListener('click', async () => {
+      const index = parseInt(button.dataset.index);
+      if (!isNaN(index)) {
+        await deleteWallet(index);
+      }
+    });
+  });
+
+  // Add asset toggle listeners
+  document.querySelectorAll('.assets-toggle').forEach(toggle => {
+    toggle.addEventListener('click', () => {
+      const index = toggle.dataset.index;
+      const assets = document.getElementById(`assets-${index}`);
+      if (assets) {
+        assets.classList.toggle('expanded');
+        toggle.classList.toggle('expanded');
+      }
+    });
+  });
 }
 
 async function deleteWallet(index) {

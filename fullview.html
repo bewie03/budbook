@@ -3,35 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cardano Address Book - Full View</title>
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="fullview.css">
+  <title>Cardano Address Book</title>
 </head>
 <body>
   <div class="full-container">
     <div class="header">
+      <img src="icons/extensionlogo.png" alt="Logo" class="logo">
       <h1>Cardano Address Book</h1>
-      <p class="slots">Available Slots: <span id="availableSlots">0 / 0</span></p>
     </div>
-    
-    <div class="controls">
-      <div class="input-group">
-        <input type="text" id="addressInput" placeholder="Enter Cardano Address" autocomplete="off">
-        <input type="text" id="nameInput" placeholder="Enter Wallet Name" autocomplete="off">
-        <select id="walletType">
-          <option value="None">None</option>
-        </select>
-        <button class="primary" id="addWallet">Add Wallet</button>
-      </div>
 
-      <div id="errorMsg" class="error" style="display: none;"></div>
-      <div id="successMsg" class="success" style="display: none;"></div>
-    </div>
-    
-    <div id="walletList" class="wallet-list"></div>
-    
-    <button class="secondary" id="unlockButton">Unlock 10 More Slots (10 ₳)</button>
+    <div id="walletList"></div>
+
+    <div id="errorMsg" class="error" style="display: none;"></div>
+    <div id="successMsg" class="success" style="display: none;"></div>
   </div>
-  <script src="fullview.js"></script>
+  <script src="fullview.js" type="module"></script>
 </body>
 </html>

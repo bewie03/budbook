@@ -7,28 +7,31 @@
 </head>
 <body>
   <div id="root">
-    <div class="container">
+    <div class="popup-container">
       <div class="header">
+        <img src="icons/extensionlogo.png" alt="Logo" class="logo">
         <h1>Cardano Address Book</h1>
-        <p class="slots">Available Slots: <span id="availableSlots">0 / 0</span></p>
-        <button id="viewAll" class="secondary view-all">View All Wallets</button>
       </div>
       
-      <div class="input-group">
-        <input type="text" id="addressInput" placeholder="Enter Cardano Address" autocomplete="off">
-        <input type="text" id="nameInput" placeholder="Enter Wallet Name" autocomplete="off">
-        <select id="walletType">
-          <option value="None">None</option>
-        </select>
-        <button class="primary" id="addWallet">Add Wallet</button>
+      <div class="main-content">
+        <button id="openFullview" class="primary action-button">Open Address Book</button>
+        
+        <div class="input-form">
+          <input type="text" id="addressInput" placeholder="Enter Cardano Address" autocomplete="off">
+          <input type="text" id="nameInput" placeholder="Wallet Name" required autocomplete="off">
+          <select id="walletType">
+            <option value="None">None</option>
+          </select>
+          <button class="primary action-button" id="addWallet">Add Wallet</button>
+        </div>
       </div>
 
       <div id="errorMsg" class="error" style="display: none;"></div>
       <div id="successMsg" class="success" style="display: none;"></div>
       
-      <div id="walletList" class="wallet-list"></div>
-      
-      <button class="secondary" id="unlockButton">Unlock 10 More Slots (10 ₳)</button>
+      <div class="footer">
+        <p class="slots">Wallets: <span id="availableSlots">0 / 5</span></p>
+      </div>
     </div>
   </div>
   <script src="popup.js" type="module"></script>
