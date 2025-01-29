@@ -93,7 +93,9 @@ async function setInCache(key, value, expirySeconds = null) {
 }
 
 function isValidUrl(url) {
-    if (!url || typeof url !== 'string') return null;
+    if (!url || typeof url !== 'string') {
+        return null;
+    }
     
     // Remove whitespace
     url = url.trim();
@@ -110,7 +112,9 @@ function isValidUrl(url) {
     }
     
     // Ensure HTTPS
-    if (!url.startsWith('https://')) return null;
+    if (!url.startsWith('https://')) {
+        return null;
+    }
     
     try {
         new URL(url);
@@ -153,65 +157,125 @@ async function getAssetInfo(assetId) {
             }
         }
         
-        // Get asset name from various sources
+        // Get asset name from metadata or onchain_metadata
         let name = null;
         if (isNft) {
             // For NFTs, prefer onchain_metadata name
-            name = onchainMetadata.name || metadata.name || assetData.asset_name;
+            name = onchainMetadata.name;
+            if (!name) {
+                // Fall back to metadata name
+                name = metadata.name;
+            }
+            if (!name) {
+                // Fall back to asset name from root
+                name = assetData.asset_name;
+            }
         } else {
             // For tokens, prefer metadata name
-            name = metadata.name || onchainMetadata.name || assetData.asset_name;
+            name = metadata.name;
+            if (!name && onchainMetadata) {
+                // Fall back to onchain_metadata name
+                name = onchainMetadata.name;
+            }
+            if (!name) {
+                // Fall back to asset name from root
+                name = assetData.asset_name;
+            }
         }
-        
+
         // If no name found, try to decode from hex
-        if (!name) {
+        if (!name && assetId) {
             try {
+                // Split by '.' and take the last part
                 const hexName = assetId.split('.').pop();
-                if (/^[0-9a-fA-F]+$/.test(hexName)) {
+                // Check if it's a valid hex string
+                if (hexName && /^[0-9a-fA-F]+$/.test(hexName)) {
                     const decoded = Buffer.from(hexName, 'hex').toString('utf8');
-                    if (/^[\x20-\x7E]*$/.test(decoded)) { // Only use if printable ASCII
+                    // Only use if all characters are printable ASCII
+                    if (decoded && /^[\x20-\x7E]*$/.test(decoded)) {
                         name = decoded;
                     }
                 }
-            } catch {}
+            } catch (e) {
+                console.error('Error decoding hex name:', e);
+            }
         }
-        
+
         // Fallback to asset ID if still no name
         if (!name) {
             name = assetId.slice(-8);
         }
         
-        // Get image URL from various sources
+        // Get image URL from various sources with priority
         let imageUrl = null;
-        const possibleUrls = [
-            onchainMetadata.image,
-            onchainMetadata.mediaUrl,
-            metadata.logo,
-            metadata.icon,
-            metadata.image
-        ];
+        const validUrls = [];
         
-        for (const url of possibleUrls) {
-            if (url) {
-                const validUrl = isValidUrl(url);
-                if (validUrl) {
-                    imageUrl = validUrl;
-                    break;
+        // For tokens, check metadata fields
+        if (metadata) {
+            const tokenImageFields = ['logo', 'icon', 'image'];
+            for (const field of tokenImageFields) {
+                if (metadata[field]) {
+                    const url = isValidUrl(metadata[field]);
+                    if (url) {
+                        validUrls.push(['metadata', field, url]);
+                    }
                 }
             }
         }
         
-        // Get ticker if reasonable length
-        const ticker = metadata.ticker;
-        const validTicker = ticker && typeof ticker === 'string' && ticker.length <= 10 ? ticker : null;
-
+        // For NFTs, check onchain metadata
+        if (onchainMetadata) {
+            const nftImageFields = ['image', 'mediaUrl', 'thumbnailUrl'];
+            for (const field of nftImageFields) {
+                if (onchainMetadata[field]) {
+                    const url = isValidUrl(onchainMetadata[field]);
+                    if (url) {
+                        validUrls.push(['onchain', field, url]);
+                    }
+                }
+            }
+        }
+        
+        // Check root level info
+        const rootImageFields = ['logo', 'icon', 'image'];
+        for (const field of rootImageFields) {
+            if (assetData[field]) {
+                const url = isValidUrl(assetData[field]);
+                if (url) {
+                    validUrls.push(['root', field, url]);
+                }
+            }
+        }
+        
+        // Priority order matching the working code
+        const priorityOrder = {
+            'onchain.image': 1,
+            'metadata.image': 2,
+            'onchain.mediaUrl': 3,
+            'metadata.logo': 4,
+            'metadata.icon': 5,
+            'root.image': 6,
+            'root.logo': 7,
+            'root.icon': 8
+        };
+        
+        // Sort by priority and take the highest priority URL
+        if (validUrls.length > 0) {
+            validUrls.sort((a, b) => {
+                const priorityA = priorityOrder[`${a[0]}.${a[1]}`] || 999;
+                const priorityB = priorityOrder[`${b[0]}.${b[1]}`] || 999;
+                return priorityA - priorityB;
+            });
+            imageUrl = validUrls[0][2];
+        }
+        
         const assetInfo = {
             unit: assetId,
             name: name || assetId.slice(-8),  // Ensure name is never null
             decimals,
-            ticker: validTicker,
+            ticker: metadata.ticker,
             image: imageUrl,  // Can be null if no valid URL found
-            is_nft: isNft
+            is_nft: isNft  // Add NFT flag
         };
 
         // Cache it

@@ -386,20 +386,25 @@ function renderAssetsList(walletIndex, type = 'tokens') {
   const isNFTList = type === 'nfts';
   const assets = wallet.assets.filter(asset => isNFTList ? isNFT(asset) : !isNFT(asset));
 
-  return assets.map(asset => `
-    <div class="asset-item">
-      ${asset.image ? `
-        <div class="asset-image">
-          <img src="${asset.image}" alt="${asset.name}" onerror="this.style.display='none'">
+  return assets.map(asset => {
+    // Process image URL if present
+    const imageUrl = asset.image ? convertIpfsUrl(asset.image) : null;
+    
+    return `
+      <div class="asset-item">
+        ${imageUrl ? `
+          <div class="asset-image">
+            <img src="${imageUrl}" alt="${asset.name || ''}" onerror="this.style.display='none'">
+          </div>
+        ` : ''}
+        <div class="asset-info">
+          <h4>${asset.name || asset.unit.slice(-8)}</h4>
+          <p class="asset-amount">${asset.readable_amount} ${asset.ticker || ''}</p>
+          ${!isNFTList ? `<p class="asset-policy">Policy: ${asset.unit.substring(0, 56)}</p>` : ''}
         </div>
-      ` : ''}
-      <div class="asset-info">
-        <h4>${asset.name}</h4>
-        <p class="asset-amount">${asset.readable_amount} ${asset.ticker || ''}</p>
-        ${!isNFTList ? `<p class="asset-policy">Policy: ${asset.unit.substring(0, 56)}</p>` : ''}
       </div>
-    </div>
-  `).join('') || `<p class="no-assets">No ${isNFTList ? 'NFTs' : 'tokens'} found</p>`;
+    `;
+  }).join('') || `<p class="no-assets">No ${isNFTList ? 'NFTs' : 'tokens'} found</p>`;
 }
 
 function setupEventListeners() {
