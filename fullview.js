@@ -414,7 +414,8 @@ function renderAssetsList(walletIndex, type = 'nfts') {
             <img src="${imageUrl}" 
                  alt="${assetName}" 
                  class="asset-image"
-                 onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'asset-placeholder full\\' style=\\'background-color: ${bgColor}\\'>${firstLetter}</div>';">
+                 data-fallback="${firstLetter}"
+                 data-bgcolor="${bgColor}">
           ` : `
             <div class="asset-placeholder full" style="background-color: ${bgColor}">
               ${firstLetter}
@@ -428,6 +429,15 @@ function renderAssetsList(walletIndex, type = 'nfts') {
       </div>
     `;
   }).join('');
+
+  // Add error handlers for images after rendering
+  assetsList.querySelectorAll('.asset-image').forEach(img => {
+    img.addEventListener('error', function() {
+      const firstLetter = this.getAttribute('data-fallback');
+      const bgColor = this.getAttribute('data-bgcolor');
+      this.parentElement.innerHTML = `<div class="asset-placeholder full" style="background-color: ${bgColor}">${firstLetter}</div>`;
+    });
+  });
 }
 
 function setupEventListeners() {
