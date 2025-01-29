@@ -127,9 +127,8 @@ async function getAssetMetadata(assetId) {
     const data = await response.json();
     console.log(`Caching metadata for asset ${assetId}`);
     
-    // Cache the metadata for 24 hours
-    // This is a good duration since asset metadata rarely changes
-    await setInCache(cacheKey, data, 86400);
+    // Cache the metadata permanently since it's immutable on Cardano
+    await redis.set(cacheKey, JSON.stringify(data));
     
     return data;
   } catch (error) {
