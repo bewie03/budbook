@@ -276,29 +276,11 @@ function renderWallets() {
     return '<p class="no-wallets">No wallets added yet</p>';
   }
 
-  // Create assets panel
-  const assetsPanel = document.createElement('div');
-  assetsPanel.className = 'assets-panel';
-  assetsPanel.innerHTML = `
-    <div class="assets-header">
-      <h3>Assets</h3>
-      <button class="close-assets">×</button>
-    </div>
-    <div class="assets-tabs">
-      <button class="assets-tab active" data-tab="nfts">NFTs</button>
-      <button class="assets-tab" data-tab="tokens">Tokens</button>
-    </div>
-    <div class="assets-content">
-      <div class="assets-list"></div>
-    </div>
-  `;
-  document.body.appendChild(assetsPanel);
-
   return wallets.map((wallet, index) => `
-    <div class="wallet-item">
+    <div id="wallet-${index}" class="wallet-item">
       <div class="wallet-header">
         <div class="wallet-info">
-          <img src="icons/nami.png" alt="Wallet Logo" class="wallet-logo">
+          <img src="${wallet.logo}" alt="Wallet Logo" class="wallet-logo">
           <h3>${wallet.name}</h3>
         </div>
         <div class="wallet-actions">
@@ -339,6 +321,7 @@ function renderWallets() {
         <button class="assets-toggle" data-index="${index}">
           View Assets (${wallet.assets.length})
         </button>
+        <div class="assets-list"></div>
       ` : ''}
     </div>
   `).join('');
@@ -384,9 +367,16 @@ function getRandomColor(text) {
 
 function renderAssetsList(walletIndex, type = 'nfts') {
   const wallet = wallets[walletIndex];
-  const assetsList = document.querySelector('.assets-list');
+  const walletElement = document.querySelector(`#wallet-${walletIndex}`);
+  if (!walletElement) return;
   
-  if (!wallet || !wallet.assets) return '';
+  const assetsList = walletElement.querySelector('.assets-list');
+  if (!assetsList) return;
+  
+  if (!wallet || !wallet.assets) {
+    assetsList.innerHTML = `<p class="no-assets">No assets found</p>`;
+    return;
+  }
 
   // Filter and sort assets
   const filteredAssets = wallet.assets.filter(asset => {
@@ -464,25 +454,22 @@ function setupEventListeners() {
   document.querySelectorAll('.assets-toggle').forEach(button => {
     button.addEventListener('click', () => {
       const index = button.dataset.index;
-      const panel = document.querySelector('.assets-panel');
+      const walletElement = document.querySelector(`#wallet-${index}`);
+      const assetsList = walletElement.querySelector('.assets-list');
       
-      // If panel is already showing this wallet's assets, close it
-      if (panel.classList.contains('expanded') && panel.dataset.walletIndex === index) {
-        panel.classList.remove('expanded');
+      // If assets list is already showing, close it
+      if (assetsList.classList.contains('expanded')) {
+        assetsList.classList.remove('expanded');
         return;
       }
       
-      // Otherwise, show the panel with this wallet's assets
-      panel.dataset.walletIndex = index;
-      panel.classList.add('expanded');
+      // Otherwise, show the assets list
+      assetsList.classList.add('expanded');
       
       // Show NFTs by default
-      const nftsTab = panel.querySelector('[data-tab="nfts"]');
-      nftsTab.click();
+      renderAssetsList(index, 'nfts');
     });
   });
-
-  setupAssetsPanelListeners();
 }
 
 async function refreshWallet(index) {

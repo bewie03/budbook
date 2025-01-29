@@ -225,39 +225,11 @@ app.get('/api/wallet/:address', async (req, res) => {
         try {
           // For non-native tokens, get the asset details
           if (asset.unit.length > 32) {
-            // Always fetch fresh asset data to ensure we have latest decimals
-            const assetData = await fetchBlockfrost(`/assets/${asset.unit}`, 'fetch asset data');
-            
-            // Get decimals from metadata or onchain_metadata
-            let decimals = 0;
-            if (assetData.metadata?.decimals !== undefined) {
-                decimals = parseInt(assetData.metadata.decimals);
-            } else if (assetData.onchain_metadata?.decimals !== undefined) {
-                decimals = parseInt(assetData.onchain_metadata.decimals);
-            }
-            
-            const processedData = {
-                metadata: assetData.metadata || null,
-                onchain_metadata: assetData.onchain_metadata || null,
-                decimals: decimals,
-                asset_name: assetData.asset_name ? 
-                    Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
-                    asset.unit.substring(56),
-                policy_id: asset.unit.substring(0, 56),
-                fingerprint: assetData.fingerprint,
-                display_name: assetData.onchain_metadata?.name || 
-                            assetData.metadata?.name || 
-                            (assetData.asset_name ? Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
-                            asset.unit.substring(56))
-            };
-            
-            // Update cache with fresh data
-            assetCache[asset.unit] = processedData;
-            await saveAssetCache();
-            
+            // Check cache first since token metadata never changes
+            const assetData = await getAssetInfo(asset.unit);
             return {
               ...asset,
-              ...processedData
+              ...assetData
             };
           }
           return asset;
@@ -275,9 +247,6 @@ app.get('/api/wallet/:address', async (req, res) => {
       stake_address: addressData.stake_address,
       assets: assetsWithMetadata
     };
-    
-    // Cache the result
-    walletCache.set(address, response);
     
     res.json(response);
   } catch (error) {
