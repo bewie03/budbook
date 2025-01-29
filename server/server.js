@@ -79,15 +79,24 @@ process.on('SIGINT', async () => {
 
 // Redis client setup
 const redis = createClient({
-  url: process.env.REDIS_URL || 'redis://localhost:6379'
+  url: process.env.REDIS_URL || process.env.REDISCLOUD_URL,
+  socket: {
+    tls: true,
+    rejectUnauthorized: false
+  }
 });
 
-redis.on('error', err => console.error('Redis Client Error', err));
-redis.on('connect', () => console.log('Connected to Redis'));
+redis.on('error', err => console.error('Redis Client Error:', err));
+redis.on('connect', () => console.log('Connected to Redis Cloud'));
 
 // Connect to Redis
 (async () => {
-  await redis.connect();
+  try {
+    await redis.connect();
+    console.log('Successfully connected to Redis');
+  } catch (error) {
+    console.error('Failed to connect to Redis:', error);
+  }
 })();
 
 // Helper functions for Redis
