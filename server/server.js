@@ -203,10 +203,10 @@ async function getAssetInfo(assetId) {
 
         const assetInfo = {
             unit: assetId,
-            name,
+            name: name || assetId.slice(-8),  // Ensure name is never null
             decimals,
             ticker: validTicker,
-            image: imageUrl,
+            image: imageUrl,  // Can be null if no valid URL found
             is_nft: isNft
         };
 
@@ -348,9 +348,7 @@ app.get('/api/wallet/:address', async (req, res) => {
         const adaDecimalPart = (BigInt(lovelaceAmount) % BigInt(1000000)).toString().padStart(6, '0');
         
         // 3. Process other assets
-        const tokens = [];
-        const nfts = [];
-
+        const assets = [];
         for (const token of walletData.amount) {
             if (token.unit === 'lovelace') continue;
             
@@ -368,42 +366,30 @@ app.get('/api/wallet/:address', async (req, res) => {
 
                 if (!readable_amount) continue; // Skip if formatting failed
 
-                const assetData = {
+                assets.push({
                     unit: token.unit,
                     quantity: token.quantity,
-                    name: assetInfo.name || token.unit.slice(-8),
+                    name: assetInfo.name,  // Use the name from assetInfo
                     decimals,
                     ticker: assetInfo.ticker,
-                    image: assetInfo.image,
-                    readable_amount
-                };
-
-                // Sort into NFTs or tokens based on metadata
-                if (assetInfo.is_nft) {
-                    nfts.push(assetData);
-                } else {
-                    tokens.push(assetData);
-                }
+                    image: assetInfo.image,  // Use the image from assetInfo
+                    readable_amount,
+                    is_nft: assetInfo.is_nft  // Add NFT flag
+                });
             } catch (error) {
                 continue; // Skip problematic assets
             }
         }
-
-        // Sort tokens by quantity
-        tokens.sort((a, b) => b.quantity.localeCompare(a.quantity));
-        
-        // Sort NFTs alphabetically
-        nfts.sort((a, b) => a.name.localeCompare(b.name));
 
         // 4. Prepare and cache response
         const response = {
             address,
             stake_address: walletData.stake_address,
             balance: `${adaWholePart}.${adaDecimalPart}`,
-            tokens,
-            nfts,
-            token_count: tokens.length,
-            nft_count: nfts.length
+            assets: assets.sort((a, b) => {
+                // Simple string comparison of quantities
+                return b.quantity.localeCompare(a.quantity);
+            })
         };
 
         await redis.set(`wallet:${address}`, JSON.stringify(response), 'EX', 300);
