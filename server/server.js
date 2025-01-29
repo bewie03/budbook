@@ -477,17 +477,46 @@ app.post('/webhook', express.json(), async (req, res) => {
 });
 
 // Add endpoint to view cache
-app.get('/api/cache', (req, res) => {
+app.get('/api/cache', async (req, res) => {
   try {
-    const cacheStats = {
-      assetCacheSize: Object.keys(assetCache).length,
-      walletCacheSize: walletCache.keys().length,
-      transactionCacheSize: transactionCache.keys().length,
-      assetCache: assetCache
+    // Get all keys from Redis
+    const keys = await redis.keys('*');
+    const cacheData = {};
+
+    // Get data for each key
+    for (const key of keys) {
+      const value = await redis.get(key);
+      try {
+        cacheData[key] = JSON.parse(value);
+      } catch (e) {
+        cacheData[key] = value;
+      }
+    }
+
+    // Group by type
+    const groupedCache = {
+      assets: {},
+      payments: {},
+      other: {}
     };
-    res.json(cacheStats);
+
+    for (const [key, value] of Object.entries(cacheData)) {
+      if (key.startsWith('asset:')) {
+        groupedCache.assets[key] = value;
+      } else if (key.startsWith('payment:')) {
+        groupedCache.payments[key] = value;
+      } else {
+        groupedCache.other[key] = value;
+      }
+    }
+
+    res.json({
+      totalKeys: keys.length,
+      groupedCache
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Error viewing cache:', error);
+    res.status(500).json({ error: 'Failed to view cache' });
   }
 });
 
