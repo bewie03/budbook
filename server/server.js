@@ -92,47 +92,32 @@ async function setInCache(key, value, expirySeconds = null) {
   }
 }
 
-async function getAssetMetadata(assetId) {
-  const cacheKey = `asset:${assetId}`;
-  
-  // Try to get from cache first
-  const cachedData = await getFromCache(cacheKey);
-  if (cachedData) {
-    console.log(`Cache hit for asset ${assetId}`);
-    return cachedData;
-  }
-
-  try {
-    // Fetch metadata from Blockfrost
-    const [assetData, assetDetails] = await Promise.all([
-      // Get basic asset data
-      fetch(`${BLOCKFROST_BASE_URL}/assets/${assetId}`, {
-        headers: { 'project_id': BLOCKFROST_API_KEY }
-      }).then(res => res.json()),
-      
-      // Get detailed metadata including decimals
-      fetch(`${BLOCKFROST_BASE_URL}/assets/${assetId}/metadata`, {
-        headers: { 'project_id': BLOCKFROST_API_KEY }
-      }).then(res => res.json())
-    ]);
-
-    // Combine the data
-    const data = {
-      ...assetData,
-      decimals: assetDetails.decimals,
-      metadata: assetDetails
-    };
-
-    console.log(`Caching metadata for asset ${assetId}:`, data);
+function isValidUrl(url) {
+    if (!url || typeof url !== 'string') return null;
     
-    // Cache the metadata permanently since it's immutable on Cardano
-    await redis.set(cacheKey, JSON.stringify(data));
+    // Remove whitespace
+    url = url.trim();
     
-    return data;
-  } catch (error) {
-    console.error('Error fetching asset metadata:', error);
-    throw error;
-  }
+    // Handle IPFS URLs
+    if (url.startsWith('ipfs://')) {
+        const ipfsHash = url.slice(7).replace(/\//g, '');
+        return `https://ipfs.io/ipfs/${ipfsHash}`;
+    }
+    
+    // Convert HTTP to HTTPS
+    if (url.startsWith('http://')) {
+        url = `https://${url.slice(7)}`;
+    }
+    
+    // Ensure HTTPS
+    if (!url.startsWith('https://')) return null;
+    
+    try {
+        new URL(url);
+        return url;
+    } catch {
+        return null;
+    }
 }
 
 async function getAssetInfo(assetId) {
@@ -146,55 +131,88 @@ async function getAssetInfo(assetId) {
         // Fetch from Blockfrost if not in cache
         const assetData = await fetchBlockfrost(`/assets/${assetId}`, 'fetch asset data');
         
-        // Helper to check if string might be base64 or too long
-        const isValidString = (str) => {
-            if (!str || typeof str !== 'string') return false;
-            if (str.length > 1000) return false; // Skip very long strings
-            if (str.match(/^[A-Za-z0-9+/=]{50,}$/)) return false; // Skip likely base64
-            return true;
-        };
-
-        // Extract the important fields
-        const metadata = {
-            unit: assetId,
-            name: '',
-            decimals: 0,
-            ticker: '',
-            image: ''
-        };
-
-        // Get name from various sources, ensuring it's not too long or base64
-        const possibleNames = [
-            assetData.onchain_metadata?.name,
-            assetData.metadata?.name,
-            assetData.asset_name
-        ].filter(isValidString);
-        metadata.name = possibleNames[0] || assetId.slice(-8); // Use last 8 chars of asset ID if no valid name
-
-        // Get decimals
-        metadata.decimals = parseInt(assetData.metadata?.decimals || assetData.onchain_metadata?.decimals) || 0;
-        if (isNaN(metadata.decimals) || metadata.decimals > 18) metadata.decimals = 0;
-
-        // Get ticker if it's a reasonable length
-        const ticker = assetData.metadata?.ticker;
-        if (ticker && typeof ticker === 'string' && ticker.length <= 10) {
-            metadata.ticker = ticker;
-        }
-
-        // Get image URL, ensuring it's a valid web URL
-        const image = assetData.onchain_metadata?.image || assetData.metadata?.logo;
-        if (image && typeof image === 'string') {
-            if (image.startsWith('ipfs://')) {
-                metadata.image = `https://ipfs.io/ipfs/${image.slice(7)}`;
-            } else if (image.startsWith('https://') || image.startsWith('http://')) {
-                // Only accept web URLs, not base64 or other formats
-                metadata.image = image;
+        // Process asset metadata
+        const onchainMetadata = assetData.onchain_metadata || {};
+        const metadata = assetData.metadata || {};
+        
+        // Determine if NFT based on quantity
+        const isNft = assetData.quantity === '1';
+        
+        // Get decimals (tokens only)
+        let decimals = 0;
+        if (!isNft) {
+            try {
+                decimals = parseInt(metadata.decimals || onchainMetadata.decimals) || 0;
+                // Cap decimals at 8 to prevent issues
+                decimals = Math.min(decimals, 8);
+            } catch {
+                decimals = 0;
             }
         }
+        
+        // Get asset name from various sources
+        let name = null;
+        if (isNft) {
+            // For NFTs, prefer onchain_metadata name
+            name = onchainMetadata.name || metadata.name;
+        } else {
+            // For tokens, prefer metadata name
+            name = metadata.name || onchainMetadata.name;
+        }
+        
+        // If no name found, try to decode from hex
+        if (!name) {
+            try {
+                const hexName = assetId.split('.').pop();
+                if (/^[0-9a-fA-F]+$/.test(hexName)) {
+                    const decoded = Buffer.from(hexName, 'hex').toString('utf8');
+                    if (/^[\x20-\x7E]*$/.test(decoded)) { // Only use if printable ASCII
+                        name = decoded;
+                    }
+                }
+            } catch {}
+        }
+        
+        // Fallback to asset ID if still no name
+        if (!name) {
+            name = assetId.slice(-8);
+        }
+        
+        // Get image URL from various sources
+        let imageUrl = null;
+        const possibleUrls = [
+            onchainMetadata.image,
+            onchainMetadata.mediaUrl,
+            metadata.logo,
+            metadata.icon
+        ];
+        
+        for (const url of possibleUrls) {
+            if (url) {
+                const validUrl = isValidUrl(url);
+                if (validUrl) {
+                    imageUrl = validUrl;
+                    break;
+                }
+            }
+        }
+        
+        // Get ticker if reasonable length
+        const ticker = metadata.ticker;
+        const validTicker = ticker && typeof ticker === 'string' && ticker.length <= 10 ? ticker : null;
 
-        // Cache it (assets are immutable)
-        await redis.set(`asset:${assetId}`, JSON.stringify(metadata));
-        return metadata;
+        const assetInfo = {
+            unit: assetId,
+            name,
+            decimals,
+            ticker: validTicker,
+            image: imageUrl,
+            is_nft: isNft
+        };
+
+        // Cache it
+        await redis.set(`asset:${assetId}`, JSON.stringify(assetInfo));
+        return assetInfo;
     } catch (error) {
         console.error(`Error getting asset info for ${assetId}:`, error);
         return null;
