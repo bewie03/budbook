@@ -260,15 +260,39 @@ app.get('/api/wallet/:address', async (req, res) => {
       return res.json(cached);
     }
 
-    // Fetch wallet data from Blockfrost
-    const walletData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
-    const assetsData = await fetchBlockfrost(`/addresses/${address}/total`, 'fetch wallet assets');
+    // Fetch all wallet data in parallel
+    const [walletData, assetsData] = await Promise.all([
+      fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data'),
+      fetchBlockfrost(`/addresses/${address}/total`, 'fetch wallet assets')
+    ]);
+
+    // Process assets data
+    const assets = [];
+    if (assetsData && Array.isArray(assetsData.tokens)) {
+      for (const token of assetsData.tokens) {
+        try {
+          const assetInfo = await getAssetInfo(token.unit);
+          if (assetInfo) {
+            assets.push({
+              unit: token.unit,
+              quantity: token.quantity,
+              display_name: assetInfo.display_name,
+              asset_name: assetInfo.asset_name,
+              onchain_metadata: assetInfo.onchain_metadata
+            });
+          }
+        } catch (error) {
+          console.error(`Error fetching asset info for ${token.unit}:`, error);
+        }
+      }
+    }
 
     // Format response
     const response = {
       address,
+      stake_address: walletData.stake_address,
       balance: assetsData.lovelace ? (parseInt(assetsData.lovelace) / 1000000).toFixed(6) : '0',
-      assets: []
+      assets: assets
     };
 
     // Cache response for 5 minutes
@@ -277,7 +301,10 @@ app.get('/api/wallet/:address', async (req, res) => {
     res.json(response);
   } catch (error) {
     console.error('Error fetching wallet data:', error);
-    res.status(500).json({ error: 'Failed to fetch wallet data' });
+    const errorMessage = error.response ? 
+      `Blockfrost API error: ${error.response.status} - ${error.response.statusText}` :
+      'Failed to fetch wallet data';
+    res.status(500).json({ error: errorMessage });
   }
 });
 
