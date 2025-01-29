@@ -17,12 +17,14 @@ async function fetchWalletData(address) {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Origin': chrome.runtime.getURL('')
       }
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
     }
     
     const data = await response.json();
@@ -39,12 +41,14 @@ async function verifyPayment(address) {
     const response = await fetch(`${API_BASE_URL}/api/verify-payment/${address}`, {
       method: 'GET',
       headers: {
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        'Origin': chrome.runtime.getURL('')
       }
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
     }
     
     return await response.json();
@@ -56,28 +60,43 @@ async function verifyPayment(address) {
 
 // Storage Functions
 async function loadWallets() {
-  try {
-    console.log('Loading wallets from storage...');
-    const data = await chrome.storage.sync.get(['wallets', 'unlockedSlots']);
-    wallets = data.wallets || [];
-    unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
-    console.log('Loaded wallets:', wallets);
-    console.log('Unlocked slots:', unlockedSlots);
-  } catch (error) {
-    console.error('Error loading wallets:', error);
-    throw error;
-  }
+  return new Promise((resolve, reject) => {
+    try {
+      chrome.storage.sync.get(['wallets', 'unlockedSlots'], (data) => {
+        if (chrome.runtime.lastError) {
+          console.error('Error loading from storage:', chrome.runtime.lastError);
+          reject(chrome.runtime.lastError);
+          return;
+        }
+        console.log('Loaded from storage:', data);
+        wallets = data.wallets || [];
+        unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
+        resolve();
+      });
+    } catch (error) {
+      console.error('Error in loadWallets:', error);
+      reject(error);
+    }
+  });
 }
 
 async function saveWallets() {
-  try {
-    await chrome.storage.sync.set({ wallets, unlockedSlots });
-    console.log('Saved wallets:', wallets);
-    console.log('Saved unlocked slots:', unlockedSlots);
-  } catch (error) {
-    console.error('Error saving wallets:', error);
-    throw error;
-  }
+  return new Promise((resolve, reject) => {
+    try {
+      chrome.storage.sync.set({ wallets, unlockedSlots }, () => {
+        if (chrome.runtime.lastError) {
+          console.error('Error saving to storage:', chrome.runtime.lastError);
+          reject(chrome.runtime.lastError);
+          return;
+        }
+        console.log('Saved to storage:', { wallets, unlockedSlots });
+        resolve();
+      });
+    } catch (error) {
+      console.error('Error in saveWallets:', error);
+      reject(error);
+    }
+  });
 }
 
 // UI Functions
@@ -86,7 +105,7 @@ function showError(message) {
   const errorDiv = document.createElement('div');
   errorDiv.className = 'error';
   errorDiv.textContent = message;
-  document.getElementById('root').appendChild(errorDiv);
+  document.getElementById('root')?.appendChild(errorDiv);
   setTimeout(() => errorDiv.remove(), 3000);
 }
 
@@ -95,18 +114,22 @@ function showSuccess(message) {
   const successDiv = document.createElement('div');
   successDiv.className = 'success';
   successDiv.textContent = message;
-  document.getElementById('root').appendChild(successDiv);
+  document.getElementById('root')?.appendChild(successDiv);
   setTimeout(() => successDiv.remove(), 3000);
 }
 
 function validateAddress(address) {
-  return address.startsWith('addr1') && address.length >= 59;
+  return address && address.startsWith('addr1') && address.length >= 59;
 }
 
 async function addWallet() {
   try {
     const addressInput = document.querySelector('#walletAddress');
     const nameInput = document.querySelector('#walletName');
+    if (!addressInput || !nameInput) {
+      throw new Error('UI elements not found');
+    }
+
     const address = addressInput.value.trim();
     const name = nameInput.value.trim();
 
@@ -115,8 +138,18 @@ async function addWallet() {
       return;
     }
 
+    if (!name) {
+      showError('Please enter a wallet name');
+      return;
+    }
+
     if (wallets.length >= unlockedSlots) {
       showError('Maximum wallet slots reached. Please unlock more slots.');
+      return;
+    }
+
+    if (wallets.some(w => w.address === address)) {
+      showError('This wallet is already in your address book');
       return;
     }
 
@@ -125,7 +158,7 @@ async function addWallet() {
     wallets.push({
       address,
       name,
-      balance: walletData.balance,
+      balance: walletData.balance || 0,
       stake_address: walletData.stake_address,
       timestamp: Date.now()
     });
@@ -136,21 +169,24 @@ async function addWallet() {
     nameInput.value = '';
     showSuccess('Wallet added successfully!');
   } catch (error) {
-    showError('Failed to add wallet: ' + error.message);
+    showError(error.message || 'Failed to add wallet');
   }
 }
 
 function renderWallets() {
-  if (wallets.length === 0) {
+  if (!wallets.length) {
     return '<p class="status">No wallets added yet</p>';
   }
 
   return wallets.map(wallet => `
     <div class="wallet-item">
       <h3>${wallet.name}</h3>
-      <p>Address: ${wallet.address.substring(0, 20)}...</p>
-      <p>Balance: ${wallet.balance / 1000000} ADA</p>
-      ${wallet.stake_address ? `<p>Stake Address: ${wallet.stake_address.substring(0, 20)}...</p>` : ''}
+      <p class="address">Address: ${wallet.address.substring(0, 20)}...</p>
+      <p class="balance">Balance: ${(wallet.balance / 1000000).toFixed(2)} ₳</p>
+      ${wallet.stake_address ? 
+        `<p class="stake">Stake Address: ${wallet.stake_address.substring(0, 20)}...</p>` : 
+        ''}
+      <p class="timestamp">Added: ${new Date(wallet.timestamp).toLocaleString()}</p>
     </div>
   `).join('');
 }
@@ -167,17 +203,19 @@ function updateUI() {
     <div class="container">
       <div class="header">
         <h1>Cardano Address Book</h1>
-        <p>Available Slots: ${unlockedSlots - wallets.length} / ${unlockedSlots}</p>
+        <p class="slots">Available Slots: ${unlockedSlots - wallets.length} / ${unlockedSlots}</p>
       </div>
       
       <div class="input-group">
         <input type="text" id="walletAddress" placeholder="Enter Cardano Address" />
         <input type="text" id="walletName" placeholder="Enter Wallet Name" />
-        <button id="addWallet">Add Wallet</button>
+        <button id="addWallet" class="primary">Add Wallet</button>
       </div>
 
       ${unlockedSlots < MAX_TOTAL_SLOTS ? `
-        <button id="unlockSlots">Unlock More Slots (${ADA_PAYMENT_AMOUNT} ADA for ${SLOTS_PER_PAYMENT} slots)</button>
+        <button id="unlockSlots" class="secondary">
+          Unlock ${SLOTS_PER_PAYMENT} More Slots (${ADA_PAYMENT_AMOUNT} ₳)
+        </button>
       ` : ''}
 
       <div class="wallet-list">
@@ -186,6 +224,27 @@ function updateUI() {
     </div>
   `;
   console.log('UI updated');
+
+  // Add event listeners
+  document.getElementById('addWallet')?.addEventListener('click', addWallet);
+  document.getElementById('unlockSlots')?.addEventListener('click', () => {
+    const paymentAddress = 'addr1qxdwefvjc4yw7sdtytmwx0lpp8sqsjdw5cl7kjcfz0zscdhl7mgsy7u7fva533d0uv7vctc8lh76hv5wgh7ascfwvmnqmsd04y';
+    const instructions = document.createElement('div');
+    instructions.className = 'payment-instructions';
+    instructions.innerHTML = `
+      <div class="modal">
+        <h3>Unlock More Slots</h3>
+        <p>Send ${ADA_PAYMENT_AMOUNT} ₳ to:</p>
+        <code>${paymentAddress}</code>
+        <p>You will receive ${SLOTS_PER_PAYMENT} additional wallet slots after payment confirmation.</p>
+        <button class="close">Close</button>
+      </div>
+    `;
+    root.appendChild(instructions);
+    instructions.querySelector('.close')?.addEventListener('click', () => {
+      instructions.remove();
+    });
+  });
 }
 
 // Initialize when DOM is ready
@@ -194,30 +253,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('Extension popup opened');
     await loadWallets();
     updateUI();
-    
-    // Set up event listeners
-    document.addEventListener('click', async (e) => {
-      if (e.target.matches('#addWallet')) {
-        await addWallet();
-      } else if (e.target.matches('#unlockSlots')) {
-        const paymentAddress = 'addr1qxdwefvjc4yw7sdtytmwx0lpp8sqsjdw5cl7kjcfz0zscdhl7mgsy7u7fva533d0uv7vctc8lh76hv5wgh7ascfwvmnqmsd04y';
-        const instructions = document.createElement('div');
-        instructions.innerHTML = `
-          <div class="payment-instructions">
-            <h3>Unlock More Slots</h3>
-            <p>Send ${ADA_PAYMENT_AMOUNT} ADA to:</p>
-            <code>${paymentAddress}</code>
-            <p>You will receive ${SLOTS_PER_PAYMENT} additional wallet slots after payment confirmation.</p>
-          </div>
-        `;
-        document.getElementById('root').appendChild(instructions);
-      }
-    });
   } catch (error) {
     console.error('Failed to initialize:', error);
     const root = document.getElementById('root');
     if (root) {
-      root.innerHTML = `<div class="error">Failed to initialize: ${error.message}</div>`;
+      root.innerHTML = `
+        <div class="error">
+          Failed to initialize: ${error.message}
+          <button onclick="location.reload()">Retry</button>
+        </div>
+      `;
     }
   }
 });

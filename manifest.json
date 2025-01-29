@@ -8,9 +8,19 @@
     "notifications"
   ],
   "host_permissions": [
-    "https://budbook-2410440cbb61.herokuapp.com/*"
+    "https://budbook-2410440cbb61.herokuapp.com/*",
+    "https://cardano-mainnet.blockfrost.io/api/v0/*"
   ],
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon48.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon48.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com/ https://cardano-mainnet.blockfrost.io/;"
   }
 }
