@@ -257,13 +257,15 @@ function renderWallets() {
             </div>
           </div>
           
-          <div class="address-row">
-            <span class="label">Stake</span>
-            <div class="address-value" role="button" tabindex="0" data-copy="${wallet.stake_address}">
-              <span class="stake">${truncateAddress(wallet.stake_address)}</span>
-              <span class="copy-indicator">Copy</span>
+          ${wallet.stake_address ? `
+            <div class="address-row">
+              <span class="label">Stake</span>
+              <div class="address-value" role="button" tabindex="0" data-copy="${wallet.stake_address}">
+                <span class="stake">${truncateAddress(wallet.stake_address)}</span>
+                <span class="copy-indicator">Copy</span>
+              </div>
             </div>
-          </div>
+          ` : ''}
         </div>
 
         <div class="wallet-footer">
@@ -273,10 +275,32 @@ function renderWallets() {
           </div>
           ${wallet.assets && wallet.assets.length > 0 ? `
             <button class="assets-btn" data-index="${index}">
-              ${wallet.assets.length} Assets
+              ${wallet.assets.length} Token${wallet.assets.length === 1 ? '' : 's'}
             </button>
           ` : ''}
         </div>
+
+        ${wallet.assets && wallet.assets.length > 0 ? `
+          <div class="assets-preview">
+            ${wallet.assets.slice(0, 3).map(asset => `
+              <div class="asset-preview-item" title="${asset.display_name}">
+                ${asset.onchain_metadata?.image ? 
+                  `<img src="${convertIpfsUrl(asset.onchain_metadata.image)}" alt="${asset.display_name}" class="asset-image">` :
+                  `<div class="asset-placeholder">${getFirstLetter(asset.display_name)}</div>`
+                }
+                <div class="asset-info">
+                  <span class="asset-name">${asset.display_name}</span>
+                  <span class="asset-amount">${asset.readable_amount}</span>
+                </div>
+              </div>
+            `).join('')}
+            ${wallet.assets.length > 3 ? `
+              <div class="asset-preview-more">
+                +${wallet.assets.length - 3} more
+              </div>
+            ` : ''}
+          </div>
+        ` : ''}
       </div>
     </div>
   `).join('');
@@ -324,62 +348,36 @@ function getRandomColor(text) {
   return `hsl(${hue}, 70%, 60%)`; // Consistent but random-looking color
 }
 
-function renderAssetsList(walletIndex, type = 'nfts') {
+function renderAssetsList(walletIndex, type = 'tokens') {
   const wallet = wallets[walletIndex];
-  const assetsList = document.querySelector('.assets-list');
+  if (!wallet || !wallet.assets) return '';
+
+  const assets = wallet.assets;
   
-  if (!assetsList) return; // Early return if element doesn't exist
-  if (!wallet || !wallet.assets) return;
-
-  // Filter and sort assets
-  const filteredAssets = wallet.assets.filter(asset => {
-    const isNftAsset = isNFT(asset);
-    return type === 'nfts' ? isNftAsset : !isNftAsset;
-  });
-
-  if (filteredAssets.length === 0) {
-    assetsList.innerHTML = `<p class="no-assets">No ${type === 'nfts' ? 'NFTs' : 'tokens'} found</p>`;
-    return;
-  }
-
-  assetsList.innerHTML = filteredAssets.map(asset => {
-    const assetName = asset.display_name || asset.asset_name || '';
-    const firstLetter = getFirstLetter(assetName);
-    const bgColor = getRandomColor(assetName);
-    const imageUrl = getAssetImage(asset);
-    const quantity = formatTokenAmount(asset.quantity, asset.metadata?.decimals || asset.onchain_metadata?.decimals || 0);
-
-    return `
-      <div class="asset-item">
-        <div class="asset-image-container">
-          ${imageUrl ? `
-            <img src="${imageUrl}" 
-                 alt="${assetName}" 
-                 class="asset-image"
-                 data-fallback="${firstLetter}"
-                 data-bgcolor="${bgColor}">
-          ` : `
-            <div class="asset-placeholder full" style="background-color: ${bgColor}">
-              ${firstLetter}
+  return `
+    <div class="assets-list">
+      ${assets.map(asset => `
+        <div class="asset-item">
+          ${asset.onchain_metadata?.image ? 
+            `<img src="${convertIpfsUrl(asset.onchain_metadata.image)}" alt="${asset.display_name}" class="asset-image">` :
+            `<div class="asset-placeholder" style="background-color: ${getRandomColor(asset.display_name)}">${getFirstLetter(asset.display_name)}</div>`
+          }
+          <div class="asset-details">
+            <div class="asset-name-row">
+              <span class="asset-name">${asset.display_name}</span>
+              ${asset.ticker ? `<span class="asset-ticker">${asset.ticker}</span>` : ''}
             </div>
-          `}
+            <div class="asset-amount">${asset.readable_amount}</div>
+          </div>
+          ${asset.fingerprint ? `
+            <button class="copy-button" onclick="copyToClipboard('${asset.fingerprint}')" title="Copy Asset Fingerprint">
+              <i class="fas fa-copy"></i>
+            </button>
+          ` : ''}
         </div>
-        <div class="asset-info">
-          <span class="asset-name">${assetName}</span>
-          <span class="asset-quantity">${isNFT(asset) ? '' : `${quantity}x`}</span>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Add error handlers for images after rendering
-  assetsList.querySelectorAll('.asset-image').forEach(img => {
-    img.addEventListener('error', function() {
-      const firstLetter = this.getAttribute('data-fallback');
-      const bgColor = this.getAttribute('data-bgcolor');
-      this.parentElement.innerHTML = `<div class="asset-placeholder full" style="background-color: ${bgColor}">${firstLetter}</div>`;
-    });
-  });
+      `).join('')}
+    </div>
+  `;
 }
 
 function setupEventListeners() {

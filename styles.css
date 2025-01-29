@@ -951,7 +951,7 @@ select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
-  background-size: 16px;
+  background-color: #1e1e1e;
   padding-right: 40px;
 }
 
@@ -1838,4 +1838,170 @@ body {
   color: var(--text-secondary);
   font-size: 14px;
   line-height: 1.5;
+}
+
+.assets-preview {
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--border-radius);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.asset-preview-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.asset-preview-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.asset-preview-item .asset-image,
+.asset-preview-item .asset-placeholder {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.asset-preview-item .asset-placeholder {
+  background: var(--primary-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: white;
+  text-transform: uppercase;
+}
+
+.asset-preview-item .asset-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.asset-preview-item .asset-name {
+  font-size: 12px;
+  color: var(--text-color);
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asset-preview-item .asset-amount {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.asset-preview-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.asset-preview-more:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.assets-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+  padding: 16px;
+}
+
+.asset-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--border-radius);
+  transition: all 0.2s ease;
+}
+
+.asset-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.asset-item .asset-image,
+.asset-item .asset-placeholder {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.asset-item .asset-placeholder {
+  background: var(--primary-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: white;
+  text-transform: uppercase;
+}
+
+.asset-item .asset-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.asset-item .asset-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.asset-item .asset-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asset-item .asset-ticker {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.asset-item .asset-amount {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.asset-item .copy-button {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.asset-item .copy-button:hover {
+  color: var(--text-color);
+  background: rgba(255, 255, 255, 0.1);
 }

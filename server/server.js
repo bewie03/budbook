@@ -293,19 +293,35 @@ app.get('/api/wallet/:address', async (req, res) => {
       for (const token of assetsData.tokens) {
         try {
           console.log(`Fetching info for asset: ${token.unit}`);
+          // Skip lovelace entries as they're handled in the balance
+          if (token.unit === 'lovelace') continue;
+
           const assetInfo = await getAssetInfo(token.unit);
           if (assetInfo) {
-            assets.push({
+            const asset = {
               unit: token.unit,
               quantity: token.quantity,
-              display_name: assetInfo.display_name,
+              decimals: assetInfo.decimals || 0,
+              display_name: assetInfo.display_name || assetInfo.name || token.unit,
+              ticker: assetInfo.ticker,
               asset_name: assetInfo.asset_name,
-              onchain_metadata: assetInfo.onchain_metadata
+              fingerprint: assetInfo.fingerprint,
+              onchain_metadata: assetInfo.onchain_metadata || null,
+              metadata: assetInfo.metadata || null
+            };
+
+            // Calculate readable amount based on decimals
+            const amount = parseFloat(token.quantity) / Math.pow(10, asset.decimals);
+            asset.readable_amount = amount.toLocaleString(undefined, {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: asset.decimals
             });
-            console.log(`Successfully processed asset: ${token.unit}`);
+
+            assets.push(asset);
+            console.log(`Successfully processed asset: ${asset.display_name}`);
           }
         } catch (error) {
-          console.error(`Error fetching asset info for ${token.unit}:`, error);
+          console.error(`Error processing asset ${token.unit}:`, error);
         }
       }
     }
@@ -315,7 +331,7 @@ app.get('/api/wallet/:address', async (req, res) => {
       address,
       stake_address: walletData.stake_address,
       balance: assetsData.lovelace ? (parseInt(assetsData.lovelace) / 1000000).toFixed(6) : '0',
-      assets: assets
+      assets: assets.sort((a, b) => b.quantity - a.quantity) // Sort by quantity descending
     };
 
     console.log('Final response:', JSON.stringify(response, null, 2));
