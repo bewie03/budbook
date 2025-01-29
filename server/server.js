@@ -157,6 +157,12 @@ async function getAssetInfo(assetId) {
             }
         }
         
+        // Get display name from various sources
+        const displayName = assetData.display_name || 
+                          onchainMetadata.display_name || 
+                          metadata.display_name ||
+                          assetData.asset_name;
+
         // Get asset name from metadata or onchain_metadata
         let name = null;
         if (isNft) {
@@ -276,7 +282,7 @@ async function getAssetInfo(assetId) {
         
         const assetInfo = {
             unit: assetId,
-            name: name || assetId.slice(-8),  // Ensure name is never null
+            name: displayName,  // Use the display name we found
             decimals,
             ticker,
             image: imageUrl,  // Can be null if no valid URL found
@@ -457,7 +463,7 @@ app.get('/api/wallet/:address', async (req, res) => {
                 assets.push({
                     unit: token.unit,
                     quantity: token.quantity,
-                    name,
+                    name: assetInfo.name,  // Use the display name we found
                     decimals,
                     ticker: assetInfo.ticker,
                     image: assetInfo.image,

@@ -390,9 +390,19 @@ function renderAssetsList(walletIndex, type = 'tokens') {
     // Process image URL if present
     const imageUrl = asset.image ? convertIpfsUrl(asset.image) : null;
     
-    // Format display name
-    const displayName = asset.name || asset.unit.slice(-8);
-    const displayAmount = `${asset.readable_amount}${asset.ticker ? ` ${asset.ticker}` : ''}`;
+    // Format display name - ensure we show something meaningful
+    const displayName = asset.name || asset.ticker || asset.unit.slice(-8);
+    
+    // Format amount with ticker if available
+    const displayAmount = asset.readable_amount + (asset.ticker ? ` ${asset.ticker}` : '');
+    
+    // For debugging
+    console.log('Rendering asset:', {
+      unit: asset.unit,
+      name: asset.name,
+      ticker: asset.ticker,
+      image: asset.image
+    });
     
     return `
       <div class="asset-item">
