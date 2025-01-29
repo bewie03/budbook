@@ -137,7 +137,7 @@ async function getAssetMetadata(assetId) {
 
 async function getAssetInfo(assetId) {
     try {
-        // Check Redis cache first
+        // Check Redis cache first - assets are immutable so cache permanently
         const cachedData = await redis.get(`asset:${assetId}`);
         if (cachedData) {
             console.log(`Using cached data for asset ${assetId}`);
@@ -179,8 +179,8 @@ async function getAssetInfo(assetId) {
             ticker: processedData.ticker
         });
         
-        // Store in Redis cache with 1 hour expiry
-        await redis.set(`asset:${assetId}`, JSON.stringify(processedData), 'EX', 3600);
+        // Store in Redis cache PERMANENTLY - no expiry since assets are immutable
+        await redis.set(`asset:${assetId}`, JSON.stringify(processedData));
         
         return processedData;
     } catch (error) {
