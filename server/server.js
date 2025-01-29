@@ -15,8 +15,10 @@ const BLOCKFROST_BASE_URL = 'https://cardano-mainnet.blockfrost.io/api/v0';
 const PAYMENT_ADDRESS = process.env.PAYMENT_ADDRESS;
 const REQUIRED_PAYMENT = 10000000; // 10 ADA in lovelace
 
-// Initialize cache with 5 minute TTL
-const walletCache = new NodeCache({ stdTTL: 300 });
+// Initialize caches with appropriate TTLs
+const walletCache = new NodeCache({ stdTTL: 300 }); // 5 minutes for wallet data
+const assetCache = new NodeCache({ stdTTL: 3600 }); // 1 hour for asset metadata
+const transactionCache = new NodeCache({ stdTTL: 86400 }); // 24 hours for processed transactions
 
 // Rate limiting
 const limiter = rateLimit({
@@ -100,6 +102,45 @@ async function fetchBlockfrost(endpoint, errorContext = '') {
   }
 }
 
+async function getAssetInfo(assetId) {
+    try {
+        // Check cache first
+        const cachedAsset = assetCache.get(assetId);
+        if (cachedAsset) {
+            console.log(`Using cached data for asset ${assetId}`);
+            return cachedAsset;
+        }
+
+        // If not in cache, fetch from Blockfrost
+        console.log(`Fetching asset data for ${assetId}`);
+        const assetData = await fetchBlockfrost(`/assets/${assetId}`, 'fetch asset metadata');
+        
+        // Process the asset data
+        const processedData = {
+            metadata: assetData.metadata || null,
+            onchain_metadata: assetData.onchain_metadata || null,
+            decimals: assetData.metadata?.decimals || assetData.onchain_metadata?.decimals || 0,
+            asset_name: assetData.asset_name ? 
+                Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
+                assetId.substring(56),
+            policy_id: assetId.substring(0, 56),
+            fingerprint: assetData.fingerprint,
+            display_name: assetData.onchain_metadata?.name || 
+                        assetData.metadata?.name || 
+                        (assetData.asset_name ? Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
+                        assetId.substring(56))
+        };
+
+        // Store in cache
+        assetCache.set(assetId, processedData);
+        
+        return processedData;
+    } catch (error) {
+        console.error(`Error fetching asset info for ${assetId}:`, error);
+        return null;
+    }
+}
+
 // Get wallet info
 app.get('/api/wallet/:address', async (req, res) => {
   try {
@@ -127,21 +168,10 @@ app.get('/api/wallet/:address', async (req, res) => {
         try {
           // For non-native tokens, get the asset details
           if (asset.unit.length > 32) {
-            const assetData = await fetchBlockfrost(`/assets/${asset.unit}`, 'fetch asset metadata');
+            const assetData = await getAssetInfo(asset.unit);
             return {
               ...asset,
-              metadata: assetData.metadata || null,
-              onchain_metadata: assetData.onchain_metadata || null,
-              decimals: assetData.metadata?.decimals || assetData.onchain_metadata?.decimals || 0,
-              asset_name: assetData.asset_name ? 
-                Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
-                asset.unit.substring(56),
-              policy_id: asset.unit.substring(0, 56),
-              fingerprint: assetData.fingerprint,
-              display_name: assetData.onchain_metadata?.name || 
-                          assetData.metadata?.name || 
-                          (assetData.asset_name ? Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
-                          asset.unit.substring(56))
+              ...assetData
             };
           }
           return asset;

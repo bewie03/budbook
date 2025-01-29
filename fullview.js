@@ -19,6 +19,76 @@ const WALLET_LOGOS = {
 let wallets = [];
 let unlockedSlots = MAX_FREE_SLOTS;
 
+// Cache management
+const ASSET_CACHE_KEY = 'walletpup_asset_cache';
+const ASSET_CACHE_DURATION = 3600000; // 1 hour in milliseconds
+
+async function getAssetCache() {
+  try {
+    const cache = await chrome.storage.local.get(ASSET_CACHE_KEY);
+    return cache[ASSET_CACHE_KEY] || {};
+  } catch (error) {
+    console.error('Error reading asset cache:', error);
+    return {};
+  }
+}
+
+async function setAssetCache(assetId, data) {
+  try {
+    const cache = await getAssetCache();
+    cache[assetId] = {
+      data,
+      timestamp: Date.now()
+    };
+    await chrome.storage.local.set({ [ASSET_CACHE_KEY]: cache });
+  } catch (error) {
+    console.error('Error writing to asset cache:', error);
+  }
+}
+
+async function getAssetFromCache(assetId) {
+  try {
+    const cache = await getAssetCache();
+    const cachedAsset = cache[assetId];
+    
+    if (cachedAsset) {
+      const age = Date.now() - cachedAsset.timestamp;
+      if (age < ASSET_CACHE_DURATION) {
+        return cachedAsset.data;
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error('Error reading from asset cache:', error);
+    return null;
+  }
+}
+
+// Clean up old cache entries periodically
+async function cleanupAssetCache() {
+  try {
+    const cache = await getAssetCache();
+    const now = Date.now();
+    let modified = false;
+    
+    for (const [assetId, entry] of Object.entries(cache)) {
+      if (now - entry.timestamp > ASSET_CACHE_DURATION) {
+        delete cache[assetId];
+        modified = true;
+      }
+    }
+    
+    if (modified) {
+      await chrome.storage.local.set({ [ASSET_CACHE_KEY]: cache });
+    }
+  } catch (error) {
+    console.error('Error cleaning up asset cache:', error);
+  }
+}
+
+// Clean up cache every hour
+setInterval(cleanupAssetCache, ASSET_CACHE_DURATION);
+
 // Reuse the same functions from popup.js
 async function fetchWalletData(address) {
   try {
