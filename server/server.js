@@ -419,7 +419,14 @@ app.get('/api/wallet/:address', async (req, res) => {
         display_name: asset.display_name,
         ticker: asset.ticker,
         readable_amount: asset.readable_amount
-      })).sort((a, b) => BigInt(b.quantity) - BigInt(a.quantity))
+      })).sort((a, b) => {
+        // Convert to BigInt for comparison but avoid arithmetic
+        const aQuantity = BigInt(a.quantity);
+        const bQuantity = BigInt(b.quantity);
+        if (aQuantity < bQuantity) return 1;
+        if (aQuantity > bQuantity) return -1;
+        return 0;
+      })
     };
 
     // Cache the full data in Redis
