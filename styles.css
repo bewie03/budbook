@@ -1008,14 +1008,12 @@ select {
   right: -400px;
   width: 400px;
   height: 100vh;
-  background: rgba(20, 24, 40, 0.95);
-  backdrop-filter: blur(10px);
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-  transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background: var(--card-dark);
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.2);
+  transition: right 0.3s ease;
   z-index: 1000;
   display: flex;
   flex-direction: column;
-  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3);
 }
 
 .assets-panel.expanded {
@@ -1023,163 +1021,119 @@ select {
 }
 
 .assets-header {
-  padding: 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 20px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-color);
 }
 
-.assets-header h3 {
+.assets-header h2 {
   margin: 0;
-  font-size: 20px;
-  color: #fff;
+  font-size: 18px;
+  font-weight: 500;
 }
 
 .close-assets {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.5);
-  cursor: pointer;
+  color: #808080;
   font-size: 24px;
-  padding: 4px;
-  transition: color 0.2s ease;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.15s ease;
 }
 
 .close-assets:hover {
-  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
 }
 
 .assets-tabs {
   display: flex;
-  padding: 0 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 16px;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .assets-tab {
-  padding: 16px 24px;
+  flex: 1;
+  padding: 8px 16px;
   background: none;
-  border: none;
-  color: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: #808080;
+  font-size: 14px;
   cursor: pointer;
-  font-size: 16px;
-  font-weight: 500;
-  position: relative;
-  transition: color 0.2s ease;
+  transition: all 0.15s ease;
+}
+
+.assets-tab:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #ffffff;
 }
 
 .assets-tab.active {
-  color: #fff;
-}
-
-.assets-tab.active::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: #5b86e5;
+  background: var(--primary-color);
+  color: #ffffff;
+  border-color: var(--primary-color);
 }
 
 .assets-content {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
+  padding: 16px;
 }
 
-.assets-list {
+.assets-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 16px;
-  padding-right: 8px;
-}
-
-.assets-list::-webkit-scrollbar {
-  width: 4px;
-}
-
-.assets-list::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.assets-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 2px;
 }
 
 .asset-item {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  transition: transform 0.2s ease;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  transition: all 0.15s ease;
 }
 
 .asset-item:hover {
   transform: translateY(-2px);
+  border-color: var(--primary-color);
 }
 
 .asset-image {
   width: 100%;
   aspect-ratio: 1;
-  border-radius: 8px;
   object-fit: cover;
   background: rgba(0, 0, 0, 0.2);
 }
 
 .asset-info {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  padding: 12px;
 }
 
 .asset-name {
   font-size: 14px;
   font-weight: 500;
-  color: #fff;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  text-overflow: ellipsis;
+  margin: 0 0 4px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.asset-quantity {
-  font-size: 14px;
-  color: #00ff9d;
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-}
-
-.assets-toggle {
-  background: rgba(91, 134, 229, 0.1);
-  border: none;
-  border-radius: 8px;
-  padding: 12px;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transition: background 0.2s ease;
-}
-
-.assets-toggle:hover {
-  background: rgba(91, 134, 229, 0.2);
-}
-
-.no-assets {
-  text-align: center;
-  color: rgba(255, 255, 255, 0.5);
-  padding: 32px;
-  font-style: italic;
+.asset-amount {
+  font-size: 12px;
+  color: #808080;
+  margin: 0;
 }
 
 .wallet-select {

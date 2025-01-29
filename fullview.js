@@ -323,12 +323,16 @@ function renderWallets() {
 
 function setupAssetsPanelListeners() {
   const panel = document.querySelector('.assets-panel');
+  if (!panel) return; // Exit if panel doesn't exist
+
   const closeBtn = panel.querySelector('.close-assets');
   const tabs = panel.querySelectorAll('.assets-tab');
   
-  closeBtn.addEventListener('click', () => {
-    panel.classList.remove('expanded');
-  });
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      panel.classList.remove('expanded');
+    });
+  }
 
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
