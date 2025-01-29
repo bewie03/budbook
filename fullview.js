@@ -62,9 +62,43 @@ async function getAssetFromCache(assetId) {
 
 async function loadWallets() {
   try {
-    const data = await chrome.storage.sync.get(['wallets', 'unlockedSlots']);
-    wallets = data.wallets || [];
+    // Load wallet index and slots from sync storage
+    const data = await chrome.storage.sync.get(['wallet_index', 'unlockedSlots']);
+    const walletIndex = data.wallet_index || [];
     unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
+
+    // Load wallet metadata from sync storage
+    const walletPromises = walletIndex.map(address => 
+      new Promise((resolve) => {
+        chrome.storage.sync.get(`wallet_${address}`, (result) => {
+          resolve(result[`wallet_${address}`]);
+        });
+      })
+    );
+
+    // Load assets from local storage
+    const assetPromises = walletIndex.map(address => 
+      new Promise((resolve) => {
+        chrome.storage.local.get(`assets_${address}`, (result) => {
+          resolve(result[`assets_${address}`]);
+        });
+      })
+    );
+
+    // Wait for all data to load
+    const [walletData, assetData] = await Promise.all([
+      Promise.all(walletPromises),
+      Promise.all(assetPromises)
+    ]);
+
+    // Combine wallet data with assets
+    wallets = walletData.map((wallet, index) => ({
+      ...wallet,
+      assets: assetData[index] || []
+    })).filter(Boolean);
+
+    console.log('Loaded wallets:', wallets);
+    updateUI();
   } catch (error) {
     console.error('Error loading wallets:', error);
     showError('Failed to load wallets');
@@ -73,26 +107,66 @@ async function loadWallets() {
 
 async function saveWallets() {
   try {
-    // Only store essential wallet data to avoid quota issues
-    const minimalWallets = wallets.map(wallet => ({
-      address: wallet.address,
-      stake_address: wallet.stake_address,
-      balance: wallet.balance,
-      // Only store essential asset data
-      assets: wallet.assets?.map(asset => ({
-        unit: asset.unit,
-        quantity: asset.quantity,
-        decimals: asset.decimals,
-        readable_amount: asset.readable_amount,
-        display_name: asset.display_name,
-        ticker: asset.ticker
-      })) || []
-    }));
+    // Create a wallet index (just addresses)
+    const walletIndex = wallets.map(w => w.address);
 
-    await chrome.storage.sync.set({ 
-      wallets: minimalWallets, 
-      unlockedSlots 
-    });
+    // Prepare individual wallet saves
+    const syncPromises = wallets.map(wallet => 
+      new Promise((resolve, reject) => {
+        // Store minimal wallet data in sync storage
+        const syncData = {
+          address: wallet.address,
+          name: wallet.name,
+          balance: wallet.balance,
+          stake_address: wallet.stake_address,
+          timestamp: wallet.timestamp,
+          walletType: wallet.walletType
+        };
+
+        chrome.storage.sync.set({ 
+          [`wallet_${wallet.address}`]: syncData 
+        }, () => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+            return;
+          }
+          resolve();
+        });
+      })
+    );
+
+    // Store assets in local storage
+    const localPromises = wallets.map(wallet => 
+      new Promise((resolve, reject) => {
+        chrome.storage.local.set({ 
+          [`assets_${wallet.address}`]: wallet.assets 
+        }, () => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+            return;
+          }
+          resolve();
+        });
+      })
+    );
+
+    // Save the index and wait for all saves
+    await Promise.all([
+      new Promise((resolve, reject) => {
+        chrome.storage.sync.set({ 
+          wallet_index: walletIndex,
+          unlockedSlots 
+        }, () => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+            return;
+          }
+          resolve();
+        });
+      }),
+      ...syncPromises,
+      ...localPromises
+    ]);
   } catch (error) {
     console.error('Error saving wallets:', error);
     showError('Failed to save wallet changes');
@@ -128,28 +202,36 @@ function validateAddress(address) {
 function getAssetImage(asset) {
   if (!asset) return null;
   
-  // Check onchain_metadata first
-  if (asset.onchain_metadata?.image) {
-    return convertIpfsUrl(asset.onchain_metadata.image);
-  }
-  
-  // Check metadata
-  if (asset.metadata?.image || asset.metadata?.logo) {
-    return convertIpfsUrl(asset.metadata.image || asset.metadata.logo);
-  }
-
-  // Check files array if present
-  if (asset.metadata?.files && asset.metadata.files.length > 0) {
-    const file = asset.metadata.files[0];
-    if (typeof file === 'string') {
-      return convertIpfsUrl(file);
+  try {
+    // Check onchain_metadata first
+    if (asset.onchain_metadata?.image) {
+      const image = asset.onchain_metadata.image;
+      return typeof image === 'string' ? convertIpfsUrl(image) : null;
     }
-    if (file.src || file.uri) {
-      return convertIpfsUrl(file.src || file.uri);
+    
+    // Check metadata
+    if (asset.metadata?.image || asset.metadata?.logo) {
+      const image = asset.metadata.image || asset.metadata.logo;
+      return typeof image === 'string' ? convertIpfsUrl(image) : null;
     }
-  }
 
-  return null;
+    // Check files array if present
+    if (asset.metadata?.files && Array.isArray(asset.metadata.files) && asset.metadata.files.length > 0) {
+      const file = asset.metadata.files[0];
+      if (typeof file === 'string') {
+        return convertIpfsUrl(file);
+      }
+      if (file && typeof file === 'object') {
+        const fileUrl = file.src || file.uri || file.url || file.image;
+        return typeof fileUrl === 'string' ? convertIpfsUrl(fileUrl) : null;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error getting asset image:', error, 'Asset:', asset);
+    return null;
+  }
 }
 
 function isNFT(asset) {
@@ -805,6 +887,15 @@ async function fetchWalletData(address) {
   }
 }
 
+// Listen for reload messages from background script
+chrome.runtime.onMessage.addListener(async (message) => {
+  if (message.type === 'RELOAD_WALLETS') {
+    console.log('Reloading wallets due to storage change');
+    await loadWallets();
+    updateUI();
+  }
+});
+
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {
@@ -812,18 +903,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateUI();
     setupEventListeners();
     setupAssetsPanelListeners();
-
-    // Listen for storage changes to auto-refresh
-    chrome.storage.onChanged.addListener(async (changes, namespace) => {
-      if (namespace === 'sync' && changes.wallets) {
-        console.log('Wallet data changed, refreshing...');
-        await loadWallets();
-        updateUI();
-      }
-    });
   } catch (error) {
-    console.error('Error initializing:', error);
-    showError('Failed to initialize the wallet address book');
+    console.error('Error initializing fullview:', error);
+    showError('Failed to initialize. Please try again.');
   }
 });
 

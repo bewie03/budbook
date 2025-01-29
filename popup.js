@@ -528,7 +528,10 @@ function setupEventListeners() {
   const openFullviewBtn = document.getElementById('openFullview');
   if (openFullviewBtn) {
     openFullviewBtn.addEventListener('click', () => {
-      chrome.tabs.create({ url: chrome.runtime.getURL('fullview.html') });
+      chrome.tabs.create({
+        url: chrome.runtime.getURL('fullview.html')
+      });
+      window.close(); // Close the popup
     });
   }
 
@@ -604,28 +607,16 @@ function sortAssetsByValue(assets) {
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    // Reset storage to ensure we're using the new default slots
-    const data = await chrome.storage.sync.get(['wallets', 'unlockedSlots']);
-    if (!data.unlockedSlots || data.unlockedSlots === 5) {
-      await chrome.storage.sync.set({
-        wallets: data.wallets || [],
-        unlockedSlots: MAX_FREE_SLOTS
-      });
-    }
-    
     await loadWallets();
     updateUI();
     setupEventListeners();
 
     // Handle Open Address Book button
     document.getElementById('openFullview').addEventListener('click', () => {
-      chrome.windows.create({
-        url: chrome.runtime.getURL('fullview.html'),
-        type: 'popup',
-        width: 800,
-        height: 600
+      chrome.tabs.create({
+        url: chrome.runtime.getURL('fullview.html')
       });
-      window.close(); // Close the popup
+      window.close();
     });
   } catch (error) {
     console.error('Error initializing popup:', error);
