@@ -353,8 +353,13 @@ app.get('/api/wallet/:address', async (req, res) => {
             balance: `${adaWholePart}.${adaDecimalPart}`,
             assets: assets.sort((a, b) => {
                 try {
-                    return BigInt(b.quantity) - BigInt(a.quantity);
+                    const aQuantity = BigInt(a.quantity);
+                    const bQuantity = BigInt(b.quantity);
+                    if (aQuantity < bQuantity) return 1;
+                    if (aQuantity > bQuantity) return -1;
+                    return 0;
                 } catch (error) {
+                    console.error('Error comparing asset quantities:', error);
                     return 0; // If comparison fails, don't change order
                 }
             })
