@@ -307,6 +307,21 @@ app.get('/api/verify-payment/:address', async (req, res) => {
   }
 });
 
+// Add endpoint to view cache
+app.get('/api/cache', (req, res) => {
+  try {
+    const cacheStats = {
+      assetCacheSize: Object.keys(assetCache).length,
+      walletCacheSize: walletCache.keys().length,
+      transactionCacheSize: transactionCache.keys().length,
+      assetCache: assetCache
+    };
+    res.json(cacheStats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
