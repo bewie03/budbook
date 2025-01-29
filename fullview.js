@@ -109,71 +109,41 @@ async function saveWallets() {
   try {
     // Create a wallet index (just addresses)
     const walletIndex = wallets.map(w => w.address);
+    
+    // Save wallet index and unlocked slots to sync storage
+    await chrome.storage.sync.set({
+      wallet_index: walletIndex,
+      unlockedSlots: unlockedSlots
+    });
 
-    // Prepare individual wallet saves
-    const syncPromises = wallets.map(wallet => 
-      new Promise((resolve, reject) => {
-        // Store minimal wallet data in sync storage
-        const syncData = {
-          address: wallet.address,
-          name: wallet.name,
-          balance: wallet.balance,
-          stake_address: wallet.stake_address,
-          timestamp: wallet.timestamp,
-          walletType: wallet.walletType
-        };
+    // Save individual wallet metadata to sync storage
+    const walletPromises = wallets.map(wallet => {
+      const { address, name, walletType, stake_address, timestamp } = wallet;
+      return chrome.storage.sync.set({
+        [`wallet_${address}`]: { address, name, walletType, stake_address, timestamp }
+      });
+    });
 
-        chrome.storage.sync.set({ 
-          [`wallet_${wallet.address}`]: syncData 
-        }, () => {
-          if (chrome.runtime.lastError) {
-            reject(chrome.runtime.lastError);
-            return;
-          }
-          resolve();
-        });
-      })
-    );
+    // Save assets to local storage (they can be large)
+    const assetPromises = wallets.map(wallet => {
+      const { address, assets, balance } = wallet;
+      return chrome.storage.local.set({
+        [`assets_${address}`]: assets,
+        [`balance_${address}`]: balance
+      });
+    });
 
-    // Store assets in local storage
-    const localPromises = wallets.map(wallet => 
-      new Promise((resolve, reject) => {
-        chrome.storage.local.set({ 
-          [`assets_${wallet.address}`]: wallet.assets 
-        }, () => {
-          if (chrome.runtime.lastError) {
-            reject(chrome.runtime.lastError);
-            return;
-          }
-          resolve();
-        });
-      })
-    );
-
-    // Save the index and wait for all saves
-    await Promise.all([
-      new Promise((resolve, reject) => {
-        chrome.storage.sync.set({ 
-          wallet_index: walletIndex,
-          unlockedSlots 
-        }, () => {
-          if (chrome.runtime.lastError) {
-            reject(chrome.runtime.lastError);
-            return;
-          }
-          resolve();
-        });
-      }),
-      ...syncPromises,
-      ...localPromises
-    ]);
+    // Wait for all storage operations to complete
+    await Promise.all([...walletPromises, ...assetPromises]);
+    
+    console.log('Wallets saved successfully:', wallets);
   } catch (error) {
     console.error('Error saving wallets:', error);
-    showError('Failed to save wallet changes');
+    throw error;
   }
 }
 
-function showError(message) {
+async function showError(message) {
   const errorDiv = document.getElementById('errorMsg');
   if (errorDiv) {
     errorDiv.textContent = message;
@@ -184,7 +154,7 @@ function showError(message) {
   }
 }
 
-function showSuccess(message) {
+async function showSuccess(message) {
   const successDiv = document.getElementById('successMsg');
   if (successDiv) {
     successDiv.textContent = message;
@@ -211,7 +181,11 @@ function getAssetImage(asset) {
 
 function isNFT(asset) {
   if (!asset) return false;
-  return asset.is_nft || asset.quantity === '1';
+  // Check multiple conditions that could indicate an NFT
+  return asset.is_nft || 
+         asset.quantity === '1' || 
+         asset.onchainMetadata?.type === 'NFT' ||
+         (asset.metadata && Object.keys(asset.metadata).length > 0 && asset.quantity === '1');
 }
 
 function convertIpfsUrl(url) {
@@ -275,7 +249,7 @@ function renderWallets() {
   }
 
   return wallets.map((wallet, index) => `
-    <div class="wallet-item">
+    <div class="wallet-item" data-wallet-index="${index}">
       <div class="wallet-top">
         ${wallet.walletType !== 'None' && WALLET_LOGOS[wallet.walletType] ? 
           `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-logo">` : 
@@ -479,24 +453,45 @@ function setupEventListeners() {
 }
 
 async function refreshWallet(index) {
+  const walletElement = document.querySelector(`[data-wallet-index="${index}"]`);
+  if (walletElement) {
+    walletElement.classList.add('loading');
+  }
+  
   try {
     const wallet = wallets[index];
     if (!wallet) {
       throw new Error('Wallet not found');
     }
 
-    showSuccess('Refreshing wallet data...');
+    console.log('Refreshing wallet:', wallet.address);
     const walletData = await fetchWalletData(wallet.address);
     
+    // Update wallet data
     wallet.balance = walletData.balance;
     wallet.assets = walletData.assets;
+    wallet.stake_address = walletData.stake_address;
     wallet.timestamp = Date.now();
     
+    // Save changes
     await saveWallets();
+    
+    // Update UI
     updateUI();
-    showSuccess('Wallet data updated!');
+    showSuccess('Wallet data updated successfully!');
+    
+    console.log('Wallet refreshed:', {
+      address: wallet.address,
+      balance: wallet.balance,
+      assetCount: wallet.assets.length
+    });
   } catch (error) {
+    console.error('Error refreshing wallet:', error);
     showError(error.message || 'Failed to refresh wallet');
+  } finally {
+    if (walletElement) {
+      walletElement.classList.remove('loading');
+    }
   }
 }
 
@@ -796,8 +791,9 @@ async function fetchWalletData(address) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     const data = await response.json();
+    console.log('Raw wallet data:', data); // Debug log
     
-    // Store only essential data
+    // Store complete asset data
     return {
       address: data.address,
       stake_address: data.stake_address,
@@ -805,11 +801,15 @@ async function fetchWalletData(address) {
       assets: data.assets?.map(asset => ({
         unit: asset.unit,
         quantity: asset.quantity,
-        decimals: asset.decimals,
-        ticker: asset.ticker,
-        name: asset.name,  // Get name from server
-        image: asset.image,  // Get image from server
-        is_nft: asset.is_nft  // Get NFT flag from server
+        decimals: asset.decimals || 0,
+        ticker: asset.ticker || '',
+        name: asset.name || asset.unit,
+        image: asset.image || '',
+        description: asset.description || '',
+        fingerprint: asset.fingerprint || '',
+        metadata: asset.metadata || {},
+        onchainMetadata: asset.onchainMetadata || {},
+        is_nft: asset.quantity === '1' || asset.onchainMetadata?.type === 'NFT' || false
       })) || []
     };
   } catch (error) {
