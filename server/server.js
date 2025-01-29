@@ -7,7 +7,7 @@ const rateLimit = require('express-rate-limit');
 const NodeCache = require('node-cache');
 const fs = require('fs').promises;
 const crypto = require('crypto');
-const { createClient } = require('redis');
+const Redis = require('ioredis');
 
 dotenv.config();
 
@@ -79,53 +79,60 @@ process.on('SIGINT', async () => {
 
 // Redis client setup
 const redisUrl = process.env.REDIS_URL || process.env.REDISCLOUD_URL;
-const redis = createClient({
-  url: redisUrl,
-  socket: {
-    tls: true,
-    servername: new URL(redisUrl).hostname,
-    rejectUnauthorized: false,
-    secureProtocol: 'TLSv1_2_method'
+const redis = new Redis(redisUrl, {
+  tls: {
+    rejectUnauthorized: false
   },
-  legacyMode: false
+  retryStrategy(times) {
+    const delay = Math.min(times * 50, 2000);
+    return delay;
+  },
+  maxRetriesPerRequest: 3
 });
 
 redis.on('error', err => {
   console.error('Redis Client Error:', err);
-  // Log full error details for debugging
   console.error('Full error:', JSON.stringify(err, null, 2));
 });
 
 redis.on('connect', () => {
-  console.log('Connected to Redis Cloud at:', new URL(redisUrl).hostname);
+  console.log('Connected to Redis Cloud');
 });
 
-// Connect to Redis
+// Test Redis connection
 (async () => {
   try {
-    await redis.connect();
-    console.log('Successfully connected to Redis');
-    
-    // Test the connection
     await redis.set('test', 'working');
     const testResult = await redis.get('test');
     console.log('Redis test result:', testResult);
   } catch (error) {
-    console.error('Failed to connect to Redis:', error);
-    console.error('Full connection error:', JSON.stringify(error, null, 2));
+    console.error('Failed to test Redis:', error);
   }
 })();
 
 // Helper functions for Redis
 async function getFromCache(key) {
-  const value = await redis.get(key);
-  return value ? JSON.parse(value) : null;
+  try {
+    const value = await redis.get(key);
+    return value ? JSON.parse(value) : null;
+  } catch (error) {
+    console.error('Error getting from cache:', error);
+    return null;
+  }
 }
 
-async function setInCache(key, value, expireSeconds = 300) {
-  await redis.set(key, JSON.stringify(value), {
-    EX: expireSeconds
-  });
+async function setInCache(key, value, expirySeconds = null) {
+  try {
+    if (expirySeconds) {
+      await redis.setex(key, expirySeconds, JSON.stringify(value));
+    } else {
+      await redis.set(key, JSON.stringify(value));
+    }
+    return true;
+  } catch (error) {
+    console.error('Error setting cache:', error);
+    return false;
+  }
 }
 
 async function getAssetMetadata(assetId) {
