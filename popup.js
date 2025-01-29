@@ -9,14 +9,19 @@ const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 
 class CardanoAddressBook {
   constructor() {
-    this.init();
     this.setupEventListeners();
+    // Call init asynchronously but don't block constructor
+    this.initialize();
   }
 
-  async init() {
-    this.container = document.getElementById('root');
-    await this.loadWallets();
-    this.updateUI();
+  async initialize() {
+    try {
+      this.container = document.getElementById('root');
+      await this.loadWallets();
+      this.updateUI();
+    } catch (error) {
+      console.error('Failed to initialize:', error);
+    }
   }
 
   async loadWallets() {
