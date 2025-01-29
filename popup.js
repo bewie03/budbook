@@ -116,7 +116,7 @@ async function loadWallets() {
 async function saveWallets() {
   return new Promise((resolve, reject) => {
     try {
-      // Clean up wallet data before saving
+      // Clean up wallet data before saving - only keep essential data
       const cleanWallets = wallets.map(wallet => ({
         address: wallet.address,
         name: wallet.name,
@@ -124,16 +124,14 @@ async function saveWallets() {
         stake_address: wallet.stake_address,
         timestamp: wallet.timestamp,
         walletType: wallet.walletType,
-        logo: wallet.logo,
+        // Only store essential asset data
         assets: wallet.assets ? wallet.assets.map(asset => ({
           unit: asset.unit,
           quantity: asset.quantity,
+          decimals: asset.decimals,
+          readable_amount: asset.readable_amount,
           display_name: asset.display_name,
-          asset_name: asset.asset_name,
-          onchain_metadata: asset.onchain_metadata ? {
-            name: asset.onchain_metadata.name,
-            image: asset.onchain_metadata.image
-          } : null
+          ticker: asset.ticker
         })) : []
       }));
 
