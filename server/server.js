@@ -263,11 +263,27 @@ async function fetchBlockfrost(endpoint, errorContext = '') {
   }
 }
 
+// Helper to validate Cardano address format
+function isValidCardanoAddress(address) {
+  // Shelley addresses start with addr1 and are 58+ chars
+  const shelleyRegex = /^addr1[a-zA-Z0-9]{58,}$/;
+  // Byron addresses start with Ae2 or Dd and are 58+ chars
+  const byronRegex = /^(Ae2|DdzFF)[a-zA-Z0-9]{58,}$/;
+  return shelleyRegex.test(address) || byronRegex.test(address);
+}
+
 // Get wallet info
 app.get('/api/wallet/:address', async (req, res) => {
   try {
     const { address } = req.params;
     console.log(`Processing wallet request for address: ${address}`);
+
+    // Validate address format first
+    if (!isValidCardanoAddress(address)) {
+      return res.status(400).json({ 
+        error: 'Invalid Cardano address format. Address must be a valid Shelley (addr1...) or Byron (Ae2/DdzFF...) address.'
+      });
+    }
     
     // Check cache first
     const cached = walletCache.get(address);
@@ -424,11 +440,11 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
       used: false
     };
     
-    // Cache for 1 hour
-    await setInCache(`payment:${paymentId}`, payment, 3600);
+    // Cache for 10 minutes
+    await setInCache(`payment:${paymentId}`, payment, 600);
     
     // Also store by installation ID for quick lookup
-    await setInCache(`install_payment:${installId}`, paymentId, 3600);
+    await setInCache(`install_payment:${installId}`, paymentId, 600);
     
     console.log('Payment initiated:', payment);
     
