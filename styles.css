@@ -319,42 +319,52 @@ button.delete:hover {
 
 .assets {
   margin-top: 10px;
-  padding: 10px;
-  background: rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.2);
   border-radius: 6px;
+  padding: 10px;
 }
 
 .assets-title {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
   margin-bottom: 8px;
-  color: #aaa;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .assets-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
 }
 
 .asset-item {
-  background: rgba(255, 255, 255, 0.1);
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  font-size: 14px;
 }
 
 .asset-quantity {
-  color: #aaa;
-  font-size: 11px;
+  color: #00ff9d;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  white-space: nowrap;
 }
 
 .asset-name {
   color: #fff;
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-image {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  object-fit: cover;
+  margin-left: auto;
 }
 
 .error-container {

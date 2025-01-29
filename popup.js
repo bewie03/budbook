@@ -226,13 +226,16 @@ function renderWallets() {
           <p class="assets-title">Assets:</p>
           <div class="assets-list">
             ${wallet.assets.map(asset => `
-              <div class="asset-item">
+              <div class="asset-item" title="${asset.unit}">
                 <span class="asset-quantity">${asset.quantity}×</span>
-                <span class="asset-name" title="${asset.unit}">${
-                  asset.unit === 'lovelace' ? 'ADA' : 
-                  asset.unit.length > 20 ? asset.unit.substring(0, 20) + '...' : 
-                  asset.unit
+                <span class="asset-name">${
+                  asset.display_name || 
+                  asset.asset_name || 
+                  (asset.unit.length > 20 ? asset.unit.substring(0, 20) + '...' : asset.unit)
                 }</span>
+                ${asset.onchain_metadata?.image ? 
+                  `<img src="${asset.onchain_metadata.image}" alt="${asset.display_name || 'Asset'}" class="asset-image">` : 
+                  ''}
               </div>
             `).join('')}
           </div>

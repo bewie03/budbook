@@ -120,12 +120,43 @@ app.get('/api/wallet/:address', async (req, res) => {
     // Extract lovelace (ADA) amount from the amounts array
     const lovelaceAmount = addressData.amount?.find(amt => amt.unit === 'lovelace')?.quantity || '0';
     
+    // Get other assets and fetch their metadata
+    const assets = addressData.amount?.filter(amt => amt.unit !== 'lovelace') || [];
+    const assetsWithMetadata = await Promise.all(
+      assets.map(async (asset) => {
+        try {
+          // For non-native tokens, get the asset details
+          if (asset.unit.length > 32) {
+            const assetData = await fetchBlockfrost(`/assets/${asset.unit}`, 'fetch asset metadata');
+            return {
+              ...asset,
+              metadata: assetData.metadata || null,
+              onchain_metadata: assetData.onchain_metadata || null,
+              asset_name: assetData.asset_name ? 
+                Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
+                asset.unit.substring(56),
+              policy_id: asset.unit.substring(0, 56),
+              fingerprint: assetData.fingerprint,
+              display_name: assetData.onchain_metadata?.name || 
+                          assetData.metadata?.name || 
+                          (assetData.asset_name ? Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
+                          asset.unit.substring(56))
+            };
+          }
+          return asset;
+        } catch (error) {
+          console.error('Error fetching asset metadata:', error);
+          return asset;
+        }
+      })
+    );
+    
     // Format response
     const response = {
       address: addressData.address,
       balance: lovelaceAmount,
       stake_address: addressData.stake_address,
-      assets: addressData.amount?.filter(amt => amt.unit !== 'lovelace') || []
+      assets: assetsWithMetadata
     };
     
     // Cache the result
