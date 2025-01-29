@@ -253,24 +253,32 @@ async function fetchBlockfrost(endpoint, errorContext = '') {
 app.get('/api/wallet/:address', async (req, res) => {
   try {
     const { address } = req.params;
+    console.log(`Processing wallet request for address: ${address}`);
     
     // Check cache first
     const cached = walletCache.get(address);
     if (cached) {
+      console.log(`Returning cached data for ${address}`);
       return res.json(cached);
     }
 
     // Fetch all wallet data in parallel
+    console.log(`Fetching wallet data from Blockfrost for ${address}`);
     const [walletData, assetsData] = await Promise.all([
       fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data'),
       fetchBlockfrost(`/addresses/${address}/total`, 'fetch wallet assets')
     ]);
 
+    console.log('Wallet data response:', JSON.stringify(walletData, null, 2));
+    console.log('Assets data response:', JSON.stringify(assetsData, null, 2));
+
     // Process assets data
     const assets = [];
     if (assetsData && Array.isArray(assetsData.tokens)) {
+      console.log(`Processing ${assetsData.tokens.length} assets`);
       for (const token of assetsData.tokens) {
         try {
+          console.log(`Fetching info for asset: ${token.unit}`);
           const assetInfo = await getAssetInfo(token.unit);
           if (assetInfo) {
             assets.push({
@@ -280,6 +288,7 @@ app.get('/api/wallet/:address', async (req, res) => {
               asset_name: assetInfo.asset_name,
               onchain_metadata: assetInfo.onchain_metadata
             });
+            console.log(`Successfully processed asset: ${token.unit}`);
           }
         } catch (error) {
           console.error(`Error fetching asset info for ${token.unit}:`, error);
@@ -295,6 +304,8 @@ app.get('/api/wallet/:address', async (req, res) => {
       assets: assets
     };
 
+    console.log('Final response:', JSON.stringify(response, null, 2));
+
     // Cache response for 5 minutes
     walletCache.set(address, response);
     
@@ -304,6 +315,7 @@ app.get('/api/wallet/:address', async (req, res) => {
     const errorMessage = error.response ? 
       `Blockfrost API error: ${error.response.status} - ${error.response.statusText}` :
       'Failed to fetch wallet data';
+    console.error('Error details:', errorMessage);
     res.status(500).json({ error: errorMessage });
   }
 });
