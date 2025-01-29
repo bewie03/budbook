@@ -206,7 +206,10 @@ function renderWallets() {
 
   return wallets.map((wallet, index) => `
     <div class="wallet-item">
-      <button class="delete delete-btn" data-index="${index}">×</button>
+      <div class="wallet-actions">
+        <button class="refresh-btn" data-index="${index}" title="Refresh Balance">↻</button>
+        <button class="delete delete-btn" data-index="${index}">×</button>
+      </div>
       <div class="wallet-header">
         ${wallet.walletType !== 'None' && WALLET_LOGOS[wallet.walletType] ? 
           `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-logo">` : 
@@ -263,6 +266,28 @@ async function deleteWallet(index) {
   }
 }
 
+async function refreshWallet(index) {
+  try {
+    const wallet = wallets[index];
+    if (!wallet) {
+      throw new Error('Wallet not found');
+    }
+
+    showSuccess('Refreshing wallet data...');
+    const walletData = await fetchWalletData(wallet.address);
+    
+    wallet.balance = walletData.balance;
+    wallet.assets = walletData.assets;
+    wallet.timestamp = Date.now();
+    
+    await saveWallets();
+    updateUI();
+    showSuccess('Wallet data updated!');
+  } catch (error) {
+    showError(error.message || 'Failed to refresh wallet');
+  }
+}
+
 function updateUI() {
   const availableSlotsElement = document.getElementById('availableSlots');
   const walletListElement = document.getElementById('walletList');
@@ -306,6 +331,14 @@ function setupEventListeners() {
     const index = button.dataset.index;
     if (index !== undefined) {
       button.addEventListener('click', () => deleteWallet(parseInt(index)));
+    }
+  });
+
+  const refreshButtons = document.querySelectorAll('.refresh-btn');
+  refreshButtons.forEach(button => {
+    const index = button.dataset.index;
+    if (index !== undefined) {
+      button.addEventListener('click', () => refreshWallet(parseInt(index)));
     }
   });
 
