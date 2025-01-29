@@ -913,3 +913,126 @@ document.addEventListener('keydown', function(e) {
     }
   }
 });
+
+function renderWallet(walletData) {
+  const mainContent = document.getElementById('main-content');
+  if (!walletData) {
+    mainContent.innerHTML = '<div class="error">No wallet data available</div>';
+    return;
+  }
+
+  // Create the main wallet info section
+  const walletInfo = `
+    <div class="wallet-section">
+      <div class="wallet-header">
+        <div class="address-info">
+          <div class="label">ADDRESS</div>
+          <div class="value">${formatAddress(walletData.address)} <button class="copy-btn" onclick="copyToClipboard('${walletData.address}')">Copy</button></div>
+        </div>
+        <div class="stake-info">
+          <div class="label">STAKE</div>
+          <div class="value">${formatAddress(walletData.stake_address)} <button class="copy-btn" onclick="copyToClipboard('${walletData.stake_address}')">Copy</button></div>
+        </div>
+        <div class="balance-info">
+          <div class="ada-balance">${walletData.balance} ₳</div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('overview')">Overview</button>
+      <button class="tab-btn" onclick="switchTab('tokens')" data-count="${walletData.token_count}">Tokens (${walletData.token_count})</button>
+      <button class="tab-btn" onclick="switchTab('nfts')" data-count="${walletData.nft_count}">NFTs (${walletData.nft_count})</button>
+    </div>
+    
+    <div class="tab-content">
+      <div id="overview-tab" class="tab-pane active">
+        <div class="overview-stats">
+          <div class="stat-card">
+            <div class="stat-title">ADA Balance</div>
+            <div class="stat-value">${walletData.balance} ₳</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-title">Tokens</div>
+            <div class="stat-value">${walletData.token_count}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-title">NFTs</div>
+            <div class="stat-value">${walletData.nft_count}</div>
+          </div>
+        </div>
+      </div>
+      
+      <div id="tokens-tab" class="tab-pane">
+        <div class="token-grid">
+          ${renderTokens(walletData.tokens)}
+        </div>
+      </div>
+      
+      <div id="nfts-tab" class="tab-pane">
+        <div class="nft-grid">
+          ${renderNFTs(walletData.nfts)}
+        </div>
+      </div>
+    </div>
+  `;
+  
+  mainContent.innerHTML = walletInfo;
+}
+
+function renderTokens(tokens) {
+  if (!tokens || tokens.length === 0) {
+    return '<div class="no-items">No tokens found</div>';
+  }
+  
+  return tokens.map(token => `
+    <div class="token-card">
+      <div class="token-icon">
+        ${token.image ? 
+          `<img src="${token.image}" alt="${token.name}" onerror="this.src='./images/token-placeholder.png'">` :
+          `<div class="token-letter">${token.name.charAt(0).toUpperCase()}</div>`
+        }
+      </div>
+      <div class="token-info">
+        <div class="token-name">${token.name}</div>
+        <div class="token-amount">${token.readable_amount}</div>
+        ${token.ticker ? `<div class="token-ticker">${token.ticker}</div>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderNFTs(nfts) {
+  if (!nfts || nfts.length === 0) {
+    return '<div class="no-items">No NFTs found</div>';
+  }
+  
+  return nfts.map(nft => `
+    <div class="nft-card">
+      <div class="nft-image">
+        ${nft.image ? 
+          `<img src="${nft.image}" alt="${nft.name}" onerror="this.src='./images/nft-placeholder.png'">` :
+          `<div class="nft-letter">${nft.name.charAt(0).toUpperCase()}</div>`
+        }
+      </div>
+      <div class="nft-info">
+        <div class="nft-name">${nft.name}</div>
+        <div class="nft-policy">${formatAddress(nft.unit.split('.')[0])}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function switchTab(tabName) {
+  // Remove active class from all tabs and content
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
+  
+  // Add active class to selected tab and content
+  document.querySelector(`.tab-btn[onclick="switchTab('${tabName}')"]`).classList.add('active');
+  document.getElementById(`${tabName}-tab`).classList.add('active');
+}
+
+function formatAddress(address) {
+  return truncateAddress(address);
+}
