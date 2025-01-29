@@ -228,14 +228,23 @@ async function addWallet() {
     showSuccess('Adding wallet...');
     const walletData = await fetchWalletData(address);
     
+    // Store only essential wallet data
     const wallet = {
       address,
       name,
       walletType,
       balance: walletData.balance,
       stake_address: walletData.stake_address,
-      assets: walletData.assets,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      // Only store minimal asset data
+      assets: walletData.assets ? walletData.assets.map(asset => ({
+        unit: asset.unit,
+        quantity: asset.quantity,
+        decimals: asset.decimals,
+        readable_amount: asset.readable_amount,
+        display_name: asset.display_name,
+        ticker: asset.ticker
+      })) : []
     };
 
     wallets.push(wallet);
