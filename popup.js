@@ -217,6 +217,15 @@ async function addWallet() {
   }
 }
 
+function convertIpfsUrl(url) {
+  if (!url) return '';
+  if (url.startsWith('ipfs://')) {
+    const hash = url.replace('ipfs://', '');
+    return `https://ipfs.io/ipfs/${hash}`;
+  }
+  return url;
+}
+
 function renderWallets() {
   if (!wallets.length) {
     return '<p class="no-wallets">No wallets added yet</p>';
@@ -252,7 +261,7 @@ function renderWallets() {
                   (asset.unit.length > 20 ? asset.unit.substring(0, 20) + '...' : asset.unit)
                 }</span>
                 ${asset.onchain_metadata?.image ? 
-                  `<img src="${asset.onchain_metadata.image}" alt="${asset.display_name || 'Asset'}" class="asset-image">` : 
+                  `<img src="${convertIpfsUrl(asset.onchain_metadata.image)}" alt="${asset.display_name || 'Asset'}" class="asset-image">` : 
                   ''}
               </div>
             `).join('')}
