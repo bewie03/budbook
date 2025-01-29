@@ -284,6 +284,9 @@ async function addWallet() {
       walletTypeSelect.value = 'None';
       
       showSuccess('Wallet added successfully!');
+      
+      // Notify background script that a wallet was added
+      chrome.runtime.sendMessage({ type: 'WALLET_ADDED' });
     } catch (storageError) {
       // Remove from array if save failed
       wallets.pop();
@@ -368,6 +371,14 @@ function convertIpfsUrl(url) {
   return url;
 }
 
+function formatBalance(balance) {
+  if (!balance) return '0';
+  return parseFloat(balance).toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 6
+  }) + ' ₳';
+}
+
 function renderWallets() {
   if (!wallets.length) {
     return '<p class="no-wallets">No wallets added yet</p>';
@@ -386,7 +397,7 @@ function renderWallets() {
         <h3>${wallet.name}</h3>
       </div>
       <p class="address">Address: ${wallet.address}</p>
-      <p class="balance">Balance: ${(parseInt(wallet.balance) / 1000000).toFixed(2)} ₳</p>
+      <p class="balance">Balance: ${formatBalance(wallet.balance)}</p>
       ${wallet.stake_address ? 
         `<p class="stake">Stake Address: ${wallet.stake_address}</p>` : 
         ''}

@@ -27,5 +27,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.tabs.create({
       url: chrome.runtime.getURL('fullview.html')
     });
+  } else if (message.type === 'WALLET_ADDED') {
+    // When a wallet is added, notify all fullview tabs
+    chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') }, (tabs) => {
+      tabs.forEach(tab => {
+        chrome.tabs.sendMessage(tab.id, { type: 'RELOAD_WALLETS' });
+      });
+    });
   }
 });

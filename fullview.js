@@ -633,7 +633,7 @@ function formatBalance(balance) {
   return parseFloat(balance).toLocaleString(undefined, {
     minimumFractionDigits: 0,
     maximumFractionDigits: 6
-  });
+  }) + ' ₳';
 }
 
 function formatTokenAmount(amount, decimals = 0) {

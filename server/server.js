@@ -426,10 +426,14 @@ app.get('/api/wallet/:address', async (req, res) => {
     }
 
     // Format response
+    const lovelaceBalance = walletData.amount.find(a => a.unit === 'lovelace')?.quantity || '0';
+    const adaBalance = (BigInt(lovelaceBalance) / BigInt(1000000)).toString();
+    
     const response = {
       address,
       stake_address: walletData.stake_address,
-      balance: walletData.amount.find(a => a.unit === 'lovelace')?.quantity || '0',
+      balance: adaBalance, // Now in ADA instead of lovelace
+      raw_balance: lovelaceBalance, // Keep raw balance for precise calculations
       // Only send essential asset data
       assets: assets.map(asset => ({
         unit: asset.unit,
