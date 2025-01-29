@@ -296,6 +296,22 @@ function isValidCardanoAddress(address) {
          stakeMainnetRegex.test(address);
 }
 
+// Helper to safely format token amounts
+function formatAmount(quantity, decimals) {
+    try {
+        if (decimals === 0) return quantity;
+        
+        // Handle the amount as a string to avoid number precision issues
+        const str = quantity.padStart(decimals + 1, '0');
+        const whole = str.slice(0, -decimals) || '0';
+        const fraction = str.slice(-decimals);
+        
+        return `${whole}.${fraction}`;
+    } catch {
+        return null;
+    }
+}
+
 // Get wallet info
 app.get('/api/wallet/:address', async (req, res) => {
     try {
@@ -318,31 +334,31 @@ app.get('/api/wallet/:address', async (req, res) => {
         for (const token of walletData.amount) {
             if (token.unit === 'lovelace') continue;
             
+            // Skip if quantity is not a valid number
+            if (!token.quantity || token.quantity.length > 30) continue;
+            
             // Get asset metadata (from cache or Blockfrost)
             const assetInfo = await getAssetInfo(token.unit);
             if (!assetInfo) continue;
 
             try {
-                // Calculate readable amount based on decimals
-                const quantity = BigInt(token.quantity);
-                const decimals = assetInfo.decimals || 0;
-                const divisor = BigInt(10 ** decimals);
-                const wholePart = (quantity / divisor).toString();
-                const decimalPart = decimals > 0 ? (quantity % divisor).toString().padStart(decimals, '0') : '';
+                const quantity = token.quantity;
+                const decimals = Math.min(assetInfo.decimals || 0, 8); // Cap decimals at 8
+                const readable_amount = formatAmount(quantity, decimals);
+
+                if (!readable_amount) continue; // Skip if formatting failed
 
                 assets.push({
                     unit: token.unit,
                     quantity: token.quantity,
-                    name: assetInfo.name,
-                    decimals: decimals,
+                    name: assetInfo.name || token.unit.slice(-8),
+                    decimals,
                     ticker: assetInfo.ticker,
                     image: assetInfo.image,
-                    readable_amount: decimals > 0 ? `${wholePart}.${decimalPart}` : wholePart
+                    readable_amount
                 });
             } catch (error) {
-                console.error(`Error processing amount for asset ${token.unit}:`, error);
-                // Skip this asset if there's an error processing its amount
-                continue;
+                continue; // Skip problematic assets
             }
         }
 
@@ -352,20 +368,12 @@ app.get('/api/wallet/:address', async (req, res) => {
             stake_address: walletData.stake_address,
             balance: `${adaWholePart}.${adaDecimalPart}`,
             assets: assets.sort((a, b) => {
-                try {
-                    const aQuantity = BigInt(a.quantity);
-                    const bQuantity = BigInt(b.quantity);
-                    if (aQuantity < bQuantity) return 1;
-                    if (aQuantity > bQuantity) return -1;
-                    return 0;
-                } catch (error) {
-                    console.error('Error comparing asset quantities:', error);
-                    return 0; // If comparison fails, don't change order
-                }
+                // Simple string comparison of quantities
+                return b.quantity.localeCompare(a.quantity);
             })
         };
 
-        await redis.set(`wallet:${address}`, JSON.stringify(response), 'EX', 300); // Cache for 5 minutes
+        await redis.set(`wallet:${address}`, JSON.stringify(response), 'EX', 300);
         res.json(response);
 
     } catch (error) {
