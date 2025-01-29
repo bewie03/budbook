@@ -235,7 +235,7 @@ async function fetchBlockfrost(endpoint, errorContext = '') {
 
     const response = await fetch(`${BLOCKFROST_BASE_URL}${endpoint}`, {
       headers: {
-        'project_id': BLOCKFROST_API_KEY
+        'project_id': BLOCKFROST_PROJECT_ID
       }
     });
     
@@ -431,7 +431,7 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
 
     // Get recent transactions
     const response = await fetch(`${BLOCKFROST_BASE_URL}/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`, {
-      headers: { 'project_id': BLOCKFROST_API_KEY }
+      headers: { 'project_id': BLOCKFROST_PROJECT_ID }
     });
 
     if (!response.ok) {
@@ -443,7 +443,7 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
     // Check recent transactions for the exact amount
     for (const tx of transactions) {
       const txResponse = await fetch(`${BLOCKFROST_BASE_URL}/txs/${tx.tx_hash}/utxos`, {
-        headers: { 'project_id': BLOCKFROST_API_KEY }
+        headers: { 'project_id': BLOCKFROST_PROJECT_ID }
       });
 
       if (!txResponse.ok) continue;
