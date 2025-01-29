@@ -1,0 +1,79 @@
+:root {
+  --primary-color: #0033ad;
+  --secondary-color: #2a73ff;
+  --background-color: #f5f5f5;
+  --text-color: #333;
+  --border-radius: 8px;
+}
+
+body {
+  width: 400px;
+  min-height: 500px;
+  margin: 0;
+  padding: 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  background-color: var(--background-color);
+  color: var(--text-color);
+}
+
+.container {
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.wallet-list {
+  margin-bottom: 20px;
+}
+
+.wallet-item {
+  background: white;
+  border-radius: var(--border-radius);
+  padding: 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.input-group {
+  margin-bottom: 16px;
+}
+
+input, button {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: var(--border-radius);
+  margin-bottom: 8px;
+}
+
+button {
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+button:hover {
+  background-color: var(--secondary-color);
+}
+
+.status {
+  text-align: center;
+  margin-top: 16px;
+  color: #666;
+}
+
+.error {
+  color: #dc3545;
+  margin-top: 8px;
+}
+
+.success {
+  color: #28a745;
+  margin-top: 8px;
+}
