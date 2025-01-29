@@ -201,11 +201,17 @@ function validateAddress(address) {
 
 function getAssetImage(asset) {
   if (!asset) return null;
+  // Try to get image from metadata first
+  if (asset.metadata?.image) {
+    return convertIpfsUrl(asset.metadata.image);
+  }
+  // Fallback to direct image property
   return asset.image ? convertIpfsUrl(asset.image) : null;
 }
 
 function isNFT(asset) {
-  return asset.is_nft || false;
+  if (!asset) return false;
+  return asset.is_nft || asset.quantity === '1';
 }
 
 function convertIpfsUrl(url) {
@@ -387,31 +393,25 @@ function renderAssetsList(walletIndex, type = 'tokens') {
   const assets = wallet.assets.filter(asset => isNFTList ? isNFT(asset) : !isNFT(asset));
 
   return assets.map(asset => {
-    // Process image URL if present
-    const imageUrl = asset.image ? convertIpfsUrl(asset.image) : null;
+    // Get image URL from metadata or direct property
+    const imageUrl = getAssetImage(asset);
     
-    // Format display name - ensure we show something meaningful
-    const displayName = asset.name || asset.ticker || asset.unit.slice(-8);
+    // Get display name from metadata or fallback to unit
+    const displayName = asset.name || 
+                       asset.metadata?.name || 
+                       asset.metadata?.display_name || 
+                       asset.unit.slice(-8);
     
-    // Format amount with ticker if available
-    const displayAmount = asset.readable_amount + (asset.ticker ? ` ${asset.ticker}` : '');
-    
-    // For debugging
-    console.log('Rendering asset:', {
-      unit: asset.unit,
-      name: asset.name,
-      ticker: asset.ticker,
-      image: asset.image
-    });
+    const displayAmount = `${asset.readable_amount}${asset.ticker ? ` ${asset.ticker}` : ''}`;
     
     return `
       <div class="asset-item">
         ${imageUrl ? `
           <div class="asset-image">
-            <img src="${imageUrl}" alt="${displayName}" onerror="this.style.display='none'">
+            <img src="${imageUrl}" alt="${displayName}" onerror="this.onerror=null; this.style.display='none'; this.parentElement.innerHTML='<span>${getFirstLetter(displayName)}</span>';">
           </div>
         ` : `
-          <div class="asset-image asset-placeholder">
+          <div class="asset-image asset-placeholder" style="background-color: ${getRandomColor(displayName)}">
             <span>${getFirstLetter(displayName)}</span>
           </div>
         `}

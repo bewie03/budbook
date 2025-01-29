@@ -157,12 +157,6 @@ async function getAssetInfo(assetId) {
             }
         }
         
-        // Get display name from various sources
-        const displayName = assetData.display_name || 
-                          onchainMetadata.display_name || 
-                          metadata.display_name ||
-                          assetData.asset_name;
-
         // Get asset name from metadata or onchain_metadata
         let name = null;
         if (isNft) {
@@ -282,7 +276,7 @@ async function getAssetInfo(assetId) {
         
         const assetInfo = {
             unit: assetId,
-            name: displayName,  // Use the display name we found
+            name: name || assetId.slice(-8),  // Ensure name is never null
             decimals,
             ticker,
             image: imageUrl,  // Can be null if no valid URL found
@@ -413,85 +407,78 @@ function formatAmount(quantity, decimals) {
 app.get('/api/wallet/:address', async (req, res) => {
     try {
         const { address } = req.params;
-
+        
         if (!isValidCardanoAddress(address)) {
-            return res.status(400).json({ error: 'Invalid Cardano address format' });
+            return res.status(400).json({ error: 'Invalid Cardano address' });
         }
 
-        // 1. Get address data from Blockfrost
-        const walletData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
-        
-        // 2. Process the ADA balance
-        const lovelaceAmount = walletData.amount.find(a => a.unit === 'lovelace')?.quantity || '0';
-        const adaWholePart = (BigInt(lovelaceAmount) / BigInt(1000000)).toString();
-        const adaDecimalPart = (BigInt(lovelaceAmount) % BigInt(1000000)).toString().padStart(6, '0');
-        
-        // 3. Process other assets
-        const assets = [];
-        for (const token of walletData.amount) {
-            if (token.unit === 'lovelace') continue;
+        // Fetch wallet data from Blockfrost
+        const [walletData, utxos] = await Promise.all([
+            fetchBlockfrost(`/addresses/${address}`, 'fetch address data'),
+            fetchBlockfrost(`/addresses/${address}/utxos`, 'fetch UTXOs')
+        ]);
+
+        // Process UTXOs to get token amounts
+        const assets = {};
+        let totalLovelace = 0;
+
+        for (const utxo of utxos) {
+            totalLovelace += parseInt(utxo.amount[0].quantity);
             
-            // Skip if quantity is not a valid number
-            if (!token.quantity || token.quantity.length > 30) {
-                console.error(`Invalid quantity for token ${token.unit}`);
-                continue;
-            }
-            
-            try {
-                // Get asset metadata (from cache or Blockfrost)
-                const assetInfo = await getAssetInfo(token.unit);
-                if (!assetInfo) {
-                    console.error(`No asset info found for ${token.unit}`);
-                    continue;
+            // Process other assets in the UTXO
+            for (const asset of utxo.amount.slice(1)) {
+                const { unit, quantity } = asset;
+                if (!assets[unit]) {
+                    assets[unit] = '0';
                 }
-
-                // Log the asset info for debugging
-                console.log('Asset info for', token.unit, ':', assetInfo);
-
-                const quantity = token.quantity;
-                const decimals = Math.min(assetInfo.decimals || 0, 8); // Cap decimals at 8
-                const readable_amount = formatAmount(quantity, decimals);
-
-                if (!readable_amount) {
-                    console.error(`Failed to format amount for ${token.unit}`);
-                    continue;
-                }
-
-                // Ensure we have at least a basic name
-                const name = assetInfo.name || token.unit.slice(-8);
-                
-                assets.push({
-                    unit: token.unit,
-                    quantity: token.quantity,
-                    name: assetInfo.name,  // Use the display name we found
-                    decimals,
-                    ticker: assetInfo.ticker,
-                    image: assetInfo.image,
-                    readable_amount,
-                    is_nft: assetInfo.is_nft
-                });
-            } catch (error) {
-                console.error(`Error processing asset ${token.unit}:`, error);
-                continue;
+                assets[unit] = (BigInt(assets[unit]) + BigInt(quantity)).toString();
             }
         }
 
-        // 4. Prepare and cache response
-        const response = {
+        // Convert assets to array and fetch metadata for each
+        const assetList = await Promise.all(
+            Object.entries(assets).map(async ([unit, quantity]) => {
+                try {
+                    // Get asset info from cache or Blockfrost
+                    const assetInfo = await getAssetInfo(unit);
+                    
+                    return {
+                        unit,
+                        quantity,
+                        decimals: assetInfo.decimals || 0,
+                        readable_amount: formatAmount(quantity, assetInfo.decimals || 0),
+                        name: assetInfo.name || '',
+                        image: assetInfo.image || '',
+                        ticker: assetInfo.ticker || '',
+                        is_nft: assetInfo.is_nft || false,
+                        metadata: assetInfo.metadata || {}
+                    };
+                } catch (error) {
+                    console.error(`Error fetching asset info for ${unit}:`, error);
+                    return {
+                        unit,
+                        quantity,
+                        decimals: 0,
+                        readable_amount: quantity,
+                        name: '',
+                        image: '',
+                        ticker: '',
+                        is_nft: false,
+                        metadata: {}
+                    };
+                }
+            })
+        );
+
+        res.json({
             address,
             stake_address: walletData.stake_address,
-            balance: `${adaWholePart}.${adaDecimalPart}`,
-            assets: assets.sort((a, b) => {
-                // Simple string comparison of quantities
-                return b.quantity.localeCompare(a.quantity);
-            })
-        };
-
-        await redis.set(`wallet:${address}`, JSON.stringify(response), 'EX', 300);
-        res.json(response);
+            balance: totalLovelace.toString(),
+            assets: assetList
+        });
 
     } catch (error) {
-        console.error('Error:', error);
+        console.error('Error in /api/wallet/:address:', error);
         res.status(500).json({ error: 'Failed to fetch wallet data' });
     }
 });
