@@ -1,14 +1,36 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Cardano Address Book</title>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://budbook-2410440cbb61.herokuapp.com https://cardano-mainnet.blockfrost.io">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div id="root"></div>
-  <input type="file" id="customLogo" accept="image/*" style="display: none">
+  <div id="root">
+    <div class="container">
+      <div class="header">
+        <h1>Cardano Address Book</h1>
+        <p class="slots">Available Slots: <span id="availableSlots">0 / 0</span></p>
+      </div>
+      
+      <div class="input-group">
+        <input type="text" id="addressInput" placeholder="Enter Cardano Address" autocomplete="off">
+        <input type="text" id="nameInput" placeholder="Enter Wallet Name" autocomplete="off">
+        <select id="walletType">
+          <option value="None">None</option>
+        </select>
+        <button class="primary" id="addWallet">Add Wallet</button>
+      </div>
+
+      <div id="errorMsg" class="error" style="display: none;"></div>
+      <div id="successMsg" class="success" style="display: none;"></div>
+      
+      <div id="walletList" class="wallet-list"></div>
+      
+      <button class="secondary" id="unlockButton">Unlock 10 More Slots (10 ₳)</button>
+    </div>
+  </div>
   <script src="popup.js" type="module"></script>
 </body>
 </html>

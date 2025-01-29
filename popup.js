@@ -7,20 +7,19 @@ const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 
 // Available wallet logos
 const WALLET_LOGOS = {
+  'None': '',
   'Nami': 'icons/Nami.png',
   'Eternal': 'icons/Eternal.png',
-  'Lace': 'icons/lace.png',
-  'Gero': 'icons/gero.png',
+  'Adalite': 'icons/Adalite.png',
   'Vesper': 'icons/Vesper.png',
-  'AdaLite': 'icons/Adalite.png',
   'Daedalus': 'icons/daedalus.png',
-  'Custom': 'custom'
+  'Gero': 'icons/gero.png',
+  'Lace': 'icons/lace.png'
 };
 
 // Global state
 let wallets = [];
 let unlockedSlots = MAX_FREE_SLOTS;
-let customLogoData = null;
 
 // API Functions
 async function fetchWalletData(address) {
@@ -115,40 +114,29 @@ async function saveWallets() {
 // UI Functions
 function showError(message) {
   console.error('Error:', message);
-  const errorDiv = document.createElement('div');
-  errorDiv.className = 'error';
+  const errorDiv = document.getElementById('errorMsg');
   errorDiv.textContent = message;
-  document.getElementById('root')?.appendChild(errorDiv);
-  setTimeout(() => errorDiv.remove(), 3000);
+  errorDiv.style.display = 'block';
+  setTimeout(() => errorDiv.style.display = 'none', 3000);
 }
 
 function showSuccess(message) {
   console.log('Success:', message);
-  const successDiv = document.createElement('div');
-  successDiv.className = 'success';
+  const successDiv = document.getElementById('successMsg');
   successDiv.textContent = message;
-  document.getElementById('root')?.appendChild(successDiv);
-  setTimeout(() => successDiv.remove(), 3000);
+  successDiv.style.display = 'block';
+  setTimeout(() => successDiv.style.display = 'none', 3000);
 }
 
 function validateAddress(address) {
   return address && address.startsWith('addr1') && address.length >= 59;
 }
 
-async function handleCustomLogo(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 async function addWallet() {
   try {
-    const addressInput = document.querySelector('#walletAddress');
-    const nameInput = document.querySelector('#walletName');
-    const walletSelect = document.querySelector('#walletType');
+    const addressInput = document.getElementById('addressInput');
+    const nameInput = document.getElementById('nameInput');
+    const walletSelect = document.getElementById('walletType');
     
     if (!addressInput || !nameInput || !walletSelect) {
       throw new Error('UI elements not found');
@@ -181,12 +169,6 @@ async function addWallet() {
     console.log('Adding wallet:', { name, address, selectedWallet });
     const walletData = await fetchWalletData(address);
 
-    // Handle custom logo upload
-    let logoPath = WALLET_LOGOS[selectedWallet];
-    if (selectedWallet === 'Custom' && customLogoData) {
-      logoPath = customLogoData;
-    }
-
     wallets.push({
       address,
       name,
@@ -194,15 +176,14 @@ async function addWallet() {
       stake_address: walletData.stake_address,
       timestamp: Date.now(),
       walletType: selectedWallet,
-      logo: logoPath
+      logo: WALLET_LOGOS[selectedWallet]
     });
 
     await saveWallets();
     updateUI();
     addressInput.value = '';
     nameInput.value = '';
-    walletSelect.value = 'Nami'; // Reset to default
-    customLogoData = null;
+    walletSelect.value = 'None';
     showSuccess('Wallet added successfully!');
   } catch (error) {
     showError(error.message || 'Failed to add wallet');
@@ -211,14 +192,16 @@ async function addWallet() {
 
 function renderWallets() {
   if (!wallets.length) {
-    return '<p class="status">No wallets added yet</p>';
+    return '<p style="text-align: center; color: #808080; font-style: italic;">No wallets added yet</p>';
   }
 
   return wallets.map((wallet, index) => `
     <div class="wallet-item">
       <button class="delete delete-btn" data-index="${index}">×</button>
       <div class="wallet-header">
-        <img src="${wallet.logo}" alt="${wallet.walletType}" class="wallet-logo">
+        ${wallet.walletType !== 'None' && WALLET_LOGOS[wallet.walletType] ? 
+          `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-logo">` : 
+          ''}
         <h3>${wallet.name}</h3>
       </div>
       <p class="address">Address: ${wallet.address.substring(0, 20)}...</p>
@@ -233,10 +216,12 @@ function renderWallets() {
 
 function renderWalletSelector() {
   return `
-    <select id="walletType" class="wallet-select">
-      ${Object.keys(WALLET_LOGOS).map(wallet => 
-        `<option value="${wallet}">${wallet}</option>`
-      ).join('')}
+    <select id="walletType">
+      ${Object.entries(WALLET_LOGOS).map(([name, logo]) => `
+        <option value="${name}" ${name === 'None' ? 'selected' : ''}>
+          ${name}
+        </option>
+      `).join('')}
     </select>
   `;
 }
@@ -259,86 +244,76 @@ function updateUI() {
     return;
   }
 
-  console.log('Updating UI...');
   root.innerHTML = `
     <div class="container">
       <div class="header">
         <h1>Cardano Address Book</h1>
-        <p class="slots">Available Slots: ${unlockedSlots - wallets.length} / ${unlockedSlots}</p>
+        <p class="slots">Available Slots: ${wallets.length} / ${unlockedSlots}</p>
       </div>
       
       <div class="input-group">
-        <input type="text" id="walletAddress" placeholder="Enter Cardano Address" />
-        <input type="text" id="walletName" placeholder="Enter Wallet Name" />
+        <input type="text" id="addressInput" placeholder="Enter Cardano Address" autocomplete="off">
+        <input type="text" id="nameInput" placeholder="Enter Wallet Name" autocomplete="off">
         ${renderWalletSelector()}
-        <button id="addWallet" class="primary">Add Wallet</button>
-        <input type="file" id="customLogo" style="display: none;">
+        <button class="primary" id="addWallet">Add Wallet</button>
       </div>
 
-      ${unlockedSlots < MAX_TOTAL_SLOTS ? `
-        <button id="unlockSlots" class="secondary">
-          Unlock ${SLOTS_PER_PAYMENT} More Slots (${ADA_PAYMENT_AMOUNT} ₳)
-        </button>
-      ` : ''}
-
-      <div class="wallet-list">
+      <div id="errorMsg" class="error" style="display: none;"></div>
+      <div id="successMsg" class="success" style="display: none;"></div>
+      
+      <div id="walletList" class="wallet-list">
         ${renderWallets()}
       </div>
+      
+      ${unlockedSlots < MAX_TOTAL_SLOTS ? 
+        `<button class="secondary" id="unlockButton">Unlock 10 More Slots (10 ₳)</button>` : 
+        ''}
     </div>
   `;
 
-  // Add event listeners
-  document.getElementById('addWallet')?.addEventListener('click', addWallet);
-  
-  // Add delete button listeners
-  document.querySelectorAll('.delete-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const index = parseInt(e.target.dataset.index);
-      if (!isNaN(index)) {
-        deleteWallet(index);
-      }
-    });
-  });
+  setupEventListeners();
+}
 
-  // Add wallet type change listener
-  document.getElementById('walletType')?.addEventListener('change', (e) => {
-    if (e.target.value === 'Custom') {
-      document.getElementById('customLogo')?.click();
+function setupEventListeners() {
+  const addWalletBtn = document.getElementById('addWallet');
+  if (addWalletBtn) {
+    addWalletBtn.addEventListener('click', addWallet);
+  }
+
+  const deleteButtons = document.querySelectorAll('.delete-btn');
+  deleteButtons.forEach(button => {
+    const index = button.dataset.index;
+    if (index !== undefined) {
+      button.addEventListener('click', () => deleteWallet(parseInt(index)));
     }
   });
 
-  // Add custom logo upload listener
-  document.getElementById('customLogo')?.addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      try {
-        customLogoData = await handleCustomLogo(file);
-        showSuccess('Custom logo uploaded!');
-      } catch (error) {
-        showError('Failed to upload custom logo');
-        document.getElementById('walletType').value = 'Nami';
+  const unlockButton = document.getElementById('unlockButton');
+  if (unlockButton) {
+    unlockButton.addEventListener('click', () => {
+      const paymentAddress = 'addr1qxdwefvjc4yw7sdtytmwx0lpp8sqsjdw5cl7kjcfz0zscdhl7mgsy7u7fva533d0uv7vctc8lh76hv5wgh7ascfwvmnqmsd04y';
+      const instructions = document.createElement('div');
+      instructions.className = 'payment-instructions';
+      instructions.innerHTML = `
+        <div class="modal">
+          <h3>Unlock More Slots</h3>
+          <p>Send 10 ₳ to:</p>
+          <code>${paymentAddress}</code>
+          <p>You will receive 10 additional wallet slots after payment confirmation.</p>
+          <button class="close">Close</button>
+        </div>
+      `;
+      
+      const root = document.getElementById('root');
+      if (root) {
+        root.appendChild(instructions);
+        const closeBtn = instructions.querySelector('.close');
+        if (closeBtn) {
+          closeBtn.addEventListener('click', () => instructions.remove());
+        }
       }
-    }
-  });
-
-  document.getElementById('unlockSlots')?.addEventListener('click', () => {
-    const paymentAddress = 'addr1qxdwefvjc4yw7sdtytmwx0lpp8sqsjdw5cl7kjcfz0zscdhl7mgsy7u7fva533d0uv7vctc8lh76hv5wgh7ascfwvmnqmsd04y';
-    const instructions = document.createElement('div');
-    instructions.className = 'payment-instructions';
-    instructions.innerHTML = `
-      <div class="modal">
-        <h3>Unlock More Slots</h3>
-        <p>Send ${ADA_PAYMENT_AMOUNT} ₳ to:</p>
-        <code>${paymentAddress}</code>
-        <p>You will receive ${SLOTS_PER_PAYMENT} additional wallet slots after payment confirmation.</p>
-        <button class="close">Close</button>
-      </div>
-    `;
-    root.appendChild(instructions);
-    instructions.querySelector('.close')?.addEventListener('click', () => {
-      instructions.remove();
     });
-  });
+  }
 }
 
 // Initialize when DOM is ready
@@ -352,9 +327,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const root = document.getElementById('root');
     if (root) {
       root.innerHTML = `
-        <div class="error">
-          Failed to initialize: ${error.message}
-          <button onclick="location.reload()">Retry</button>
+        <div class="container">
+          <div class="error" style="margin: 20px;">
+            Failed to initialize: ${error.message}
+            <button class="primary" style="margin-top: 10px;" onclick="location.reload()">Retry</button>
+          </div>
         </div>
       `;
     }
