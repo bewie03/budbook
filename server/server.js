@@ -465,44 +465,9 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
       return res.json({ verified: true, used: false });
     }
 
-    // Get recent transactions
-    try {
-      const transactions = await fetchBlockfrost(
-        `/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`, 
-        'fetch payment address transactions'
-      );
+    // If not verified, just return the current status
+    return res.json({ verified: false });
 
-      // Check recent transactions for the exact amount
-      for (const tx of transactions) {
-        try {
-          const txData = await fetchBlockfrost(
-            `/txs/${tx.tx_hash}/utxos`,
-            'fetch transaction UTXOs'
-          );
-          
-          // Calculate total ADA sent to our address in this transaction
-          const amountReceived = txData.outputs
-            .filter(output => output.address === PAYMENT_ADDRESS)
-            .reduce((sum, output) => {
-              return sum + (parseInt(output.amount[0].quantity) / 1000000); // Convert lovelace to ADA
-            }, 0);
-
-          // Check if amount matches exactly
-          if (Math.abs(amountReceived - parseFloat(payment.amount)) < 0.000001) {
-            payment.verified = true;
-            await setInCache(`payment:${paymentId}`, payment);
-            console.log('Payment verified for ID:', paymentId, 'Installation:', payment.installId);
-            return res.json({ verified: true, used: false });
-          }
-        } catch (error) {
-          console.error('Error fetching transaction UTXOs:', error);
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching payment address transactions:', error);
-    }
-
-    res.json({ verified: false });
   } catch (error) {
     console.error('Error verifying payment:', error);
     res.status(500).json({ error: 'Failed to verify payment' });
