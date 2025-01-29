@@ -306,11 +306,21 @@ async function fetchBlockfrost(endpoint, errorContext = '') {
 
 // Helper to validate Cardano address format
 function isValidCardanoAddress(address) {
-  // Shelley addresses start with addr1 and are 58+ chars
-  const shelleyRegex = /^addr1[a-zA-Z0-9]{58,}$/;
-  // Byron addresses start with Ae2 or Dd and are 58+ chars
-  const byronRegex = /^(Ae2|DdzFF)[a-zA-Z0-9]{58,}$/;
-  return shelleyRegex.test(address) || byronRegex.test(address);
+  // Check for basic format
+  if (!address || typeof address !== 'string') return false;
+
+  // Mainnet Shelley addresses (addr1...)
+  const shelleyMainnetRegex = /^addr1[a-zA-Z0-9]{98}$/;
+  
+  // Mainnet Byron addresses (Ae2...)
+  const byronMainnetRegex = /^(Ae2|DdzFF)[a-zA-Z0-9]{20,100}$/;
+  
+  // Mainnet stake addresses (stake1...)
+  const stakeMainnetRegex = /^stake1[a-zA-Z0-9]{50,60}$/;
+
+  return shelleyMainnetRegex.test(address) || 
+         byronMainnetRegex.test(address) || 
+         stakeMainnetRegex.test(address);
 }
 
 // Get wallet info
@@ -318,9 +328,12 @@ app.get('/api/wallet/:address', async (req, res) => {
   try {
     const { address } = req.params;
     
-    // Validate address format
+    // Validate address format first
     if (!isValidCardanoAddress(address)) {
-      return res.status(400).json({ error: 'Invalid Cardano address format' });
+      console.error(`Invalid address format: ${address}`);
+      return res.status(400).json({ 
+        error: 'Invalid Cardano address format. Address must be a valid Shelley (addr1...), Byron (Ae2/DdzFF...), or stake (stake1...) address.'
+      });
     }
 
     // Check cache first
@@ -332,7 +345,17 @@ app.get('/api/wallet/:address', async (req, res) => {
 
     // Fetch wallet data
     console.log(`Fetching wallet data from Blockfrost for ${address}`);
-    const walletData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
+    let walletData;
+    try {
+      walletData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
+    } catch (error) {
+      if (error.response?.status === 400) {
+        return res.status(400).json({ 
+          error: 'Invalid address or network mismatch. Make sure you are using a mainnet Cardano address.'
+        });
+      }
+      throw error;
+    }
 
     // Log only essential wallet data
     console.log('Wallet data:', {
