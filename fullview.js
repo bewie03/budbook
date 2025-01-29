@@ -581,6 +581,180 @@ function renderWalletSelector() {
   `).join('');
 }
 
+// Buy slots button handler
+document.getElementById('buySlots').addEventListener('click', async () => {
+  try {
+    // Get current slot count
+    const { availableSlots } = await chrome.storage.local.get('availableSlots');
+    const currentSlots = availableSlots || 3;
+    
+    // Show payment modal
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `
+      <div class="modal-content payment-modal">
+        <div class="modal-header">
+          <h2>Buy Additional Wallet Slots</h2>
+          <div class="slot-info">
+            <span>Current slots: ${currentSlots}</span>
+            <span class="price-tag">Price: 2-3 ADA per slot</span>
+          </div>
+        </div>
+
+        <div class="payment-steps">
+          <div class="step">
+            <div class="step-number">1</div>
+            <div class="step-text">Send the required ADA to the verification address</div>
+          </div>
+          <div class="step">
+            <div class="step-number">2</div>
+            <div class="step-text">Wait for transaction confirmation</div>
+          </div>
+          <div class="step">
+            <div class="step-number">3</div>
+            <div class="step-text">Your slots will be automatically added</div>
+          </div>
+        </div>
+
+        <div class="button-container">
+          <button class="modal-button cancel">Cancel</button>
+          <button class="modal-button proceed">Proceed</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Handle modal buttons
+    modal.querySelector('.cancel').addEventListener('click', () => {
+      modal.remove();
+    });
+    
+    modal.querySelector('.proceed').addEventListener('click', async () => {
+      modal.remove();
+      await initiatePayment();
+    });
+    
+  } catch (error) {
+    console.error('Error handling buy slots:', error);
+    showError('Failed to process slot purchase. Please try again.');
+  }
+});
+
+async function initiatePayment() {
+  try {
+    // Get extension's installation ID
+    const installId = chrome.runtime.id;
+    
+    // Get payment details from server
+    const response = await fetch('https://budbook-2410440cbb61.herokuapp.com/api/initiate-payment', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        installId
+      })
+    });
+
+    if (!response.ok) throw new Error('Failed to initiate payment');
+    const { paymentId, amount, address } = await response.json();
+    
+    // Show payment details modal
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `
+      <div class="modal-content payment-modal">
+        <div class="modal-header">
+          <h2>Payment Details</h2>
+        </div>
+        
+        <div class="payment-details">
+          <div class="amount-display">
+            <span class="label">Amount:</span>
+            <span class="value">${amount} ADA</span>
+          </div>
+          
+          <div class="address-container">
+            <span class="label">Send to this address:</span>
+            <div class="address-box">
+              <span class="address">${address}</span>
+              <button class="copy-button" data-address="${address}">
+                <i class="fas fa-copy"></i>
+              </button>
+            </div>
+          </div>
+          
+          <div class="payment-note">
+            Payment will be verified automatically once confirmed on the blockchain.
+            This payment is linked to your extension installation and can only be used once.
+          </div>
+        </div>
+
+        <div class="button-container">
+          <button class="modal-button cancel">Close</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Handle copy button
+    modal.querySelector('.copy-button').addEventListener('click', async (e) => {
+      const address = e.currentTarget.dataset.address;
+      await navigator.clipboard.writeText(address);
+      showSuccess('Address copied to clipboard!');
+    });
+    
+    // Handle close button
+    modal.querySelector('.cancel').addEventListener('click', () => {
+      modal.remove();
+    });
+    
+    // Start polling for payment verification
+    let attempts = 0;
+    const maxAttempts = 180; // 3 minutes
+    const pollInterval = setInterval(async () => {
+      try {
+        const verifyResponse = await fetch(`https://budbook-2410440cbb61.herokuapp.com/api/verify-payment/${paymentId}`);
+        if (!verifyResponse.ok) throw new Error('Failed to verify payment');
+        const { verified, used } = await verifyResponse.json();
+        
+        if (verified) {
+          clearInterval(pollInterval);
+          modal.remove();
+          
+          if (used) {
+            showError('This payment has already been used to add slots.');
+            return;
+          }
+          
+          showSuccess('Payment verified! Your slots have been added.');
+          // Refresh available slots
+          const { availableSlots } = await chrome.storage.local.get('availableSlots');
+          await chrome.storage.local.set({ 
+            availableSlots: (availableSlots || 3) + 1 
+          });
+          // Update UI
+          updateSlotDisplay();
+        }
+        
+        attempts++;
+        if (attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          showError('Payment verification timed out. Please contact support if payment was sent.');
+        }
+      } catch (error) {
+        console.error('Error verifying payment:', error);
+      }
+    }, 1000);
+    
+  } catch (error) {
+    console.error('Error initiating payment:', error);
+    showError('Failed to initiate payment. Please try again.');
+  }
+}
+
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {

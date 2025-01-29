@@ -217,7 +217,7 @@ app.get('/', (req, res) => {
     message: 'Cardano Address Book API Server',
     endpoints: {
       '/api/wallet/:address': 'Get wallet information',
-      '/api/verify-payment/:address': 'Verify payment for slot unlock'
+      '/api/verify-payment/:paymentId': 'Verify payment for slot unlock'
     }
   });
 });
@@ -365,35 +365,49 @@ app.get('/api/wallet/:address', async (req, res) => {
   }
 });
 
-// Payment verification
-const MIN_PAYMENT = 2;
-const MAX_PAYMENT = 3;
-const pendingPayments = new Map(); // Store pending payments with their exact amounts
-
-app.post('/api/request-payment', async (req, res) => {
+// Payment initiation endpoint
+app.post('/api/initiate-payment', express.json(), async (req, res) => {
   try {
-    // Generate random amount between MIN_PAYMENT and MAX_PAYMENT
-    const exactAmount = (Math.random() * (MAX_PAYMENT - MIN_PAYMENT) + MIN_PAYMENT).toFixed(2);
-    const paymentId = crypto.randomBytes(16).toString('hex');
+    const { installId } = req.body;
     
-    // Store the payment request with timestamp
-    await setInCache(`payment:${paymentId}`, {
-      amount: exactAmount,
-      timestamp: Date.now(),
-      verified: false
-    }, 3600); // 1 hour expiration
+    if (!installId) {
+      return res.status(400).json({ error: 'Installation ID is required' });
+    }
 
+    // Generate random ADA amount between 2-3
+    const amount = (2 + Math.random()).toFixed(2);
+    const paymentId = crypto.randomUUID();
+    
+    // Store payment details with installation ID
+    const payment = {
+      paymentId,
+      installId,
+      amount,
+      timestamp: Date.now(),
+      verified: false,
+      used: false
+    };
+    
+    // Cache for 1 hour
+    await setInCache(`payment:${paymentId}`, payment, 3600);
+    
+    // Also store by installation ID for quick lookup
+    await setInCache(`install_payment:${installId}`, paymentId, 3600);
+    
+    console.log('Payment initiated:', payment);
+    
     res.json({
       paymentId,
-      amount: exactAmount,
+      amount,
       address: PAYMENT_ADDRESS
     });
   } catch (error) {
-    console.error('Error generating payment request:', error);
-    res.status(500).json({ error: 'Failed to generate payment request' });
+    console.error('Error initiating payment:', error);
+    res.status(500).json({ error: 'Failed to initiate payment' });
   }
 });
 
+// Payment verification endpoint
 app.get('/api/verify-payment/:paymentId', async (req, res) => {
   try {
     const { paymentId } = req.params;
@@ -404,7 +418,15 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
     }
 
     if (payment.verified) {
-      return res.json({ verified: true });
+      if (payment.used) {
+        return res.json({ verified: true, used: true });
+      }
+      // Mark payment as used
+      payment.used = true;
+      await setInCache(`payment:${paymentId}`, payment);
+      // Remove the installation ID payment reference
+      await redis.del(`install_payment:${payment.installId}`);
+      return res.json({ verified: true, used: false });
     }
 
     // Get recent transactions
@@ -436,11 +458,11 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
         }, 0);
 
       // Check if amount matches exactly
-      if (amountReceived === parseFloat(payment.amount)) {
+      if (Math.abs(amountReceived - parseFloat(payment.amount)) < 0.000001) {
         payment.verified = true;
         await setInCache(`payment:${paymentId}`, payment);
-        console.log('Payment verified for ID:', paymentId);
-        break;
+        console.log('Payment verified for ID:', paymentId, 'Installation:', payment.installId);
+        return res.json({ verified: true, used: false });
       }
     }
 
