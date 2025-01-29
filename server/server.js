@@ -24,59 +24,7 @@ const REQUIRED_PAYMENT = 2000000; // 2 ADA in lovelace
 const BLOCKFROST_WEBHOOK_ID = process.env.BLOCKFROST_WEBHOOK_ID;
 const BLOCKFROST_WEBHOOK_TOKEN = process.env.BLOCKFROST_WEBHOOK_TOKEN;
 
-// Initialize caches
-const walletCache = new NodeCache({ stdTTL: 300 }); // 5 minutes for wallet data
-const transactionCache = new NodeCache({ stdTTL: 86400 }); // 24 hours for processed transactions
-
-// Permanent asset cache file path
-const ASSET_CACHE_FILE = path.join(__dirname, 'asset_cache.json');
-
-// In-memory asset cache
-let assetCache = {};
-
-// Load asset cache from file on startup
-async function loadAssetCache() {
-    try {
-        const data = await fs.readFile(ASSET_CACHE_FILE, 'utf8');
-        assetCache = JSON.parse(data);
-        console.log(`Loaded ${Object.keys(assetCache).length} assets from cache file`);
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            console.log('No existing asset cache file, starting fresh');
-            assetCache = {};
-            // Create the file
-            await fs.writeFile(ASSET_CACHE_FILE, JSON.stringify({}));
-        } else {
-            console.error('Error loading asset cache:', error);
-        }
-    }
-}
-
-// Save asset cache to file
-async function saveAssetCache() {
-    try {
-        await fs.writeFile(ASSET_CACHE_FILE, JSON.stringify(assetCache));
-    } catch (error) {
-        console.error('Error saving asset cache:', error);
-    }
-}
-
-// Load cache on startup
-loadAssetCache();
-
-// Save cache periodically (every 5 minutes)
-setInterval(() => {
-    saveAssetCache();
-}, 5 * 60 * 1000);
-
-// Save cache on process exit
-process.on('SIGINT', async () => {
-    console.log('Saving asset cache before exit...');
-    await saveAssetCache();
-    process.exit();
-});
-
-// Redis client setup
+// Initialize Redis client
 const redisUrl = (process.env.REDIS_URL || process.env.REDISCLOUD_URL || '').replace('rediss://', 'redis://');
 console.log('Connecting to Redis URL (without sensitive info):', redisUrl.replace(/\/\/.*@/, '//<credentials>@'));
 
@@ -187,6 +135,60 @@ async function getAssetMetadata(assetId) {
   }
 }
 
+async function getAssetInfo(assetId) {
+    try {
+        // Check Redis cache first
+        const cachedData = await redis.get(`asset:${assetId}`);
+        if (cachedData) {
+            console.log(`Using cached data for asset ${assetId}`);
+            return JSON.parse(cachedData);
+        }
+
+        // If not in cache, fetch from Blockfrost
+        console.log(`Fetching asset data for ${assetId}`);
+        const assetData = await fetchBlockfrost(`/assets/${assetId}`, 'fetch asset data');
+        
+        // Get decimals from metadata or onchain_metadata
+        let decimals = 0;
+        if (assetData.metadata?.decimals !== undefined) {
+            decimals = parseInt(assetData.metadata.decimals);
+        } else if (assetData.onchain_metadata?.decimals !== undefined) {
+            decimals = parseInt(assetData.onchain_metadata.decimals);
+        }
+        
+        // Process the asset data
+        const processedData = {
+            metadata: assetData.metadata || null,
+            onchain_metadata: assetData.onchain_metadata || null,
+            decimals: decimals,
+            asset_name: assetData.asset_name ? 
+                Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
+                assetId.substring(56),
+            policy_id: assetId.substring(0, 56),
+            fingerprint: assetData.fingerprint,
+            ticker: assetData.metadata?.ticker || null,
+            display_name: assetData.onchain_metadata?.name || 
+                        assetData.metadata?.name || 
+                        (assetData.asset_name ? Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
+                        assetId.substring(56))
+        };
+
+        console.log(`Processed asset ${assetId}:`, {
+            display_name: processedData.display_name,
+            decimals: processedData.decimals,
+            ticker: processedData.ticker
+        });
+        
+        // Store in Redis cache with 1 hour expiry
+        await redis.set(`asset:${assetId}`, JSON.stringify(processedData), 'EX', 3600);
+        
+        return processedData;
+    } catch (error) {
+        console.error(`Error getting asset info for ${assetId}:`, error.message);
+        throw error;
+    }
+}
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -276,23 +278,20 @@ function isValidCardanoAddress(address) {
 app.get('/api/wallet/:address', async (req, res) => {
   try {
     const { address } = req.params;
-    console.log(`Processing wallet request for address: ${address}`);
-
-    // Validate address format first
-    if (!isValidCardanoAddress(address)) {
-      return res.status(400).json({ 
-        error: 'Invalid Cardano address format. Address must be a valid Shelley (addr1...) or Byron (Ae2/DdzFF...) address.'
-      });
-    }
     
+    // Validate address format
+    if (!isValidCardanoAddress(address)) {
+      return res.status(400).json({ error: 'Invalid Cardano address format' });
+    }
+
     // Check cache first
-    const cached = walletCache.get(address);
+    const cached = await redis.get(`wallet:${address}`);
     if (cached) {
       console.log(`Returning cached data for ${address}`);
-      return res.json(cached);
+      return res.json(JSON.parse(cached));
     }
 
-    // Fetch all wallet data in parallel
+    // Fetch wallet data
     console.log(`Fetching wallet data from Blockfrost for ${address}`);
     const walletData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
 
@@ -316,6 +315,13 @@ app.get('/api/wallet/:address', async (req, res) => {
           console.log(`Processing asset: ${token.unit}`);
           const assetInfo = await getAssetInfo(token.unit);
           if (assetInfo) {
+            // Calculate readable amount based on decimals
+            const amount = parseFloat(token.quantity) / Math.pow(10, assetInfo.decimals);
+            const readable_amount = amount.toLocaleString(undefined, {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: assetInfo.decimals
+            });
+
             const asset = {
               unit: token.unit,
               quantity: token.quantity,
@@ -325,19 +331,12 @@ app.get('/api/wallet/:address', async (req, res) => {
               asset_name: assetInfo.asset_name,
               fingerprint: assetInfo.fingerprint,
               onchain_metadata: assetInfo.onchain_metadata || null,
-              metadata: assetInfo.metadata || null
+              metadata: assetInfo.metadata || null,
+              readable_amount
             };
 
-            // Calculate readable amount based on decimals
-            const amount = parseFloat(token.quantity) / Math.pow(10, asset.decimals);
-            asset.readable_amount = amount.toLocaleString(undefined, {
-              minimumFractionDigits: 0,
-              maximumFractionDigits: asset.decimals
-            });
-
             assets.push(asset);
-            // Log only essential asset info
-            console.log(`Processed asset: ${asset.display_name} (${asset.readable_amount} ${asset.ticker || asset.unit})`);
+            console.log(`Processed asset: ${asset.display_name} (${readable_amount} ${asset.ticker || asset.unit})`);
           }
         } catch (error) {
           console.error(`Error processing asset ${token.unit}:`, error.message);
@@ -364,8 +363,8 @@ app.get('/api/wallet/:address', async (req, res) => {
       num_assets: response.assets.length
     });
 
-    // Cache response for 5 minutes
-    walletCache.set(address, response);
+    // Cache response in Redis for 5 minutes
+    await redis.set(`wallet:${address}`, JSON.stringify(response), 'EX', 300);
     
     res.json(response);
   } catch (error) {
@@ -377,57 +376,6 @@ app.get('/api/wallet/:address', async (req, res) => {
     res.status(500).json({ error: errorMessage });
   }
 });
-
-async function getAssetInfo(assetId) {
-    try {
-        // Check in-memory cache first
-        if (assetCache[assetId]) {
-            console.log(`Using cached data for asset ${assetId}`);
-            return assetCache[assetId];
-        }
-
-        // If not in cache, fetch from Blockfrost
-        console.log(`Fetching asset data for ${assetId}`);
-        const assetData = await fetchBlockfrost(`/assets/${assetId}`, 'fetch asset data');
-        
-        // Get decimals from metadata or onchain_metadata
-        let decimals = 0;
-        if (assetData.metadata?.decimals !== undefined) {
-            decimals = parseInt(assetData.metadata.decimals);
-        } else if (assetData.onchain_metadata?.decimals !== undefined) {
-            decimals = parseInt(assetData.onchain_metadata.decimals);
-        }
-        
-        // Process the asset data
-        const processedData = {
-            metadata: assetData.metadata || null,
-            onchain_metadata: assetData.onchain_metadata || null,
-            decimals: decimals,
-            asset_name: assetData.asset_name ? 
-                Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
-                assetId.substring(56),
-            policy_id: assetId.substring(0, 56),
-            fingerprint: assetData.fingerprint,
-            display_name: assetData.onchain_metadata?.name || 
-                        assetData.metadata?.name || 
-                        (assetData.asset_name ? Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
-                        assetId.substring(56))
-        };
-
-        console.log(`Asset ${assetId} decimals:`, decimals);
-        
-        // Store in cache
-        assetCache[assetId] = processedData;
-        
-        // Save cache to file
-        await saveAssetCache();
-        
-        return processedData;
-    } catch (error) {
-        console.error(`Error fetching asset info for ${assetId}:`, error);
-        return null;
-    }
-}
 
 // Payment initiation endpoint
 app.post('/api/initiate-payment', express.json(), async (req, res) => {
