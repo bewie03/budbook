@@ -98,13 +98,26 @@ async function requestPayment() {
 async function loadWallets() {
   return new Promise((resolve, reject) => {
     try {
-      chrome.storage.sync.get(['wallets', 'unlockedSlots'], (data) => {
+      chrome.storage.sync.get(['wallet_index', 'unlockedSlots'], async (data) => {
         if (chrome.runtime.lastError) {
           reject(chrome.runtime.lastError);
           return;
         }
-        wallets = data.wallets || [];
+        
+        // Load wallet index
+        const walletIndex = data.wallet_index || [];
         unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
+
+        // Load each wallet individually
+        const walletPromises = walletIndex.map(address => 
+          new Promise((resolve) => {
+            chrome.storage.sync.get(`wallet_${address}`, (result) => {
+              resolve(result[`wallet_${address}`]);
+            });
+          })
+        );
+
+        wallets = (await Promise.all(walletPromises)).filter(Boolean);
         resolve();
       });
     } catch (error) {
@@ -116,35 +129,59 @@ async function loadWallets() {
 async function saveWallets() {
   return new Promise((resolve, reject) => {
     try {
-      // Clean up wallet data before saving - only keep essential data
-      const cleanWallets = wallets.map(wallet => ({
-        address: wallet.address,
-        name: wallet.name,
-        balance: wallet.balance,
-        stake_address: wallet.stake_address,
-        timestamp: wallet.timestamp,
-        walletType: wallet.walletType,
-        // Only store essential asset data
-        assets: wallet.assets ? wallet.assets.map(asset => ({
-          unit: asset.unit,
-          quantity: asset.quantity,
-          decimals: asset.decimals,
-          readable_amount: asset.readable_amount,
-          display_name: asset.display_name,
-          ticker: asset.ticker
-        })) : []
-      }));
+      // Create a wallet index (just addresses)
+      const walletIndex = wallets.map(w => w.address);
 
-      chrome.storage.sync.set({ 
-        wallets: cleanWallets, 
-        unlockedSlots 
-      }, () => {
-        if (chrome.runtime.lastError) {
-          reject(new Error('Error saving to storage: ' + chrome.runtime.lastError.message));
-          return;
-        }
-        resolve();
-      });
+      // Prepare individual wallet saves
+      const savePromises = wallets.map(wallet => 
+        new Promise((resolve, reject) => {
+          // Clean up wallet data before saving
+          const cleanWallet = {
+            address: wallet.address,
+            name: wallet.name,
+            balance: wallet.balance,
+            stake_address: wallet.stake_address,
+            timestamp: wallet.timestamp,
+            walletType: wallet.walletType,
+            // Only store essential asset data
+            assets: wallet.assets ? wallet.assets.map(asset => ({
+              unit: asset.unit,
+              quantity: asset.quantity,
+              decimals: asset.decimals,
+              readable_amount: asset.readable_amount,
+              display_name: asset.display_name,
+              ticker: asset.ticker
+            })) : []
+          };
+
+          chrome.storage.sync.set({ 
+            [`wallet_${wallet.address}`]: cleanWallet 
+          }, () => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+              return;
+            }
+            resolve();
+          });
+        })
+      );
+
+      // Save the index and wait for all wallet saves
+      Promise.all([
+        new Promise((resolve, reject) => {
+          chrome.storage.sync.set({ 
+            wallet_index: walletIndex,
+            unlockedSlots 
+          }, () => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+              return;
+            }
+            resolve();
+          });
+        }),
+        ...savePromises
+      ]).then(() => resolve()).catch(reject);
     } catch (error) {
       reject(error);
     }
