@@ -7,10 +7,10 @@ const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 
 const WALLET_LOGOS = {
   'None': '',
-  'Nami': 'icons/Nami.png',
-  'Eternal': 'icons/Eternal.png',
-  'Adalite': 'icons/Adalite.png',
-  'Vesper': 'icons/Vesper.png',
+  'Nami': 'icons/nami.png',
+  'Eternal': 'icons/eternal.png',
+  'Adalite': 'icons/adalite.png',
+  'Vesper': 'icons/vesper.png',
   'Daedalus': 'icons/daedalus.png',
   'Gero': 'icons/gero.png',
   'Lace': 'icons/lace.png'
@@ -276,70 +276,47 @@ function renderWallets() {
     return '<p class="no-wallets">No wallets added yet</p>';
   }
 
-  // Create assets panel
-  const assetsPanel = document.createElement('div');
-  assetsPanel.className = 'assets-panel';
-  assetsPanel.innerHTML = `
-    <div class="assets-header">
-      <h3>Assets</h3>
-      <button class="close-assets">×</button>
-    </div>
-    <div class="assets-tabs">
-      <button class="assets-tab active" data-tab="nfts">NFTs</button>
-      <button class="assets-tab" data-tab="tokens">Tokens</button>
-    </div>
-    <div class="assets-content">
-      <div class="assets-list"></div>
-    </div>
-  `;
-  document.body.appendChild(assetsPanel);
-
   return wallets.map((wallet, index) => `
     <div class="wallet-item">
-      <div class="wallet-header">
-        <div class="wallet-info">
-          <img src="icons/nami.png" alt="Wallet Logo" class="wallet-logo">
-          <h3>${wallet.name}</h3>
-        </div>
-        <div class="wallet-actions">
-          <button class="refresh-btn" data-index="${index}">
-            <i class="fas fa-sync-alt"></i>
-          </button>
-          <button class="delete-btn" data-index="${index}">
-            <i class="fas fa-trash"></i>
-          </button>
-        </div>
+      <div class="wallet-top">
+        ${wallet.walletType !== 'None' && WALLET_LOGOS[wallet.walletType] ? 
+          `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-logo">` : 
+          ''}
+        <h3>${wallet.name}</h3>
+        <button class="delete-btn" data-index="${index}" title="Delete">×</button>
       </div>
 
-      <div class="address-group">
-        <div class="address-label">Address</div>
-        <div class="address-container">
-          <span class="address">${truncateAddress(wallet.address)}</span>
-          <button class="copy-btn" data-copy="${wallet.address}">
-            <i class="fas fa-copy"></i>
-          </button>
+      <div class="wallet-content">
+        <div class="wallet-addresses">
+          <div class="address-row">
+            <span class="label">Address</span>
+            <div class="address-value" role="button" tabindex="0" data-copy="${wallet.address}">
+              <span class="address">${truncateAddress(wallet.address)}</span>
+              <span class="copy-indicator">Copy</span>
+            </div>
+          </div>
+          
+          <div class="address-row">
+            <span class="label">Stake</span>
+            <div class="address-value" role="button" tabindex="0" data-copy="${wallet.stake_address}">
+              <span class="stake">${truncateAddress(wallet.stake_address)}</span>
+              <span class="copy-indicator">Copy</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="wallet-footer">
+          <div class="balance-group">
+            <span class="balance">${formatBalance(wallet.balance)} ₳</span>
+            <button class="refresh-btn" data-index="${index}" title="Refresh">↻</button>
+          </div>
+          ${wallet.assets && wallet.assets.length > 0 ? `
+            <button class="assets-btn" data-index="${index}">
+              ${wallet.assets.length} Assets
+            </button>
+          ` : ''}
         </div>
       </div>
-
-      <div class="address-group">
-        <div class="address-label">Stake Address</div>
-        <div class="address-container">
-          <span class="stake">${truncateAddress(wallet.stake_address)}</span>
-          <button class="copy-btn" data-copy="${wallet.stake_address}">
-            <i class="fas fa-copy"></i>
-          </button>
-        </div>
-      </div>
-
-      <div class="balance-container">
-        <span class="balance">${formatBalance(wallet.balance)} ₳</span>
-      </div>
-
-      ${wallet.assets && wallet.assets.length > 0 ? `
-        <button class="assets-toggle" data-index="${index}">
-          View Assets (${wallet.assets.length})
-        </button>
-      ` : ''}
     </div>
   `).join('');
 }
@@ -643,28 +620,47 @@ function renderWalletSelector() {
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     await loadWallets();
-    
-    // Initialize wallet type selector
-    const walletTypeSelect = document.getElementById('walletType');
-    if (walletTypeSelect) {
-      walletTypeSelect.innerHTML = renderWalletSelector();
-    }
-    
     updateUI();
+    setupEventListeners();
+    setupAssetsPanelListeners();
+
+    // Listen for storage changes to auto-refresh
+    chrome.storage.onChanged.addListener(async (changes, namespace) => {
+      if (namespace === 'local' && changes.wallets) {
+        console.log('Wallet data changed, refreshing...');
+        await loadWallets();
+        updateUI();
+      }
+    });
   } catch (error) {
-    console.error('Failed to initialize:', error);
-    const root = document.getElementById('root');
-    if (root) {
-      root.innerHTML = `
-        <div class="container">
-          <div class="error-container">
-            <div class="error visible">
-              Failed to initialize: ${error.message}
-            </div>
-            <button class="primary retry-button" onclick="location.reload()">Retry</button>
-          </div>
-        </div>
-      `;
+    console.error('Error initializing:', error);
+    showError('Failed to initialize the wallet address book');
+  }
+});
+
+document.addEventListener('click', function(e) {
+  const addressValue = e.target.closest('.address-value');
+  if (addressValue) {
+    const textToCopy = addressValue.dataset.copy;
+    if (textToCopy) {
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        // Show feedback
+        const indicator = addressValue.querySelector('.copy-indicator');
+        indicator.textContent = 'Copied!';
+        setTimeout(() => {
+          indicator.textContent = 'Copy';
+        }, 1000);
+      });
+    }
+  }
+});
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' || e.key === ' ') {
+    const addressValue = e.target.closest('.address-value');
+    if (addressValue) {
+      e.preventDefault();
+      addressValue.click();
     }
   }
 });

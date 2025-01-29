@@ -3,26 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="styles.css">
   <title>Cardano Address Book</title>
+  <link rel="stylesheet" href="styles.css">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
 </head>
 <body>
   <div id="root">
-    <div class="full-container">
-      <div class="header">
+    <header class="header">
+      <h1>
         <img src="icons/extensionlogo.png" alt="Logo" class="logo">
-        <h1>Cardano Address Book</h1>
-      </div>
-
-      <div id="walletList"></div>
-
-      <div class="add-wallet-form">
-        <select id="walletType" class="wallet-select"></select>
-      </div>
-
-      <div id="errorMsg" class="error" style="display: none;"></div>
-      <div id="successMsg" class="success" style="display: none;"></div>
-    </div>
+        Cardano Address Book
+      </h1>
+    </header>
+    <div id="walletList"></div>
+    <div id="errorMsg" class="error" style="display: none;"></div>
+    <div id="successMsg" class="success" style="display: none;"></div>
   </div>
   <script src="fullview.js" type="module"></script>
 </body>

@@ -8,10 +8,10 @@ const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 // Available wallet logos
 const WALLET_LOGOS = {
   'None': '',
-  'Nami': 'icons/Nami.png',
-  'Eternal': 'icons/Eternal.png',
-  'Adalite': 'icons/Adalite.png',
-  'Vesper': 'icons/Vesper.png',
+  'Nami': 'icons/nami.png',
+  'Eternal': 'icons/eternal.png',
+  'Adalite': 'icons/adalite.png',
+  'Vesper': 'icons/vesper.png',
   'Daedalus': 'icons/daedalus.png',
   'Gero': 'icons/gero.png',
   'Lace': 'icons/lace.png'

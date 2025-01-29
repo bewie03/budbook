@@ -5,11 +5,10 @@
   "description": "A simple address book for Cardano wallets",
   "permissions": [
     "storage",
-    "unlimitedStorage"
+    "clipboardWrite"
   ],
   "host_permissions": [
-    "https://budbook-2410440cbb61.herokuapp.com/*",
-    "https://cardano-mainnet.blockfrost.io/*"
+    "https://budbook-2410440cbb61.herokuapp.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -24,13 +23,13 @@
     "48": "icons/extensionlogo.png",
     "128": "icons/extensionlogo.png"
   },
-  "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com/; font-src 'self' https://cdnjs.cloudflare.com/; img-src 'self' data: https://ipfs.io; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com https://cardano-mainnet.blockfrost.io"
-  },
   "web_accessible_resources": [
     {
       "resources": ["fullview.html", "icons/*"],
       "matches": ["<all_urls>"]
     }
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com/; font-src 'self' https://cdnjs.cloudflare.com/; img-src 'self' data: https://ipfs.io; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com"
+  }
 }
