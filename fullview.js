@@ -753,6 +753,26 @@ async function initiatePayment() {
   }
 }
 
+async function fetchWalletData(address) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/wallet/${address}`);
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'Failed to fetch wallet data');
+    }
+    const data = await response.json();
+    return {
+      address: data.address,
+      stake_address: data.stake_address,
+      balance: data.balance,
+      assets: data.assets || []
+    };
+  } catch (error) {
+    console.error('Error fetching wallet data:', error);
+    throw error;
+  }
+}
+
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {
