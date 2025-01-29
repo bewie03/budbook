@@ -137,113 +137,35 @@ async function getAssetMetadata(assetId) {
 
 async function getAssetInfo(assetId) {
     try {
-        // Check Redis cache first - assets are immutable so cache permanently
+        // Check cache first
         const cachedData = await redis.get(`asset:${assetId}`);
         if (cachedData) {
-            console.log(`Using cached data for asset ${assetId}`);
             return JSON.parse(cachedData);
         }
 
-        // If not in cache, fetch from Blockfrost
-        console.log(`Fetching asset data for ${assetId}`);
+        // Fetch from Blockfrost if not in cache
         const assetData = await fetchBlockfrost(`/assets/${assetId}`, 'fetch asset data');
         
-        // Get decimals from metadata or onchain_metadata
-        let decimals = 0;
-        if (assetData.metadata?.decimals !== undefined) {
-            decimals = parseInt(assetData.metadata.decimals);
-        } else if (assetData.onchain_metadata?.decimals !== undefined) {
-            decimals = parseInt(assetData.onchain_metadata.decimals);
-        }
-
-        // Process images and metadata
-        let imageUrl = null;
-        let logoUrl = null;
-
-        // Handle NFT image from onchain metadata
-        if (assetData.onchain_metadata?.image) {
-            const image = assetData.onchain_metadata.image;
-            if (typeof image === 'string') {
-                if (image.startsWith('ipfs://')) {
-                    imageUrl = `https://ipfs.io/ipfs/${image.slice(7)}`;
-                } else if (!image.startsWith('data:')) {
-                    imageUrl = image;
-                }
-            }
-        }
-
-        // Handle token logo from metadata
-        if (assetData.metadata?.logo) {
-            const logo = assetData.metadata.logo;
-            if (typeof logo === 'string' && !logo.startsWith('data:')) {
-                logoUrl = logo;
-            }
-        }
-
-        // Also check files array for images
-        if (!imageUrl && assetData.onchain_metadata?.files && Array.isArray(assetData.onchain_metadata.files)) {
-            const file = assetData.onchain_metadata.files[0];
-            if (typeof file === 'string') {
-                imageUrl = file;
-            } else if (file && typeof file === 'object') {
-                const fileUrl = file.src || file.uri || file.url || file.image;
-                if (typeof fileUrl === 'string') {
-                    if (fileUrl.startsWith('ipfs://')) {
-                        imageUrl = `https://ipfs.io/ipfs/${fileUrl.slice(7)}`;
-                    } else if (!fileUrl.startsWith('data:')) {
-                        imageUrl = fileUrl;
-                    }
-                }
-            }
-        }
-
-        // Filter metadata to remove large fields
-        const filteredMetadata = {
-            name: assetData.metadata?.name,
+        // Extract the important fields
+        const metadata = {
+            unit: assetId,
+            name: assetData.onchain_metadata?.name || assetData.metadata?.name || assetData.asset_name,
+            decimals: assetData.metadata?.decimals || assetData.onchain_metadata?.decimals || 0,
             ticker: assetData.metadata?.ticker,
-            url: assetData.metadata?.url,
-            description: assetData.metadata?.description
+            image: assetData.onchain_metadata?.image || assetData.metadata?.logo
         };
 
-        // Filter onchain metadata to remove large fields
-        const filteredOnchainMetadata = assetData.onchain_metadata ? {
-            name: assetData.onchain_metadata.name,
-            description: assetData.onchain_metadata.description,
-            image: imageUrl,
-            attributes: assetData.onchain_metadata.attributes
-        } : null;
-        
-        // Process the asset data
-        const processedData = {
-            metadata: filteredMetadata,
-            onchain_metadata: filteredOnchainMetadata,
-            decimals: decimals,
-            asset_name: assetData.asset_name ? 
-                Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
-                assetId.substring(56),
-            policy_id: assetId.substring(0, 56),
-            fingerprint: assetData.fingerprint,
-            ticker: filteredMetadata.ticker,
-            display_name: filteredOnchainMetadata?.name || 
-                        filteredMetadata.name || 
-                        (assetData.asset_name ? Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
-                        assetId.substring(56))
-        };
+        // Convert IPFS image URL if needed
+        if (metadata.image && metadata.image.startsWith('ipfs://')) {
+            metadata.image = `https://ipfs.io/ipfs/${metadata.image.slice(7)}`;
+        }
 
-        console.log(`Processed asset ${assetId}:`, {
-            display_name: processedData.display_name,
-            decimals: processedData.decimals,
-            ticker: processedData.ticker,
-            has_image: !!imageUrl
-        });
-        
-        // Store in Redis cache PERMANENTLY - no expiry since assets are immutable
-        await redis.set(`asset:${assetId}`, JSON.stringify(processedData));
-        
-        return processedData;
+        // Cache it (assets are immutable)
+        await redis.set(`asset:${assetId}`, JSON.stringify(metadata));
+        return metadata;
     } catch (error) {
-        console.error(`Error getting asset info for ${assetId}:`, error.message);
-        throw error;
+        console.error(`Error getting asset info for ${assetId}:`, error);
+        return null;
     }
 }
 
@@ -344,133 +266,63 @@ function isValidCardanoAddress(address) {
 
 // Get wallet info
 app.get('/api/wallet/:address', async (req, res) => {
-  try {
-    const { address } = req.params;
-    
-    // Validate address format first
-    if (!isValidCardanoAddress(address)) {
-      console.error(`Invalid address format: ${address}`);
-      return res.status(400).json({ 
-        error: 'Invalid Cardano address format. Address must be a valid Shelley (addr1...), Byron (Ae2/DdzFF...), or stake (stake1...) address.'
-      });
-    }
-
-    // Check cache first
-    const cached = await redis.get(`wallet:${address}`);
-    if (cached) {
-      console.log(`Returning cached data for ${address}`);
-      return res.json(JSON.parse(cached));
-    }
-
-    // Fetch wallet data
-    console.log(`Fetching wallet data from Blockfrost for ${address}`);
-    let walletData;
     try {
-      walletData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
-    } catch (error) {
-      if (error.response?.status === 400) {
-        return res.status(400).json({ 
-          error: 'Invalid address or network mismatch. Make sure you are using a mainnet Cardano address.'
-        });
-      }
-      throw error;
-    }
+        const { address } = req.params;
 
-    // Log only essential wallet data
-    console.log('Wallet data:', {
-      address: walletData.address,
-      stake_address: walletData.stake_address,
-      num_assets: walletData.amount?.length || 0,
-      ada_balance: walletData.amount?.find(a => a.unit === 'lovelace')?.quantity || '0'
-    });
-
-    // Process assets data
-    const assets = [];
-    if (walletData && Array.isArray(walletData.amount)) {
-      console.log(`Processing ${walletData.amount.length} assets`);
-      for (const token of walletData.amount) {
-        try {
-          // Skip lovelace entries as they're handled in the balance
-          if (token.unit === 'lovelace') continue;
-
-          console.log(`Processing asset: ${token.unit}`);
-          const assetInfo = await getAssetInfo(token.unit);
-          if (assetInfo) {
-            // Calculate readable amount based on decimals
-            const amount = parseFloat(token.quantity) / Math.pow(10, assetInfo.decimals);
-            const readable_amount = amount.toLocaleString(undefined, {
-              minimumFractionDigits: 0,
-              maximumFractionDigits: assetInfo.decimals
-            });
-
-            const asset = {
-              unit: token.unit,
-              quantity: token.quantity,
-              decimals: assetInfo.decimals || 0,
-              display_name: assetInfo.display_name || assetInfo.name || token.unit,
-              ticker: assetInfo.ticker,
-              asset_name: assetInfo.asset_name,
-              fingerprint: assetInfo.fingerprint,
-              onchain_metadata: assetInfo.onchain_metadata || null,
-              metadata: assetInfo.metadata || null,
-              readable_amount
-            };
-
-            assets.push(asset);
-            console.log(`Processed asset: ${asset.display_name} (${readable_amount} ${asset.ticker || asset.unit})`);
-          }
-        } catch (error) {
-          console.error(`Error processing asset ${token.unit}:`, error.message);
+        if (!isValidCardanoAddress(address)) {
+            return res.status(400).json({ error: 'Invalid Cardano address format' });
         }
-      }
+
+        // 1. Get address data from Blockfrost
+        const walletData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
+        
+        // 2. Process the ADA balance
+        const lovelaceAmount = walletData.amount.find(a => a.unit === 'lovelace')?.quantity || '0';
+        const adaWholePart = (BigInt(lovelaceAmount) / BigInt(1000000)).toString();
+        const adaDecimalPart = (BigInt(lovelaceAmount) % BigInt(1000000)).toString().padStart(6, '0');
+        
+        // 3. Process other assets
+        const assets = [];
+        for (const token of walletData.amount) {
+            if (token.unit === 'lovelace') continue;
+            
+            // Get asset metadata (from cache or Blockfrost)
+            const assetInfo = await getAssetInfo(token.unit);
+            if (!assetInfo) continue;
+
+            // Calculate readable amount based on decimals
+            const quantity = BigInt(token.quantity);
+            const decimals = assetInfo.decimals || 0;
+            const divisor = BigInt(10 ** decimals);
+            const wholePart = (quantity / divisor).toString();
+            const decimalPart = decimals > 0 ? (quantity % divisor).toString().padStart(decimals, '0') : '';
+
+            assets.push({
+                unit: token.unit,
+                quantity: token.quantity,
+                name: assetInfo.name,
+                decimals: decimals,
+                ticker: assetInfo.ticker,
+                image: assetInfo.image,
+                readable_amount: decimals > 0 ? `${wholePart}.${decimalPart}` : wholePart
+            });
+        }
+
+        // 4. Prepare and cache response
+        const response = {
+            address,
+            stake_address: walletData.stake_address,
+            balance: `${adaWholePart}.${adaDecimalPart}`,
+            assets: assets.sort((a, b) => BigInt(b.quantity) - BigInt(a.quantity))
+        };
+
+        await redis.set(`wallet:${address}`, JSON.stringify(response), 'EX', 300); // Cache for 5 minutes
+        res.json(response);
+
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: 'Failed to fetch wallet data' });
     }
-
-    // Format response
-    const lovelaceBalance = walletData.amount.find(a => a.unit === 'lovelace')?.quantity || '0';
-    const adaBalance = (BigInt(lovelaceBalance) / BigInt(1000000)).toString();
-    
-    const response = {
-      address,
-      stake_address: walletData.stake_address,
-      balance: adaBalance, // Now in ADA instead of lovelace
-      raw_balance: lovelaceBalance, // Keep raw balance for precise calculations
-      // Only send essential asset data
-      assets: assets.map(asset => ({
-        unit: asset.unit,
-        quantity: asset.quantity,
-        decimals: asset.decimals || 0,
-        display_name: asset.display_name,
-        ticker: asset.ticker,
-        readable_amount: asset.readable_amount
-      })).sort((a, b) => {
-        // Convert to BigInt for comparison but avoid arithmetic
-        const aQuantity = BigInt(a.quantity);
-        const bQuantity = BigInt(b.quantity);
-        if (aQuantity < bQuantity) return 1;
-        if (aQuantity > bQuantity) return -1;
-        return 0;
-      })
-    };
-
-    // Cache the full data in Redis
-    const fullData = {
-      ...response,
-      assets: assets // Store complete asset data
-    };
-    await redis.set(`wallet:${address}`, JSON.stringify(fullData));
-
-    // Log response size
-    console.log('Response size:', JSON.stringify(response).length, 'bytes');
-    
-    res.json(response);
-  } catch (error) {
-    console.error('Error fetching wallet data:', error);
-    const errorMessage = error.response ? 
-      `Blockfrost API error: ${error.response.status} - ${error.response.statusText}` :
-      'Failed to fetch wallet data';
-    console.error('Error details:', errorMessage);
-    res.status(500).json({ error: errorMessage });
-  }
 });
 
 // Payment initiation endpoint

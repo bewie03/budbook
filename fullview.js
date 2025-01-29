@@ -236,12 +236,17 @@ function getAssetImage(asset) {
 
 function isNFT(asset) {
   // Rule 1: If quantity > 1, it's a token
-  const quantity = parseInt(asset.quantity);
-  if (!isNaN(quantity) && quantity > 1) {
+  const quantity = BigInt(asset.quantity);
+  if (quantity > BigInt(1)) {
     return false;
   }
 
-  // Rule 2: Check onchain_metadata for NFT properties
+  // Rule 2: Check if it has an image
+  if (asset.image_url) {
+    return true;
+  }
+
+  // Rule 3: Check metadata for NFT properties
   if (asset.onchain_metadata) {
     // Check for media properties
     if (asset.onchain_metadata.image || 
@@ -250,31 +255,13 @@ function isNFT(asset) {
       return true;
     }
     
-    // Check for NFT collection properties
-    if (asset.onchain_metadata.name && 
-        (asset.onchain_metadata.series || 
-         asset.onchain_metadata.edition || 
-         asset.onchain_metadata.collection)) {
+    // Check for common NFT attributes
+    if (asset.onchain_metadata.attributes || 
+        asset.onchain_metadata.traits) {
       return true;
     }
   }
 
-  // Rule 3: Check regular metadata
-  if (asset.metadata) {
-    if (asset.metadata.image || asset.metadata.files) {
-      return true;
-    }
-  }
-
-  // Rule 4: Check name patterns
-  const name = asset.display_name || asset.asset_name || '';
-  if (/#\d+$/.test(name) ||           // Ends with #123
-      /\(\d+(?:\/\d+)?\)$/.test(name) // Ends with (123) or (123/456)
-  ) {
-    return true;
-  }
-
-  // If none of the above rules match, consider it a token
   return false;
 }
 
@@ -451,34 +438,25 @@ function getRandomColor(text) {
 
 function renderAssetsList(walletIndex, type = 'tokens') {
   const wallet = wallets[walletIndex];
-  if (!wallet || !wallet.assets) return '';
+  if (!wallet?.assets) return '';
 
-  const assets = wallet.assets;
-  
-  return `
-    <div class="assets-list">
-      ${assets.map(asset => `
-        <div class="asset-item">
-          ${asset.onchain_metadata?.image ? 
-            `<img src="${convertIpfsUrl(asset.onchain_metadata.image)}" alt="${asset.display_name}" class="asset-image">` :
-            `<div class="asset-placeholder" style="background-color: ${getRandomColor(asset.display_name)}">${getFirstLetter(asset.display_name)}</div>`
-          }
-          <div class="asset-details">
-            <div class="asset-name-row">
-              <span class="asset-name">${asset.display_name}</span>
-              ${asset.ticker ? `<span class="asset-ticker">${asset.ticker}</span>` : ''}
-            </div>
-            <div class="asset-amount">${asset.readable_amount}</div>
-          </div>
-          ${asset.fingerprint ? `
-            <button class="copy-button" onclick="copyToClipboard('${asset.fingerprint}')" title="Copy Asset Fingerprint">
-              <i class="fas fa-copy"></i>
-            </button>
-          ` : ''}
+  const isNFTList = type === 'nfts';
+  const assets = wallet.assets.filter(asset => isNFTList ? isNFT(asset) : !isNFT(asset));
+
+  return assets.map(asset => `
+    <div class="asset-item">
+      ${asset.image_url ? `
+        <div class="asset-image">
+          <img src="${asset.image_url}" alt="${asset.display_name}" onerror="this.style.display='none'">
         </div>
-      `).join('')}
+      ` : ''}
+      <div class="asset-info">
+        <h4>${asset.display_name}</h4>
+        <p class="asset-amount">${asset.readable_amount} ${asset.ticker || ''}</p>
+        ${!isNFTList ? `<p class="asset-policy">Policy: ${asset.unit.substring(0, 56)}</p>` : ''}
+      </div>
     </div>
-  `;
+  `).join('') || `<p class="no-assets">No ${isNFTList ? 'NFTs' : 'tokens'} found</p>`;
 }
 
 function setupEventListeners() {
