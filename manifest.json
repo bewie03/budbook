@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Cardano Address Book",
-  "version": "1.0.0",
-  "description": "Store, name, and track Cardano wallet addresses with ease",
+  "version": "1.0",
+  "description": "Save and manage your Cardano wallet addresses",
   "permissions": [
     "storage"
   ],
   "host_permissions": [
     "https://budbook-2410440cbb61.herokuapp.com/*",
-    "https://cardano-mainnet.blockfrost.io/api/v0/*"
+    "https://cardano-mainnet.blockfrost.io/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -24,11 +24,11 @@
     "128": "icons/extensionlogo.png"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com/ https://cardano-mainnet.blockfrost.io/;"
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com https://cardano-mainnet.blockfrost.io"
   },
   "web_accessible_resources": [
     {
-      "resources": ["fullview.html"],
+      "resources": ["fullview.html", "icons/*"],
       "matches": ["<all_urls>"]
     }
   ]
