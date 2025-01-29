@@ -93,7 +93,7 @@ class CardanoAddressBook {
     }
 
     // Generate payment address (this should be your project's payment address)
-    const paymentAddress = 'addr1...'; // Replace with actual payment address
+    const paymentAddress = 'addr1qxdwefvjc4yw7sdtytmwx0lpp8sqsjdw5cl7kjcfz0zscdhl7mgsy7u7fva533d0uv7vctc8lh76hv5wgh7ascfwvmnqmsd04y';
     
     // Show payment instructions
     this.showPaymentInstructions(paymentAddress);
