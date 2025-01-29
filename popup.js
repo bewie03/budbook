@@ -178,8 +178,9 @@ function renderWallets() {
     return '<p class="status">No wallets added yet</p>';
   }
 
-  return wallets.map(wallet => `
+  return wallets.map((wallet, index) => `
     <div class="wallet-item">
+      <button class="delete delete-btn" data-index="${index}">×</button>
       <h3>${wallet.name}</h3>
       <p class="address">Address: ${wallet.address.substring(0, 20)}...</p>
       <p class="balance">Balance: ${(wallet.balance / 1000000).toFixed(2)} ₳</p>
@@ -189,6 +190,17 @@ function renderWallets() {
       <p class="timestamp">Added: ${new Date(wallet.timestamp).toLocaleString()}</p>
     </div>
   `).join('');
+}
+
+async function deleteWallet(index) {
+  try {
+    wallets.splice(index, 1);
+    await saveWallets();
+    updateUI();
+    showSuccess('Wallet removed successfully!');
+  } catch (error) {
+    showError('Failed to remove wallet');
+  }
 }
 
 function updateUI() {
@@ -223,10 +235,20 @@ function updateUI() {
       </div>
     </div>
   `;
-  console.log('UI updated');
 
   // Add event listeners
   document.getElementById('addWallet')?.addEventListener('click', addWallet);
+  
+  // Add delete button listeners
+  document.querySelectorAll('.delete-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const index = parseInt(e.target.dataset.index);
+      if (!isNaN(index)) {
+        deleteWallet(index);
+      }
+    });
+  });
+
   document.getElementById('unlockSlots')?.addEventListener('click', () => {
     const paymentAddress = 'addr1qxdwefvjc4yw7sdtytmwx0lpp8sqsjdw5cl7kjcfz0zscdhl7mgsy7u7fva533d0uv7vctc8lh76hv5wgh7ascfwvmnqmsd04y';
     const instructions = document.createElement('div');
