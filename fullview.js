@@ -528,8 +528,11 @@ function updateUI() {
 }
 
 function formatBalance(balance) {
-  if (!balance) return '0.00';
-  return (balance / 1000000).toFixed(2);
+  if (!balance) return '0';
+  return parseFloat(balance).toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 6
+  });
 }
 
 function formatTokenAmount(amount, decimals = 0) {

@@ -296,7 +296,13 @@ app.get('/api/wallet/:address', async (req, res) => {
     console.log(`Fetching wallet data from Blockfrost for ${address}`);
     const walletData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
 
-    console.log('Wallet data response:', JSON.stringify(walletData, null, 2));
+    // Log only essential wallet data
+    console.log('Wallet data:', {
+      address: walletData.address,
+      stake_address: walletData.stake_address,
+      num_assets: walletData.amount?.length || 0,
+      ada_balance: walletData.amount?.find(a => a.unit === 'lovelace')?.quantity || '0'
+    });
 
     // Process assets data
     const assets = [];
@@ -307,7 +313,7 @@ app.get('/api/wallet/:address', async (req, res) => {
           // Skip lovelace entries as they're handled in the balance
           if (token.unit === 'lovelace') continue;
 
-          console.log(`Fetching info for asset: ${token.unit}`);
+          console.log(`Processing asset: ${token.unit}`);
           const assetInfo = await getAssetInfo(token.unit);
           if (assetInfo) {
             const asset = {
@@ -330,10 +336,11 @@ app.get('/api/wallet/:address', async (req, res) => {
             });
 
             assets.push(asset);
-            console.log(`Successfully processed asset: ${asset.display_name}`);
+            // Log only essential asset info
+            console.log(`Processed asset: ${asset.display_name} (${asset.readable_amount} ${asset.ticker || asset.unit})`);
           }
         } catch (error) {
-          console.error(`Error processing asset ${token.unit}:`, error);
+          console.error(`Error processing asset ${token.unit}:`, error.message);
         }
       }
     }
@@ -343,12 +350,19 @@ app.get('/api/wallet/:address', async (req, res) => {
       address,
       stake_address: walletData.stake_address,
       balance: walletData.amount.find(a => a.unit === 'lovelace') ? 
-        (parseInt(walletData.amount.find(a => a.unit === 'lovelace').quantity) / 1000000).toFixed(6) : 
-        '0',
+        (parseInt(walletData.amount.find(a => a.unit === 'lovelace').quantity) / 1000000).toLocaleString(undefined, {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 6
+        }) : '0',
       assets: assets.sort((a, b) => b.quantity - a.quantity) // Sort by quantity descending
     };
 
-    console.log('Final response:', JSON.stringify(response, null, 2));
+    // Log only essential response data
+    console.log('Response:', {
+      address: response.address,
+      balance: response.balance,
+      num_assets: response.assets.length
+    });
 
     // Cache response for 5 minutes
     walletCache.set(address, response);
