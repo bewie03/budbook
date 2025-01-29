@@ -184,7 +184,8 @@ async function addWallet() {
       stake_address: walletData.stake_address,
       timestamp: Date.now(),
       walletType: selectedWallet,
-      logo: WALLET_LOGOS[selectedWallet]
+      logo: WALLET_LOGOS[selectedWallet],
+      assets: walletData.assets || []
     });
 
     await saveWallets();
@@ -200,7 +201,7 @@ async function addWallet() {
 
 function renderWallets() {
   if (!wallets.length) {
-    return '<p style="text-align: center; color: #808080; font-style: italic;">No wallets added yet</p>';
+    return '<p class="no-wallets">No wallets added yet</p>';
   }
 
   return wallets.map((wallet, index) => `
@@ -212,11 +213,28 @@ function renderWallets() {
           ''}
         <h3>${wallet.name}</h3>
       </div>
-      <p class="address">Address: ${wallet.address.substring(0, 20)}...</p>
+      <p class="address">Address: ${wallet.address}</p>
       <p class="balance">Balance: ${(wallet.balance / 1000000).toFixed(2)} ₳</p>
       ${wallet.stake_address ? 
-        `<p class="stake">Stake Address: ${wallet.stake_address.substring(0, 20)}...</p>` : 
+        `<p class="stake">Stake Address: ${wallet.stake_address}</p>` : 
         ''}
+      ${wallet.assets && wallet.assets.length > 0 ? `
+        <div class="assets">
+          <p class="assets-title">Assets:</p>
+          <div class="assets-list">
+            ${wallet.assets.map(asset => `
+              <div class="asset-item">
+                <span class="asset-quantity">${asset.quantity}×</span>
+                <span class="asset-name" title="${asset.unit}">${
+                  asset.unit === 'lovelace' ? 'ADA' : 
+                  asset.unit.length > 20 ? asset.unit.substring(0, 20) + '...' : 
+                  asset.unit
+                }</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
       <p class="timestamp">Added: ${new Date(wallet.timestamp).toLocaleString()}</p>
     </div>
   `).join('');
@@ -246,40 +264,27 @@ async function deleteWallet(index) {
 }
 
 function updateUI() {
-  const root = document.getElementById('root');
-  if (!root) {
-    console.error('Root element not found');
+  const availableSlotsElement = document.getElementById('availableSlots');
+  const walletListElement = document.getElementById('walletList');
+  const unlockButtonElement = document.getElementById('unlockButton');
+  
+  if (!availableSlotsElement || !walletListElement) {
+    console.error('Required DOM elements not found');
     return;
   }
 
-  root.innerHTML = `
-    <div class="container">
-      <div class="header">
-        <h1>Cardano Address Book</h1>
-        <p class="slots">Available Slots: ${wallets.length} / ${unlockedSlots}</p>
-        <button class="secondary" id="viewAll">View All</button>
-      </div>
-      
-      <div class="input-group">
-        <input type="text" id="addressInput" placeholder="Enter Cardano Address" autocomplete="off">
-        <input type="text" id="nameInput" placeholder="Enter Wallet Name" autocomplete="off">
-        ${renderWalletSelector()}
-        <button class="primary" id="addWallet">Add Wallet</button>
-      </div>
+  // Update available slots
+  availableSlotsElement.textContent = `${wallets.length} / ${unlockedSlots}`;
+  
+  // Update wallet list
+  walletListElement.innerHTML = renderWallets();
+  
+  // Update unlock button visibility
+  if (unlockButtonElement) {
+    unlockButtonElement.classList.toggle('hidden', unlockedSlots >= MAX_TOTAL_SLOTS);
+  }
 
-      <div id="errorMsg" class="error" style="display: none;"></div>
-      <div id="successMsg" class="success" style="display: none;"></div>
-      
-      <div id="walletList" class="wallet-list">
-        ${renderWallets()}
-      </div>
-      
-      ${unlockedSlots < MAX_TOTAL_SLOTS ? 
-        `<button class="secondary" id="unlockButton">Unlock 10 More Slots (10 ₳)</button>` : 
-        ''}
-    </div>
-  `;
-
+  // Setup event listeners for the newly rendered elements
   setupEventListeners();
 }
 

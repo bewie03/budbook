@@ -3,6 +3,8 @@ const cors = require('cors');
 const fetch = require('node-fetch');
 const dotenv = require('dotenv');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
+const NodeCache = require('node-cache');
 
 dotenv.config();
 
@@ -11,6 +13,18 @@ const port = process.env.PORT || 3000;
 const BLOCKFROST_API_KEY = process.env.BLOCKFROST_API_KEY;
 const BLOCKFROST_BASE_URL = 'https://cardano-mainnet.blockfrost.io/api/v0';
 const PAYMENT_ADDRESS = process.env.PAYMENT_ADDRESS;
+const REQUIRED_PAYMENT = 10000000; // 10 ADA in lovelace
+
+// Initialize cache with 5 minute TTL
+const walletCache = new NodeCache({ stdTTL: 300 });
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+});
+
+app.use(limiter);
 
 // Configure CORS for Chrome extension
 app.use(cors({
@@ -43,27 +57,13 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy' });
 });
 
-// Middleware to verify origin
-// app.use((req, res, next) => {
-//   const origin = req.get('origin');
-//   // Only allow requests from Chrome extension
-//   if (origin && origin.startsWith('chrome-extension://')) {
-//     next();
-//   } else {
-//     res.status(403).json({ error: 'Unauthorized origin' });
-//   }
-// });
-
-// Get wallet info
-app.get('/api/wallet/:address', async (req, res) => {
+async function fetchBlockfrost(endpoint, errorContext = '') {
   try {
-    console.log('Fetching wallet data for:', req.params.address);
-    
     if (!BLOCKFROST_API_KEY) {
       throw new Error('BLOCKFROST_API_KEY not configured');
     }
 
-    const response = await fetch(`${BLOCKFROST_BASE_URL}/addresses/${req.params.address}`, {
+    const response = await fetch(`${BLOCKFROST_BASE_URL}${endpoint}`, {
       headers: {
         'project_id': BLOCKFROST_API_KEY
       }
@@ -71,15 +71,58 @@ app.get('/api/wallet/:address', async (req, res) => {
     
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: 'Unknown error' }));
-      throw new Error(error.message || `HTTP error! status: ${response.status}`);
+      
+      // Handle specific Blockfrost error codes
+      switch (response.status) {
+        case 400:
+          throw new Error('Invalid address format');
+        case 402:
+          throw new Error('Project exceeded daily request limit');
+        case 403:
+          throw new Error('Invalid project token');
+        case 404:
+          throw new Error('Address not found');
+        case 418:
+          throw new Error('IP has been auto-banned for extensive sending of requests');
+        case 429:
+          throw new Error('Too many requests');
+        case 500:
+          throw new Error('Internal Blockfrost error');
+        default:
+          throw new Error(error.message || `HTTP error! status: ${response.status}`);
+      }
     }
     
-    const data = await response.json();
+    return await response.json();
+  } catch (error) {
+    console.error(`Error in Blockfrost API call (${errorContext}):`, error);
+    throw error;
+  }
+}
+
+// Get wallet info
+app.get('/api/wallet/:address', async (req, res) => {
+  try {
+    const address = req.params.address;
+    console.log('Fetching wallet data for:', address);
+    
+    // Check cache first
+    const cachedData = walletCache.get(address);
+    if (cachedData) {
+      console.log('Returning cached data for:', address);
+      return res.json(cachedData);
+    }
+    
+    const data = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
     console.log('Wallet data:', data);
+    
+    // Cache the result
+    walletCache.set(address, data);
+    
     res.json(data);
   } catch (error) {
     console.error('Error fetching wallet data:', error);
-    res.status(500).json({ 
+    res.status(error.message.includes('not found') ? 404 : 500).json({ 
       error: error.message,
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
@@ -89,37 +132,40 @@ app.get('/api/wallet/:address', async (req, res) => {
 // Verify payment for slot unlock
 app.get('/api/verify-payment/:address', async (req, res) => {
   try {
-    console.log('Verifying payment from:', req.params.address);
+    const userAddress = req.params.address;
+    console.log('Verifying payment from:', userAddress);
     
-    if (!BLOCKFROST_API_KEY) {
-      throw new Error('BLOCKFROST_API_KEY not configured');
-    }
-
     if (!PAYMENT_ADDRESS) {
       throw new Error('PAYMENT_ADDRESS not configured');
     }
 
-    const response = await fetch(`${BLOCKFROST_BASE_URL}/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`, {
-      headers: {
-        'project_id': BLOCKFROST_API_KEY
-      }
-    });
-    
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: 'Unknown error' }));
-      throw new Error(error.message || `HTTP error! status: ${response.status}`);
-    }
-    
-    const transactions = await response.json();
+    // Get transactions for the payment address
+    const transactions = await fetchBlockfrost(
+      `/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`,
+      'verify payment'
+    );
     console.log('Transaction data:', transactions);
     
-    // Find transaction from the user's address
-    const userTx = transactions.find(tx => tx.from === req.params.address);
+    // Find transaction from the user's address within last 24 hours
+    const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+    const recentTx = transactions.find(tx => {
+      const txTime = new Date(tx.block_time * 1000).getTime();
+      return tx.from === userAddress && 
+             tx.amount === REQUIRED_PAYMENT &&
+             txTime > oneDayAgo;
+    });
     
-    if (userTx && userTx.amount === 10000000) { // 10 ADA in lovelace
-      res.json({ verified: true });
+    if (recentTx) {
+      res.json({ 
+        verified: true,
+        txHash: recentTx.tx_hash,
+        amount: recentTx.amount
+      });
     } else {
-      res.json({ verified: false });
+      res.json({ 
+        verified: false,
+        reason: 'No matching payment found in the last 24 hours'
+      });
     }
   } catch (error) {
     console.error('Error verifying payment:', error);
