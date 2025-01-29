@@ -25,5 +25,11 @@
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com/ https://cardano-mainnet.blockfrost.io/;"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["fullview.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

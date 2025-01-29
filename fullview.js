@@ -1,11 +1,10 @@
-// Constants
+// Import the shared constants and functions
 const MAX_FREE_SLOTS = 5;
 const SLOTS_PER_PAYMENT = 10;
 const MAX_TOTAL_SLOTS = 100;
 const ADA_PAYMENT_AMOUNT = 10;
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 
-// Available wallet logos
 const WALLET_LOGOS = {
   'None': '',
   'Nami': 'icons/Nami.png',
@@ -17,14 +16,12 @@ const WALLET_LOGOS = {
   'Lace': 'icons/lace.png'
 };
 
-// Global state
 let wallets = [];
 let unlockedSlots = MAX_FREE_SLOTS;
 
-// API Functions
+// Reuse the same functions from popup.js
 async function fetchWalletData(address) {
   try {
-    console.log('Fetching data for address:', address);
     const response = await fetch(`${API_BASE_URL}/api/wallet/${address}`, {
       method: 'GET',
       headers: {
@@ -39,54 +36,26 @@ async function fetchWalletData(address) {
       throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
     }
     
-    const data = await response.json();
-    console.log('Received wallet data:', data);
-    return data;
+    return await response.json();
   } catch (error) {
     console.error('Error fetching wallet data:', error);
     throw error;
   }
 }
 
-async function verifyPayment(address) {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/verify-payment/${address}`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Origin': chrome.runtime.getURL('')
-      }
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-    }
-    
-    return await response.json();
-  } catch (error) {
-    console.error('Error verifying payment:', error);
-    throw error;
-  }
-}
-
-// Storage Functions
 async function loadWallets() {
   return new Promise((resolve, reject) => {
     try {
       chrome.storage.sync.get(['wallets', 'unlockedSlots'], (data) => {
         if (chrome.runtime.lastError) {
-          console.error('Error loading from storage:', chrome.runtime.lastError);
           reject(chrome.runtime.lastError);
           return;
         }
-        console.log('Loaded from storage:', data);
         wallets = data.wallets || [];
         unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
         resolve();
       });
     } catch (error) {
-      console.error('Error in loadWallets:', error);
       reject(error);
     }
   });
@@ -97,23 +66,18 @@ async function saveWallets() {
     try {
       chrome.storage.sync.set({ wallets, unlockedSlots }, () => {
         if (chrome.runtime.lastError) {
-          console.error('Error saving to storage:', chrome.runtime.lastError);
           reject(chrome.runtime.lastError);
           return;
         }
-        console.log('Saved to storage:', { wallets, unlockedSlots });
         resolve();
       });
     } catch (error) {
-      console.error('Error in saveWallets:', error);
       reject(error);
     }
   });
 }
 
-// UI Functions
 function showError(message) {
-  console.error('Error:', message);
   const errorDiv = document.getElementById('errorMsg');
   if (errorDiv) {
     errorDiv.textContent = message;
@@ -125,7 +89,6 @@ function showError(message) {
 }
 
 function showSuccess(message) {
-  console.log('Success:', message);
   const successDiv = document.getElementById('successMsg');
   if (successDiv) {
     successDiv.textContent = message;
@@ -138,6 +101,42 @@ function showSuccess(message) {
 
 function validateAddress(address) {
   return address && address.startsWith('addr1') && address.length >= 59;
+}
+
+function renderWalletSelector() {
+  return `
+    <select id="walletType">
+      ${Object.entries(WALLET_LOGOS).map(([name, logo]) => `
+        <option value="${name}" ${name === 'None' ? 'selected' : ''}>
+          ${name}
+        </option>
+      `).join('')}
+    </select>
+  `;
+}
+
+function renderWallets() {
+  if (!wallets.length) {
+    return '<p style="text-align: center; color: #808080; font-style: italic;">No wallets added yet</p>';
+  }
+
+  return wallets.map((wallet, index) => `
+    <div class="wallet-item">
+      <button class="delete delete-btn" data-index="${index}">×</button>
+      <div class="wallet-header">
+        ${wallet.walletType !== 'None' && WALLET_LOGOS[wallet.walletType] ? 
+          `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-logo">` : 
+          ''}
+        <h3>${wallet.name}</h3>
+      </div>
+      <p class="address">Address: ${wallet.address}</p>
+      <p class="balance">Balance: ${(wallet.balance / 1000000).toFixed(2)} ₳</p>
+      ${wallet.stake_address ? 
+        `<p class="stake">Stake Address: ${wallet.stake_address}</p>` : 
+        ''}
+      <p class="timestamp">Added: ${new Date(wallet.timestamp).toLocaleString()}</p>
+    </div>
+  `).join('');
 }
 
 async function addWallet() {
@@ -174,7 +173,6 @@ async function addWallet() {
       return;
     }
 
-    console.log('Adding wallet:', { name, address, selectedWallet });
     const walletData = await fetchWalletData(address);
 
     wallets.push({
@@ -198,88 +196,20 @@ async function addWallet() {
   }
 }
 
-function renderWallets() {
-  if (!wallets.length) {
-    return '<p style="text-align: center; color: #808080; font-style: italic;">No wallets added yet</p>';
-  }
-
-  return wallets.map((wallet, index) => `
-    <div class="wallet-item">
-      <button class="delete delete-btn" data-index="${index}">×</button>
-      <div class="wallet-header">
-        ${wallet.walletType !== 'None' && WALLET_LOGOS[wallet.walletType] ? 
-          `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-logo">` : 
-          ''}
-        <h3>${wallet.name}</h3>
-      </div>
-      <p class="address">Address: ${wallet.address.substring(0, 20)}...</p>
-      <p class="balance">Balance: ${(wallet.balance / 1000000).toFixed(2)} ₳</p>
-      ${wallet.stake_address ? 
-        `<p class="stake">Stake Address: ${wallet.stake_address.substring(0, 20)}...</p>` : 
-        ''}
-      <p class="timestamp">Added: ${new Date(wallet.timestamp).toLocaleString()}</p>
-    </div>
-  `).join('');
-}
-
-function renderWalletSelector() {
-  return `
-    <select id="walletType">
-      ${Object.entries(WALLET_LOGOS).map(([name, logo]) => `
-        <option value="${name}" ${name === 'None' ? 'selected' : ''}>
-          ${name}
-        </option>
-      `).join('')}
-    </select>
-  `;
-}
-
 async function deleteWallet(index) {
   try {
     wallets.splice(index, 1);
     await saveWallets();
     updateUI();
-    showSuccess('Wallet removed successfully!');
+    showSuccess('Wallet deleted successfully!');
   } catch (error) {
-    showError('Failed to remove wallet');
+    showError('Failed to delete wallet');
   }
 }
 
 function updateUI() {
-  const root = document.getElementById('root');
-  if (!root) {
-    console.error('Root element not found');
-    return;
-  }
-
-  root.innerHTML = `
-    <div class="container">
-      <div class="header">
-        <h1>Cardano Address Book</h1>
-        <p class="slots">Available Slots: ${wallets.length} / ${unlockedSlots}</p>
-        <button class="secondary" id="viewAll">View All</button>
-      </div>
-      
-      <div class="input-group">
-        <input type="text" id="addressInput" placeholder="Enter Cardano Address" autocomplete="off">
-        <input type="text" id="nameInput" placeholder="Enter Wallet Name" autocomplete="off">
-        ${renderWalletSelector()}
-        <button class="primary" id="addWallet">Add Wallet</button>
-      </div>
-
-      <div id="errorMsg" class="error" style="display: none;"></div>
-      <div id="successMsg" class="success" style="display: none;"></div>
-      
-      <div id="walletList" class="wallet-list">
-        ${renderWallets()}
-      </div>
-      
-      ${unlockedSlots < MAX_TOTAL_SLOTS ? 
-        `<button class="secondary" id="unlockButton">Unlock 10 More Slots (10 ₳)</button>` : 
-        ''}
-    </div>
-  `;
-
+  document.getElementById('availableSlots').textContent = `${wallets.length} / ${unlockedSlots}`;
+  document.getElementById('walletList').innerHTML = renderWallets();
   setupEventListeners();
 }
 
@@ -287,13 +217,6 @@ function setupEventListeners() {
   const addWalletBtn = document.getElementById('addWallet');
   if (addWalletBtn) {
     addWalletBtn.addEventListener('click', addWallet);
-  }
-
-  const viewAllBtn = document.getElementById('viewAll');
-  if (viewAllBtn) {
-    viewAllBtn.addEventListener('click', () => {
-      chrome.tabs.create({ url: chrome.runtime.getURL('fullview.html') });
-    });
   }
 
   const deleteButtons = document.querySelectorAll('.delete-btn');
@@ -319,15 +242,10 @@ function setupEventListeners() {
           <button class="close">Close</button>
         </div>
       `;
-      
-      const root = document.getElementById('root');
-      if (root) {
-        root.appendChild(instructions);
-        const closeBtn = instructions.querySelector('.close');
-        if (closeBtn) {
-          closeBtn.addEventListener('click', () => instructions.remove());
-        }
-      }
+      document.body.appendChild(instructions);
+      instructions.querySelector('.close')?.addEventListener('click', () => {
+        instructions.remove();
+      });
     });
   }
 }
@@ -335,21 +253,17 @@ function setupEventListeners() {
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    console.log('Extension popup opened');
     await loadWallets();
+    const walletTypeSelect = document.getElementById('walletType');
+    if (walletTypeSelect) {
+      walletTypeSelect.innerHTML = Object.entries(WALLET_LOGOS).map(([name, logo]) => `
+        <option value="${name}" ${name === 'None' ? 'selected' : ''}>
+          ${name}
+        </option>
+      `).join('');
+    }
     updateUI();
   } catch (error) {
-    console.error('Failed to initialize:', error);
-    const root = document.getElementById('root');
-    if (root) {
-      root.innerHTML = `
-        <div class="container">
-          <div class="error" style="margin: 20px;">
-            Failed to initialize: ${error.message}
-            <button class="primary" style="margin-top: 10px;" onclick="location.reload()">Retry</button>
-          </div>
-        </div>
-      `;
-    }
+    showError('Failed to initialize: ' + error.message);
   }
 });

@@ -4,17 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://budbook-2410440cbb61.herokuapp.com https://cardano-mainnet.blockfrost.io">
+  <title>Cardano Address Book - Full View</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="fullview.css">
 </head>
 <body>
-  <div id="root">
-    <div class="container">
-      <div class="header">
-        <h1>Cardano Address Book</h1>
-        <p class="slots">Available Slots: <span id="availableSlots">0 / 0</span></p>
-        <button id="viewAll" class="secondary view-all">View All Wallets</button>
-      </div>
-      
+  <div class="full-container">
+    <div class="header">
+      <h1>Cardano Address Book</h1>
+      <p class="slots">Available Slots: <span id="availableSlots">0 / 0</span></p>
+    </div>
+    
+    <div class="controls">
       <div class="input-group">
         <input type="text" id="addressInput" placeholder="Enter Cardano Address" autocomplete="off">
         <input type="text" id="nameInput" placeholder="Enter Wallet Name" autocomplete="off">
@@ -26,12 +27,12 @@
 
       <div id="errorMsg" class="error" style="display: none;"></div>
       <div id="successMsg" class="success" style="display: none;"></div>
-      
-      <div id="walletList" class="wallet-list"></div>
-      
-      <button class="secondary" id="unlockButton">Unlock 10 More Slots (10 ₳)</button>
     </div>
+    
+    <div id="walletList" class="wallet-list"></div>
+    
+    <button class="secondary" id="unlockButton">Unlock 10 More Slots (10 ₳)</button>
   </div>
-  <script src="popup.js" type="module"></script>
+  <script src="fullview.js"></script>
 </body>
 </html>
