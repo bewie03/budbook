@@ -163,18 +163,37 @@ async function getAssetInfo(assetId) {
         // Handle NFT image from onchain metadata
         if (assetData.onchain_metadata?.image) {
             const image = assetData.onchain_metadata.image;
-            if (image.startsWith('ipfs://')) {
-                imageUrl = `https://ipfs.io/ipfs/${image.slice(7)}`;
-            } else if (!image.startsWith('data:')) {
-                imageUrl = image;
+            if (typeof image === 'string') {
+                if (image.startsWith('ipfs://')) {
+                    imageUrl = `https://ipfs.io/ipfs/${image.slice(7)}`;
+                } else if (!image.startsWith('data:')) {
+                    imageUrl = image;
+                }
             }
         }
 
         // Handle token logo from metadata
         if (assetData.metadata?.logo) {
             const logo = assetData.metadata.logo;
-            if (!logo.startsWith('data:')) {
+            if (typeof logo === 'string' && !logo.startsWith('data:')) {
                 logoUrl = logo;
+            }
+        }
+
+        // Also check files array for images
+        if (!imageUrl && assetData.onchain_metadata?.files && Array.isArray(assetData.onchain_metadata.files)) {
+            const file = assetData.onchain_metadata.files[0];
+            if (typeof file === 'string') {
+                imageUrl = file;
+            } else if (file && typeof file === 'object') {
+                const fileUrl = file.src || file.uri || file.url || file.image;
+                if (typeof fileUrl === 'string') {
+                    if (fileUrl.startsWith('ipfs://')) {
+                        imageUrl = `https://ipfs.io/ipfs/${fileUrl.slice(7)}`;
+                    } else if (!fileUrl.startsWith('data:')) {
+                        imageUrl = fileUrl;
+                    }
+                }
             }
         }
 
