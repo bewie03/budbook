@@ -272,86 +272,67 @@ async function copyToClipboard(text) {
 }
 
 function renderWallets() {
-  if (!wallets || wallets.length === 0) {
-    return '<p class="no-wallets">No wallets added yet</p>';
-  }
+  const walletList = document.getElementById('walletList');
+  if (!walletList) return;
 
-  // Create assets panel
-  const assetsPanel = document.createElement('div');
-  assetsPanel.className = 'assets-panel';
-  assetsPanel.innerHTML = `
-    <div class="assets-header">
-      <h3>Assets</h3>
-      <button class="close-assets">×</button>
-    </div>
-    <div class="assets-tabs">
-      <button class="assets-tab active" data-tab="nfts">NFTs</button>
-      <button class="assets-tab" data-tab="tokens">Tokens</button>
-    </div>
-    <div class="assets-content">
-      <div class="assets-list"></div>
-    </div>
-  `;
-  document.body.appendChild(assetsPanel);
-
-  return wallets.map((wallet, index) => `
-    <div class="wallet-item">
+  walletList.innerHTML = wallets.map((wallet, index) => `
+    <div class="wallet-card">
       <div class="wallet-header">
         <div class="wallet-info">
-          <img src="icons/nami.png" alt="Wallet Logo" class="wallet-logo">
-          <h3>${wallet.name}</h3>
+          <div class="wallet-name">${wallet.name || 'Unnamed Wallet'}</div>
+          <div class="wallet-address" title="${wallet.address}">
+            ${truncateAddress(wallet.address)}
+            <button class="copy-btn" data-copy="${wallet.address}">
+              <img src="icons/copy.svg" alt="Copy" class="copy-icon">
+            </button>
+          </div>
         </div>
         <div class="wallet-actions">
           <button class="refresh-btn" data-index="${index}">
-            <i class="fas fa-sync-alt"></i>
+            <img src="icons/refresh.svg" alt="Refresh" class="refresh-icon">
           </button>
-          <button class="delete-btn" data-index="${index}">
-            <i class="fas fa-trash"></i>
-          </button>
-        </div>
-      </div>
-
-      <div class="address-group">
-        <div class="address-label">Address</div>
-        <div class="address-container">
-          <span class="address">${truncateAddress(wallet.address)}</span>
-          <button class="copy-btn" data-copy="${wallet.address}">
-            <i class="fas fa-copy"></i>
+          <button class="delete-btn" onclick="deleteWallet(${index})">
+            <img src="icons/delete.svg" alt="Delete" class="delete-icon">
           </button>
         </div>
       </div>
-
-      <div class="address-group">
-        <div class="address-label">Stake Address</div>
-        <div class="address-container">
-          <span class="stake">${truncateAddress(wallet.stake_address)}</span>
-          <button class="copy-btn" data-copy="${wallet.stake_address}">
-            <i class="fas fa-copy"></i>
-          </button>
-        </div>
+      
+      <div class="wallet-balance">
+        <span class="balance-label">Balance:</span>
+        <span class="balance-amount">₳ ${formatBalance(wallet.balance)}</span>
       </div>
 
-      <div class="balance-container">
-        <span class="balance">${formatBalance(wallet.balance)} ₳</span>
+      <div class="wallet-assets">
+        <button class="view-assets-btn" onclick="showAssets(${index})">
+          View Assets (${wallet.assets ? wallet.assets.length : 0})
+        </button>
       </div>
 
-      ${wallet.assets && wallet.assets.length > 0 ? `
-        <button class="assets-toggle" data-index="${index}">
-          View Assets (${wallet.assets.length})
+      ${index === wallets.length - 1 ? `
+        <button class="add-wallet-btn" onclick="addWallet()">
+          <img src="icons/plus.svg" alt="Add" class="add-icon">
+          Add Wallet
         </button>
       ` : ''}
     </div>
   `).join('');
+
+  // Setup event listeners after rendering
+  setupEventListeners();
 }
 
 function setupAssetsPanelListeners() {
   const panel = document.querySelector('.assets-panel');
+  if (!panel) return; // Exit if panel doesn't exist yet
+  
   const closeBtn = panel.querySelector('.close-assets');
   const tabs = panel.querySelectorAll('.assets-tab');
   
-  closeBtn.addEventListener('click', () => {
-    panel.classList.remove('expanded');
-  });
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      panel.classList.remove('expanded');
+    });
+  }
 
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
@@ -573,7 +554,6 @@ function updateUI() {
   }
 
   walletListElement.innerHTML = renderWallets();
-  setupEventListeners();
 }
 
 function formatBalance(balance) {

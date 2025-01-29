@@ -317,13 +317,33 @@ app.get('/api/verify-payment/:address', async (req, res) => {
 // Add endpoint to view cache
 app.get('/api/cache', (req, res) => {
   try {
+    // Format each asset entry to show only essential info
+    const formattedAssetCache = {};
+    for (const [assetId, data] of Object.entries(assetCache)) {
+      formattedAssetCache[assetId] = {
+        display_name: data.display_name,
+        decimals: data.decimals,
+        policy_id: data.policy_id,
+        asset_name: data.asset_name,
+        metadata_summary: {
+          has_metadata: !!data.metadata,
+          has_onchain_metadata: !!data.onchain_metadata
+        }
+      };
+    }
+
     const cacheStats = {
-      assetCacheSize: Object.keys(assetCache).length,
-      walletCacheSize: walletCache.keys().length,
-      transactionCacheSize: transactionCache.keys().length,
-      assetCache: assetCache
+      summary: {
+        total_assets: Object.keys(assetCache).length,
+        total_wallets: walletCache.keys().length,
+        total_transactions: transactionCache.keys().length
+      },
+      assets: formattedAssetCache
     };
-    res.json(cacheStats);
+
+    // Pretty print with 2 space indentation
+    res.setHeader('Content-Type', 'application/json');
+    res.send(JSON.stringify(cacheStats, null, 2));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
