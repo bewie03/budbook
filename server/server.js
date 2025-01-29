@@ -211,14 +211,7 @@ app.get('/api/wallet/:address', async (req, res) => {
     const address = req.params.address;
     console.log('Fetching wallet data for:', address);
     
-    // Check cache first
-    const cachedData = walletCache.get(address);
-    if (cachedData) {
-      console.log('Returning cached data for:', address);
-      return res.json(cachedData);
-    }
-    
-    // Fetch address data
+    // Always fetch fresh address data
     const addressData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
     console.log('Address data:', addressData);
     
@@ -232,10 +225,39 @@ app.get('/api/wallet/:address', async (req, res) => {
         try {
           // For non-native tokens, get the asset details
           if (asset.unit.length > 32) {
-            const assetData = await getAssetInfo(asset.unit);
+            // Always fetch fresh asset data to ensure we have latest decimals
+            const assetData = await fetchBlockfrost(`/assets/${asset.unit}`, 'fetch asset data');
+            
+            // Get decimals from metadata or onchain_metadata
+            let decimals = 0;
+            if (assetData.metadata?.decimals !== undefined) {
+                decimals = parseInt(assetData.metadata.decimals);
+            } else if (assetData.onchain_metadata?.decimals !== undefined) {
+                decimals = parseInt(assetData.onchain_metadata.decimals);
+            }
+            
+            const processedData = {
+                metadata: assetData.metadata || null,
+                onchain_metadata: assetData.onchain_metadata || null,
+                decimals: decimals,
+                asset_name: assetData.asset_name ? 
+                    Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
+                    asset.unit.substring(56),
+                policy_id: asset.unit.substring(0, 56),
+                fingerprint: assetData.fingerprint,
+                display_name: assetData.onchain_metadata?.name || 
+                            assetData.metadata?.name || 
+                            (assetData.asset_name ? Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
+                            asset.unit.substring(56))
+            };
+            
+            // Update cache with fresh data
+            assetCache[asset.unit] = processedData;
+            await saveAssetCache();
+            
             return {
               ...asset,
-              ...assetData
+              ...processedData
             };
           }
           return asset;
@@ -262,7 +284,7 @@ app.get('/api/wallet/:address', async (req, res) => {
     console.error('Error fetching wallet data:', error);
     res.status(error.message.includes('not found') ? 404 : 500).json({ 
       error: error.message,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      details: error.response ? await error.response.text() : null
     });
   }
 });
@@ -317,33 +339,13 @@ app.get('/api/verify-payment/:address', async (req, res) => {
 // Add endpoint to view cache
 app.get('/api/cache', (req, res) => {
   try {
-    // Format each asset entry to show only essential info
-    const formattedAssetCache = {};
-    for (const [assetId, data] of Object.entries(assetCache)) {
-      formattedAssetCache[assetId] = {
-        display_name: data.display_name,
-        decimals: data.decimals,
-        policy_id: data.policy_id,
-        asset_name: data.asset_name,
-        metadata_summary: {
-          has_metadata: !!data.metadata,
-          has_onchain_metadata: !!data.onchain_metadata
-        }
-      };
-    }
-
     const cacheStats = {
-      summary: {
-        total_assets: Object.keys(assetCache).length,
-        total_wallets: walletCache.keys().length,
-        total_transactions: transactionCache.keys().length
-      },
-      assets: formattedAssetCache
+      assetCacheSize: Object.keys(assetCache).length,
+      walletCacheSize: walletCache.keys().length,
+      transactionCacheSize: transactionCache.keys().length,
+      assetCache: assetCache
     };
-
-    // Pretty print with 2 space indentation
-    res.setHeader('Content-Type', 'application/json');
-    res.send(JSON.stringify(cacheStats, null, 2));
+    res.json(cacheStats);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
