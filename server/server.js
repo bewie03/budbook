@@ -410,23 +410,27 @@ app.get('/api/wallet/:address', async (req, res) => {
     const response = {
       address,
       stake_address: walletData.stake_address,
-      balance: walletData.amount.find(a => a.unit === 'lovelace') ? 
-        (parseInt(walletData.amount.find(a => a.unit === 'lovelace').quantity) / 1000000).toLocaleString(undefined, {
-          minimumFractionDigits: 0,
-          maximumFractionDigits: 6
-        }) : '0',
-      assets: assets.sort((a, b) => b.quantity - a.quantity) // Sort by quantity descending
+      balance: walletData.amount.find(a => a.unit === 'lovelace')?.quantity || '0',
+      // Only send essential asset data
+      assets: assets.map(asset => ({
+        unit: asset.unit,
+        quantity: asset.quantity,
+        decimals: asset.decimals || 0,
+        display_name: asset.display_name,
+        ticker: asset.ticker,
+        readable_amount: asset.readable_amount
+      })).sort((a, b) => BigInt(b.quantity) - BigInt(a.quantity))
     };
 
-    // Log only essential response data
-    console.log('Response:', {
-      address: response.address,
-      balance: response.balance,
-      num_assets: response.assets.length
-    });
+    // Cache the full data in Redis
+    const fullData = {
+      ...response,
+      assets: assets // Store complete asset data
+    };
+    await redis.set(`wallet:${address}`, JSON.stringify(fullData));
 
-    // Cache response in Redis for 5 minutes
-    await redis.set(`wallet:${address}`, JSON.stringify(response), 'EX', 300);
+    // Log response size
+    console.log('Response size:', JSON.stringify(response).length, 'bytes');
     
     res.json(response);
   } catch (error) {

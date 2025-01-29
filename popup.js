@@ -152,7 +152,8 @@ async function saveWallets() {
               quantity: asset.quantity,
               decimals: asset.decimals,
               display_name: asset.display_name,
-              ticker: asset.ticker
+              ticker: asset.ticker,
+              readable_amount: asset.readable_amount
             })) : []
           };
 
@@ -278,8 +279,7 @@ async function addWallet() {
     const walletData = await fetchWalletData(address);
     console.log('Received wallet data:', {
       hasBalance: !!walletData.balance,
-      numAssets: walletData.assets?.length,
-      sampleAsset: walletData.assets?.[0]
+      numAssets: walletData.assets?.length
     });
     
     // Store only essential wallet data
@@ -290,14 +290,17 @@ async function addWallet() {
       balance: walletData.balance || '0',
       stake_address: walletData.stake_address || '',
       timestamp: Date.now(),
-      // Only store minimal asset data
-      assets: (walletData.assets || []).map(asset => ({
-        unit: asset.unit || '',
-        quantity: asset.quantity || '0',
-        decimals: parseInt(asset.decimals || '0'),
-        display_name: asset.display_name || asset.unit || '',
-        ticker: asset.ticker || ''
-      }))
+      // Take top 5 assets by value
+      assets: (walletData.assets || [])
+        .slice(0, 5) // Assets are already sorted by value from server
+        .map(asset => ({
+          unit: asset.unit,
+          quantity: asset.quantity,
+          decimals: asset.decimals,
+          display_name: asset.display_name,
+          ticker: asset.ticker,
+          readable_amount: asset.readable_amount
+        }))
     };
 
     console.log('Processed wallet data:', {
@@ -368,24 +371,21 @@ function renderWallets() {
         <h3>${wallet.name}</h3>
       </div>
       <p class="address">Address: ${wallet.address}</p>
-      <p class="balance">Balance: ${(parseInt(wallet.balance) / ADA_LOVELACE).toFixed(2)} ₳</p>
+      <p class="balance">Balance: ${(parseInt(wallet.balance) / 1000000).toFixed(2)} ₳</p>
       ${wallet.stake_address ? 
         `<p class="stake">Stake Address: ${wallet.stake_address}</p>` : 
         ''}
       ${wallet.assets && wallet.assets.length > 0 ? `
         <div class="assets">
-          <p>Top Assets (${wallet.assets.length} of ${wallet.total_assets}):</p>
+          <p>Top Assets:</p>
           <ul>
             ${wallet.assets.map(asset => `
               <li>
-                ${asset.display_name}: ${asset.quantity} 
+                ${asset.display_name}: ${asset.readable_amount}
                 ${asset.ticker ? `(${asset.ticker})` : ''}
               </li>
             `).join('')}
           </ul>
-          ${wallet.total_assets > MAX_STORED_ASSETS ? 
-            `<p class="more-assets">+ ${wallet.total_assets - MAX_STORED_ASSETS} more assets</p>` : 
-            ''}
         </div>
       ` : ''}
     </div>
