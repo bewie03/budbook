@@ -413,7 +413,7 @@ app.get('/api/wallet/:address', async (req, res) => {
         // 1. Get address data from Blockfrost
         const addressData = await fetchBlockfrost(`/addresses/${address}`, 'fetch address data');
         
-        // 2. Process assets and get their details
+        // Process assets and get their details
         const assets = [];
         for (const amount of addressData.amount) {
             try {
@@ -436,9 +436,23 @@ app.get('/api/wallet/:address', async (req, res) => {
 
                 // Get image URL
                 let imageUrl = null;
-                // For tokens, check metadata fields
-                if (metadata) {
-                    for (const field of ['logo', 'icon', 'image']) {
+                // Check both metadata and onchain_metadata for image
+                const possibleImageFields = ['logo', 'icon', 'image', 'mediaType', 'image1'];
+                
+                // First check onchain_metadata
+                for (const field of possibleImageFields) {
+                    if (onchainMetadata[field]) {
+                        const url = isValidUrl(onchainMetadata[field]);
+                        if (url) {
+                            imageUrl = url;
+                            break;
+                        }
+                    }
+                }
+                
+                // If no image found in onchain_metadata, check metadata
+                if (!imageUrl) {
+                    for (const field of possibleImageFields) {
                         if (metadata[field]) {
                             const url = isValidUrl(metadata[field]);
                             if (url) {
@@ -448,55 +462,42 @@ app.get('/api/wallet/:address', async (req, res) => {
                         }
                     }
                 }
-                // For NFTs, check onchain metadata
-                if (!imageUrl && onchainMetadata) {
-                    for (const field of ['image', 'mediaUrl', 'thumbnailUrl']) {
-                        if (onchainMetadata[field]) {
-                            const url = isValidUrl(onchainMetadata[field]);
-                            if (url) {
-                                imageUrl = url;
-                                break;
-                            }
-                        }
-                    }
-                }
 
-                // Get name from metadata or onchain_metadata
-                const name = onchainMetadata.name || 
-                            metadata.name || 
-                            (() => {
-                                try {
-                                    const hexName = amount.unit.split('.').pop();
-                                    if (hexName && /^[0-9a-fA-F]+$/.test(hexName)) {
-                                        const decoded = Buffer.from(hexName, 'hex').toString('utf8');
-                                        if (decoded && /^[\x20-\x7E]*$/.test(decoded)) return decoded;
-                                    }
-                                } catch {}
-                                return amount.unit;
-                            })();
+                // Structure the asset data
+                const asset = {
+                    unit: amount.unit,
+                    quantity: amount.quantity,
+                    decimals: assetInfo.decimals || 0,
+                    name: metadata.name || onchainMetadata.name || assetInfo.asset_name,
+                    ticker: metadata.ticker || onchainMetadata.ticker,
+                    description: metadata.description || onchainMetadata.description,
+                    image: imageUrl,
+                    fingerprint: assetInfo.fingerprint,
+                    metadata: metadata,
+                    onchainMetadata: onchainMetadata
+                };
 
+                assets.push(asset);
+            } catch (error) {
+                console.error(`Error processing asset ${amount.unit}:`, error);
+                // Add minimal asset data if processing fails
                 assets.push({
                     unit: amount.unit,
                     quantity: amount.quantity,
-                    decimals: metadata.decimals || 0,
-                    name: name,
-                    image: imageUrl,
-                    ticker: metadata.ticker || null,
-                    is_nft: amount.quantity === '1'
+                    name: amount.unit.slice(-amount.unit.length + 56), // Get asset name from unit
+                    decimals: 0
                 });
-            } catch (error) {
-                console.error(`Error processing asset ${amount.unit}:`, error);
             }
         }
 
-        // 3. Send response
-        res.json({
-            address,
+        // Return the complete wallet data
+        return res.json({
+            address: addressData.address,
             stake_address: addressData.stake_address,
+            type: addressData.type,
             balance: addressData.amount.find(a => a.unit === 'lovelace')?.quantity || '0',
             assets: assets
         });
-
     } catch (error) {
         console.error('Error in /api/wallet/:address:', error);
         res.status(500).json({ error: 'Failed to fetch wallet data' });

@@ -571,7 +571,9 @@ function updateUI() {
 
 function formatBalance(balance) {
   if (!balance) return '0';
-  return parseFloat(balance).toLocaleString(undefined, {
+  // Convert lovelace to ADA (1 ADA = 1,000,000 lovelace)
+  const adaValue = parseFloat(balance) / 1000000;
+  return adaValue.toLocaleString(undefined, {
     minimumFractionDigits: 0,
     maximumFractionDigits: 6
   }) + ' ₳';
