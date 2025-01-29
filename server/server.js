@@ -340,14 +340,7 @@ app.get('/api/wallet/:address', async (req, res) => {
     const cached = await redis.get(`wallet:${address}`);
     if (cached) {
       console.log(`Returning cached data for ${address}`);
-      const parsedCache = JSON.parse(cached);
-      // Log the actual data being returned
-      console.log('Cached data:', {
-        address: parsedCache.address,
-        balance: parsedCache.balance,
-        num_assets: parsedCache.assets?.length
-      });
-      return res.json(parsedCache);
+      return res.json(JSON.parse(cached));
     }
 
     // Fetch wallet data
