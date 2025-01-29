@@ -15,15 +15,14 @@ class CardanoAddressBook {
 
   async init() {
     this.container = document.getElementById('root');
-    this.render();
     await this.loadWallets();
+    this.updateUI();
   }
 
   async loadWallets() {
     const { wallets = [], unlockedSlots = MAX_FREE_SLOTS } = await chrome.storage.sync.get(['wallets', 'unlockedSlots']);
     this.wallets = wallets;
     this.unlockedSlots = unlockedSlots;
-    this.updateUI();
   }
 
   setupEventListeners() {
