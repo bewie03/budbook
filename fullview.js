@@ -21,7 +21,6 @@ let unlockedSlots = MAX_FREE_SLOTS;
 
 // Cache management
 const ASSET_CACHE_KEY = 'walletpup_asset_cache';
-const ASSET_CACHE_DURATION = 3600000; // 1 hour in milliseconds
 
 async function getAssetCache() {
   try {
@@ -38,7 +37,7 @@ async function setAssetCache(assetId, data) {
     const cache = await getAssetCache();
     cache[assetId] = {
       data,
-      timestamp: Date.now()
+      timestamp: Date.now() // Keep timestamp for debugging purposes
     };
     await chrome.storage.local.set({ [ASSET_CACHE_KEY]: cache });
   } catch (error) {
@@ -52,64 +51,12 @@ async function getAssetFromCache(assetId) {
     const cachedAsset = cache[assetId];
     
     if (cachedAsset) {
-      const age = Date.now() - cachedAsset.timestamp;
-      if (age < ASSET_CACHE_DURATION) {
-        return cachedAsset.data;
-      }
+      return cachedAsset.data;
     }
     return null;
   } catch (error) {
     console.error('Error reading from asset cache:', error);
     return null;
-  }
-}
-
-// Clean up old cache entries periodically
-async function cleanupAssetCache() {
-  try {
-    const cache = await getAssetCache();
-    const now = Date.now();
-    let modified = false;
-    
-    for (const [assetId, entry] of Object.entries(cache)) {
-      if (now - entry.timestamp > ASSET_CACHE_DURATION) {
-        delete cache[assetId];
-        modified = true;
-      }
-    }
-    
-    if (modified) {
-      await chrome.storage.local.set({ [ASSET_CACHE_KEY]: cache });
-    }
-  } catch (error) {
-    console.error('Error cleaning up asset cache:', error);
-  }
-}
-
-// Clean up cache every hour
-setInterval(cleanupAssetCache, ASSET_CACHE_DURATION);
-
-// Reuse the same functions from popup.js
-async function fetchWalletData(address) {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/wallet/${address}`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Origin': chrome.runtime.getURL('')
-      }
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-    }
-    
-    return await response.json();
-  } catch (error) {
-    console.error('Error fetching wallet data:', error);
-    throw error;
   }
 }
 

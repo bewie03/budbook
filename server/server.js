@@ -5,6 +5,7 @@ const dotenv = require('dotenv');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 const NodeCache = require('node-cache');
+const fs = require('fs').promises;
 
 dotenv.config();
 
@@ -15,10 +16,57 @@ const BLOCKFROST_BASE_URL = 'https://cardano-mainnet.blockfrost.io/api/v0';
 const PAYMENT_ADDRESS = process.env.PAYMENT_ADDRESS;
 const REQUIRED_PAYMENT = 10000000; // 10 ADA in lovelace
 
-// Initialize caches with appropriate TTLs
+// Initialize caches
 const walletCache = new NodeCache({ stdTTL: 300 }); // 5 minutes for wallet data
-const assetCache = new NodeCache({ stdTTL: 3600 }); // 1 hour for asset metadata
 const transactionCache = new NodeCache({ stdTTL: 86400 }); // 24 hours for processed transactions
+
+// Permanent asset cache file path
+const ASSET_CACHE_FILE = path.join(__dirname, 'asset_cache.json');
+
+// In-memory asset cache
+let assetCache = {};
+
+// Load asset cache from file on startup
+async function loadAssetCache() {
+    try {
+        const data = await fs.readFile(ASSET_CACHE_FILE, 'utf8');
+        assetCache = JSON.parse(data);
+        console.log(`Loaded ${Object.keys(assetCache).length} assets from cache file`);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            console.log('No existing asset cache file, starting fresh');
+            assetCache = {};
+            // Create the file
+            await fs.writeFile(ASSET_CACHE_FILE, JSON.stringify({}));
+        } else {
+            console.error('Error loading asset cache:', error);
+        }
+    }
+}
+
+// Save asset cache to file
+async function saveAssetCache() {
+    try {
+        await fs.writeFile(ASSET_CACHE_FILE, JSON.stringify(assetCache));
+    } catch (error) {
+        console.error('Error saving asset cache:', error);
+    }
+}
+
+// Load cache on startup
+loadAssetCache();
+
+// Save cache periodically (every 5 minutes)
+setInterval(() => {
+    saveAssetCache();
+}, 5 * 60 * 1000);
+
+// Save cache on process exit
+process.on('SIGINT', async () => {
+    console.log('Saving asset cache before exit...');
+    await saveAssetCache();
+    process.exit();
+});
 
 // Rate limiting
 const limiter = rateLimit({
@@ -104,11 +152,10 @@ async function fetchBlockfrost(endpoint, errorContext = '') {
 
 async function getAssetInfo(assetId) {
     try {
-        // Check cache first
-        const cachedAsset = assetCache.get(assetId);
-        if (cachedAsset) {
+        // Check in-memory cache first
+        if (assetCache[assetId]) {
             console.log(`Using cached data for asset ${assetId}`);
-            return cachedAsset;
+            return assetCache[assetId];
         }
 
         // If not in cache, fetch from Blockfrost
@@ -132,7 +179,7 @@ async function getAssetInfo(assetId) {
         };
 
         // Store in cache
-        assetCache.set(assetId, processedData);
+        assetCache[assetId] = processedData;
         
         return processedData;
     } catch (error) {
