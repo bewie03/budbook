@@ -5,7 +5,7 @@ const MAX_TOTAL_SLOTS = 100;
 const ADA_PAYMENT_AMOUNT = 10;
 
 // API configuration
-const API_BASE_URL = 'YOUR_HEROKU_APP_URL'; // We'll add this when you deploy to Heroku
+const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 
 class CardanoAddressBook {
   constructor() {
