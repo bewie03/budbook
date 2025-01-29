@@ -555,7 +555,7 @@ function updateUI() {
 }
 
 function formatBalance(balance) {
-  if (!balance) return '0';
+  if (!balance) return '0 ₳';
   return parseFloat(balance).toLocaleString(undefined, {
     minimumFractionDigits: 0,
     maximumFractionDigits: 6

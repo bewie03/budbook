@@ -421,31 +421,47 @@ app.get('/api/wallet/:address', async (req, res) => {
             if (token.unit === 'lovelace') continue;
             
             // Skip if quantity is not a valid number
-            if (!token.quantity || token.quantity.length > 30) continue;
+            if (!token.quantity || token.quantity.length > 30) {
+                console.error(`Invalid quantity for token ${token.unit}`);
+                continue;
+            }
             
-            // Get asset metadata (from cache or Blockfrost)
-            const assetInfo = await getAssetInfo(token.unit);
-            if (!assetInfo) continue;
-
             try {
+                // Get asset metadata (from cache or Blockfrost)
+                const assetInfo = await getAssetInfo(token.unit);
+                if (!assetInfo) {
+                    console.error(`No asset info found for ${token.unit}`);
+                    continue;
+                }
+
+                // Log the asset info for debugging
+                console.log('Asset info for', token.unit, ':', assetInfo);
+
                 const quantity = token.quantity;
                 const decimals = Math.min(assetInfo.decimals || 0, 8); // Cap decimals at 8
                 const readable_amount = formatAmount(quantity, decimals);
 
-                if (!readable_amount) continue; // Skip if formatting failed
+                if (!readable_amount) {
+                    console.error(`Failed to format amount for ${token.unit}`);
+                    continue;
+                }
 
+                // Ensure we have at least a basic name
+                const name = assetInfo.name || token.unit.slice(-8);
+                
                 assets.push({
                     unit: token.unit,
                     quantity: token.quantity,
-                    name: assetInfo.name,  // Use the name from assetInfo
+                    name,
                     decimals,
                     ticker: assetInfo.ticker,
-                    image: assetInfo.image,  // Use the image from assetInfo
+                    image: assetInfo.image,
                     readable_amount,
-                    is_nft: assetInfo.is_nft  // Add NFT flag
+                    is_nft: assetInfo.is_nft
                 });
             } catch (error) {
-                continue; // Skip problematic assets
+                console.error(`Error processing asset ${token.unit}:`, error);
+                continue;
             }
         }
 
