@@ -270,32 +270,40 @@ async function addWallet() {
       address,
       name,
       walletType,
-      balance: walletData.balance,
-      stake_address: walletData.stake_address,
+      balance: walletData.balance || '0',
+      stake_address: walletData.stake_address || '',
       timestamp: Date.now(),
       // Only store minimal asset data
-      assets: walletData.assets ? walletData.assets.map(asset => ({
-        unit: asset.unit,
-        quantity: asset.quantity,
-        decimals: asset.decimals,
-        readable_amount: asset.readable_amount,
-        display_name: asset.display_name,
-        ticker: asset.ticker
-      })) : []
+      assets: (walletData.assets || []).map(asset => ({
+        unit: asset.unit || '',
+        quantity: asset.quantity || '0',
+        decimals: parseInt(asset.decimals || '0'),
+        readable_amount: asset.readable_amount || '0',
+        display_name: asset.display_name || asset.unit || '',
+        ticker: asset.ticker || ''
+      }))
     };
 
+    // Add to wallets array
     wallets.push(wallet);
-    await saveWallets();
     
-    // Clear inputs
-    addressInput.value = '';
-    nameInput.value = '';
-    walletTypeSelect.value = 'None';
-    
-    showSuccess('Wallet added successfully!');
+    try {
+      await saveWallets();
+      
+      // Clear inputs
+      addressInput.value = '';
+      nameInput.value = '';
+      walletTypeSelect.value = 'None';
+      
+      showSuccess('Wallet added successfully!');
+    } catch (storageError) {
+      // Remove from array if save failed
+      wallets.pop();
+      throw new Error(`Failed to save wallet: ${storageError.message}`);
+    }
   } catch (error) {
     console.error('Failed to add wallet:', error);
-    showError(error.message || 'Failed to add wallet');
+    showError(error.message || 'Failed to add wallet. Please try again.');
   }
 }
 
