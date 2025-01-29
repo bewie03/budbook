@@ -785,20 +785,44 @@ async function initiatePayment() {
 }
 
 async function fetchWalletData(address) {
+  console.log('Starting fetchWalletData for address:', address);
   try {
+    console.log('Making request to:', `${API_BASE_URL}/api/wallet/${address}`);
     const response = await fetch(`${API_BASE_URL}/api/wallet/${address}`);
+    
     if (!response.ok) {
+      console.error('Server response not OK:', {
+        status: response.status,
+        statusText: response.statusText
+      });
       throw new Error(`HTTP error! status: ${response.status}`);
     }
+
     const data = await response.json();
-    console.log('Raw wallet data:', data); // Debug log
+    console.log('Raw server response:', JSON.stringify(data, null, 2));
     
-    // Store complete asset data
+    if (!data.assets || !Array.isArray(data.assets)) {
+      console.error('Invalid assets data received:', data.assets);
+      throw new Error('Invalid asset data received from server');
+    }
+
+    // Log each asset for debugging
+    data.assets.forEach((asset, index) => {
+      console.log(`Asset ${index}:`, {
+        unit: asset.unit,
+        quantity: asset.quantity,
+        name: asset.name,
+        decimals: asset.decimals,
+        metadata: asset.metadata,
+        onchainMetadata: asset.onchainMetadata
+      });
+    });
+
     return {
       address: data.address,
       stake_address: data.stake_address,
       balance: data.balance,
-      assets: data.assets?.map(asset => ({
+      assets: data.assets.map(asset => ({
         unit: asset.unit,
         quantity: asset.quantity,
         decimals: asset.decimals || 0,
@@ -810,10 +834,10 @@ async function fetchWalletData(address) {
         metadata: asset.metadata || {},
         onchainMetadata: asset.onchainMetadata || {},
         is_nft: asset.quantity === '1' || asset.onchainMetadata?.type === 'NFT' || false
-      })) || []
+      }))
     };
   } catch (error) {
-    console.error('Error fetching wallet data:', error);
+    console.error('Error in fetchWalletData:', error);
     throw error;
   }
 }

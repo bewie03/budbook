@@ -405,29 +405,44 @@ function formatAmount(quantity, decimals) {
 app.get('/api/wallet/:address', async (req, res) => {
     try {
         const { address } = req.params;
+        console.log('Fetching wallet data for address:', address);
         
         if (!isValidCardanoAddress(address)) {
+            console.error('Invalid address format:', address);
             return res.status(400).json({ error: 'Invalid Cardano address' });
         }
 
         // 1. Get address data from Blockfrost
+        console.log('Fetching address data from Blockfrost...');
         const addressData = await fetchBlockfrost(`/addresses/${address}`, 'fetch address data');
+        console.log('Address data received:', addressData);
         
         // Process assets and get their details
         const assets = [];
+        console.log('Processing assets:', addressData.amount.length);
+        
         for (const amount of addressData.amount) {
             try {
-                if (amount.unit === 'lovelace') continue;
+                if (amount.unit === 'lovelace') {
+                    console.log('Skipping lovelace entry');
+                    continue;
+                }
 
+                console.log('Processing asset:', amount.unit);
+                
                 // Get asset details from cache or Blockfrost
                 const cacheKey = `asset:${amount.unit}`;
                 let assetInfo = await getFromCache(cacheKey);
                 
                 if (!assetInfo) {
+                    console.log('Cache miss for asset:', amount.unit);
                     // Fetch from Blockfrost if not in cache
                     assetInfo = await fetchBlockfrost(`/assets/${amount.unit}`, 'fetch asset data');
+                    console.log('Asset info from Blockfrost:', assetInfo);
                     // Cache forever since Cardano assets are immutable
                     await setInCache(cacheKey, assetInfo);
+                } else {
+                    console.log('Cache hit for asset:', amount.unit);
                 }
 
                 // Process metadata like the Discord bot
@@ -468,14 +483,23 @@ app.get('/api/wallet/:address', async (req, res) => {
                     unit: amount.unit,
                     quantity: amount.quantity,
                     decimals: assetInfo.decimals || 0,
-                    name: metadata.name || onchainMetadata.name || assetInfo.asset_name,
-                    ticker: metadata.ticker || onchainMetadata.ticker,
-                    description: metadata.description || onchainMetadata.description,
+                    name: metadata.name || onchainMetadata.name || assetInfo.asset_name || amount.unit,
+                    ticker: metadata.ticker || onchainMetadata.ticker || null,
+                    description: metadata.description || onchainMetadata.description || null,
                     image: imageUrl,
                     fingerprint: assetInfo.fingerprint,
                     metadata: metadata,
-                    onchainMetadata: onchainMetadata
+                    onchainMetadata: onchainMetadata,
+                    is_nft: amount.quantity === '1' || onchainMetadata?.type === 'NFT'
                 };
+
+                console.log('Processed asset:', {
+                    unit: asset.unit,
+                    name: asset.name,
+                    quantity: asset.quantity,
+                    decimals: asset.decimals,
+                    is_nft: asset.is_nft
+                });
 
                 assets.push(asset);
             } catch (error) {
@@ -485,19 +509,23 @@ app.get('/api/wallet/:address', async (req, res) => {
                     unit: amount.unit,
                     quantity: amount.quantity,
                     name: amount.unit.slice(-amount.unit.length + 56), // Get asset name from unit
-                    decimals: 0
+                    decimals: 0,
+                    is_nft: amount.quantity === '1'
                 });
             }
         }
 
-        // Return the complete wallet data
-        return res.json({
+        const response = {
             address: addressData.address,
             stake_address: addressData.stake_address,
             type: addressData.type,
             balance: addressData.amount.find(a => a.unit === 'lovelace')?.quantity || '0',
             assets: assets
-        });
+        };
+
+        console.log('Sending response with assets count:', assets.length);
+        return res.json(response);
+
     } catch (error) {
         console.error('Error in /api/wallet/:address:', error);
         res.status(500).json({ error: 'Failed to fetch wallet data' });
