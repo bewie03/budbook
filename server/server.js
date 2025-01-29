@@ -166,11 +166,19 @@ async function getAssetInfo(assetId) {
         console.log(`Fetching asset data for ${assetId}`);
         const assetData = await fetchBlockfrost(`/assets/${assetId}`, 'fetch asset data');
         
+        // Get decimals from metadata or onchain_metadata
+        let decimals = 0;
+        if (assetData.metadata?.decimals !== undefined) {
+            decimals = parseInt(assetData.metadata.decimals);
+        } else if (assetData.onchain_metadata?.decimals !== undefined) {
+            decimals = parseInt(assetData.onchain_metadata.decimals);
+        }
+        
         // Process the asset data
         const processedData = {
             metadata: assetData.metadata || null,
             onchain_metadata: assetData.onchain_metadata || null,
-            decimals: assetData.metadata?.decimals || assetData.onchain_metadata?.decimals || 0,
+            decimals: decimals,
             asset_name: assetData.asset_name ? 
                 Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
                 assetId.substring(56),
@@ -182,6 +190,8 @@ async function getAssetInfo(assetId) {
                         assetId.substring(56))
         };
 
+        console.log(`Asset ${assetId} decimals:`, decimals);
+        
         // Store in cache
         assetCache[assetId] = processedData;
         
