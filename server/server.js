@@ -164,26 +164,32 @@ async function getAssetInfo(assetId) {
 
         // If not in cache, fetch from Blockfrost
         console.log(`Fetching asset data for ${assetId}`);
-        const assetData = await fetchBlockfrost(`/assets/${assetId}`, 'fetch asset metadata');
+        const [assetData, assetMetadata] = await Promise.all([
+            fetchBlockfrost(`/assets/${assetId}`, 'fetch asset data'),
+            fetchBlockfrost(`/assets/${assetId}/metadata`, 'fetch asset metadata')
+        ]);
         
         // Process the asset data
         const processedData = {
-            metadata: assetData.metadata || null,
+            metadata: assetMetadata || null,
             onchain_metadata: assetData.onchain_metadata || null,
-            decimals: assetData.metadata?.decimals || assetData.onchain_metadata?.decimals || 0,
+            decimals: assetMetadata?.decimals || assetData.onchain_metadata?.decimals || 0,
             asset_name: assetData.asset_name ? 
                 Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
                 assetId.substring(56),
             policy_id: assetId.substring(0, 56),
             fingerprint: assetData.fingerprint,
             display_name: assetData.onchain_metadata?.name || 
-                        assetData.metadata?.name || 
+                        assetMetadata?.name || 
                         (assetData.asset_name ? Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
                         assetId.substring(56))
         };
 
         // Store in cache
         assetCache[assetId] = processedData;
+        
+        // Save cache to file
+        await saveAssetCache();
         
         return processedData;
     } catch (error) {
