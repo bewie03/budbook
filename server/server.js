@@ -160,28 +160,24 @@ async function getAssetInfo(assetId) {
         // Get asset name from metadata or onchain_metadata
         let name = null;
         if (isNft) {
-            // For NFTs, prefer onchain_metadata name
-            name = onchainMetadata.name;
-            if (!name) {
-                // Fall back to metadata name
-                name = metadata.name;
-            }
-            if (!name) {
-                // Fall back to asset name from root
-                name = assetData.asset_name;
-            }
+            // For NFTs, try these fields in order
+            name = onchainMetadata.name || 
+                   onchainMetadata.display_name ||
+                   assetData.display_name ||
+                   metadata.name ||
+                   assetData.asset_name;
         } else {
-            // For tokens, prefer metadata name
-            name = metadata.name;
-            if (!name && onchainMetadata) {
-                // Fall back to onchain_metadata name
-                name = onchainMetadata.name;
-            }
-            if (!name) {
-                // Fall back to asset name from root
-                name = assetData.asset_name;
-            }
+            // For tokens, try these fields in order
+            name = metadata.name ||
+                   metadata.display_name ||
+                   assetData.display_name ||
+                   onchainMetadata.name ||
+                   onchainMetadata.display_name ||
+                   assetData.asset_name;
         }
+
+        // Get ticker if available
+        const ticker = metadata.ticker || onchainMetadata.ticker || assetData.ticker;
 
         // If no name found, try to decode from hex
         if (!name && assetId) {
@@ -205,7 +201,16 @@ async function getAssetInfo(assetId) {
         if (!name) {
             name = assetId.slice(-8);
         }
-        
+
+        // Log what we found
+        console.log('Asset data for', assetId, {
+            name,
+            ticker,
+            metadata,
+            onchainMetadata,
+            assetData
+        });
+
         // Get image URL from various sources with priority
         let imageUrl = null;
         const validUrls = [];
@@ -273,7 +278,7 @@ async function getAssetInfo(assetId) {
             unit: assetId,
             name: name || assetId.slice(-8),  // Ensure name is never null
             decimals,
-            ticker: metadata.ticker,
+            ticker,
             image: imageUrl,  // Can be null if no valid URL found
             is_nft: isNft  // Add NFT flag
         };

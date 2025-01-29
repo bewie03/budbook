@@ -301,7 +301,7 @@ function renderWallets() {
 
         <div class="wallet-footer">
           <div class="balance-group">
-            <span class="balance">${formatBalance(wallet.balance)} ₳</span>
+            <span class="balance">${formatBalance(wallet.balance)}</span>
             <button class="refresh-btn" data-index="${index}" title="Refresh">↻</button>
           </div>
           ${wallet.assets && wallet.assets.length > 0 ? `
@@ -390,16 +390,24 @@ function renderAssetsList(walletIndex, type = 'tokens') {
     // Process image URL if present
     const imageUrl = asset.image ? convertIpfsUrl(asset.image) : null;
     
+    // Format display name
+    const displayName = asset.name || asset.unit.slice(-8);
+    const displayAmount = `${asset.readable_amount}${asset.ticker ? ` ${asset.ticker}` : ''}`;
+    
     return `
       <div class="asset-item">
         ${imageUrl ? `
           <div class="asset-image">
-            <img src="${imageUrl}" alt="${asset.name || ''}" onerror="this.style.display='none'">
+            <img src="${imageUrl}" alt="${displayName}" onerror="this.style.display='none'">
           </div>
-        ` : ''}
+        ` : `
+          <div class="asset-image asset-placeholder">
+            <span>${getFirstLetter(displayName)}</span>
+          </div>
+        `}
         <div class="asset-info">
-          <h4>${asset.name || asset.unit.slice(-8)}</h4>
-          <p class="asset-amount">${asset.readable_amount} ${asset.ticker || ''}</p>
+          <h4>${displayName}</h4>
+          <p class="asset-amount">${displayAmount}</p>
           ${!isNFTList ? `<p class="asset-policy">Policy: ${asset.unit.substring(0, 56)}</p>` : ''}
         </div>
       </div>
@@ -555,7 +563,7 @@ function updateUI() {
 }
 
 function formatBalance(balance) {
-  if (!balance) return '0 ₳';
+  if (!balance) return '0';
   return parseFloat(balance).toLocaleString(undefined, {
     minimumFractionDigits: 0,
     maximumFractionDigits: 6
