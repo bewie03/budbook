@@ -7,6 +7,7 @@ const rateLimit = require('express-rate-limit');
 const NodeCache = require('node-cache');
 const fs = require('fs').promises;
 const crypto = require('crypto');
+const { createClient } = require('redis');
 
 dotenv.config();
 
@@ -17,6 +18,7 @@ app.set('trust proxy', 1);
 
 const port = process.env.PORT || 3000;
 const BLOCKFROST_API_KEY = process.env.BLOCKFROST_API_KEY;
+const BLOCKFROST_PROJECT_ID = process.env.BLOCKFROST_PROJECT_ID;
 const BLOCKFROST_BASE_URL = 'https://cardano-mainnet.blockfrost.io/api/v0';
 const PAYMENT_ADDRESS = process.env.PAYMENT_ADDRESS;
 const REQUIRED_PAYMENT = 2000000; // 2 ADA in lovelace
@@ -74,6 +76,67 @@ process.on('SIGINT', async () => {
     await saveAssetCache();
     process.exit();
 });
+
+// Redis client setup
+const redis = createClient({
+  url: process.env.REDIS_URL || 'redis://localhost:6379'
+});
+
+redis.on('error', err => console.error('Redis Client Error', err));
+redis.on('connect', () => console.log('Connected to Redis'));
+
+// Connect to Redis
+(async () => {
+  await redis.connect();
+})();
+
+// Helper functions for Redis
+async function getFromCache(key) {
+  const value = await redis.get(key);
+  return value ? JSON.parse(value) : null;
+}
+
+async function setInCache(key, value, expireSeconds = 300) {
+  await redis.set(key, JSON.stringify(value), {
+    EX: expireSeconds
+  });
+}
+
+async function getAssetMetadata(assetId) {
+  const cacheKey = `asset:${assetId}`;
+  
+  // Try to get from cache first
+  const cachedData = await getFromCache(cacheKey);
+  if (cachedData) {
+    console.log(`Cache hit for asset ${assetId}`);
+    return cachedData;
+  }
+
+  try {
+    // Fetch metadata from Blockfrost
+    const response = await fetch(`${BLOCKFROST_BASE_URL}/assets/${assetId}`, {
+      headers: {
+        'project_id': BLOCKFROST_PROJECT_ID
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log(`Caching metadata for asset ${assetId}`);
+    
+    // Cache the metadata for 24 hours
+    // This is a good duration since asset metadata rarely changes
+    await setInCache(cacheKey, data, 86400);
+    
+    return data;
+  } catch (error) {
+    console.error('Error fetching asset metadata:', error);
+    throw error;
+  }
+}
 
 // Rate limiting
 const limiter = rateLimit({
@@ -211,53 +274,44 @@ async function getAssetInfo(assetId) {
 // Get wallet info
 app.get('/api/wallet/:address', async (req, res) => {
   try {
-    const address = req.params.address;
-    console.log('Fetching wallet data for:', address);
+    const { address } = req.params;
     
-    // Always fetch fresh address data
-    const addressData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
-    console.log('Address data:', addressData);
+    // Fetch basic wallet data
+    const walletData = await fetchBlockfrost(`/addresses/${address}`, 'fetch wallet data');
     
-    // Extract lovelace (ADA) amount from the amounts array
-    const lovelaceAmount = addressData.amount?.find(amt => amt.unit === 'lovelace')?.quantity || '0';
-    
-    // Get other assets and fetch their metadata
-    const assets = addressData.amount?.filter(amt => amt.unit !== 'lovelace') || [];
-    const assetsWithMetadata = await Promise.all(
-      assets.map(async (asset) => {
-        try {
-          // For non-native tokens, get the asset details
-          if (asset.unit.length > 32) {
-            // Check cache first since token metadata never changes
-            const assetData = await getAssetInfo(asset.unit);
-            return {
-              ...asset,
-              ...assetData
-            };
+    // If wallet has assets, fetch their metadata
+    if (walletData.amount && walletData.amount.length > 0) {
+      const assets = [];
+      
+      // Process each asset
+      for (const asset of walletData.amount) {
+        if (asset.unit !== 'lovelace') {
+          try {
+            // Get metadata from cache or Blockfrost
+            const metadata = await getAssetMetadata(asset.unit);
+            assets.push({
+              ...metadata,
+              quantity: asset.quantity
+            });
+          } catch (error) {
+            console.error(`Error fetching metadata for asset ${asset.unit}:`, error);
+            // Include basic asset info even if metadata fetch fails
+            assets.push({
+              unit: asset.unit,
+              quantity: asset.quantity
+            });
           }
-          return asset;
-        } catch (error) {
-          console.error('Error fetching asset metadata:', error);
-          return asset;
         }
-      })
-    );
-    
-    // Format response
-    const response = {
-      address: addressData.address,
-      balance: lovelaceAmount,
-      stake_address: addressData.stake_address,
-      assets: assetsWithMetadata
-    };
-    
-    res.json(response);
+      }
+      
+      // Add processed assets to response
+      walletData.assets = assets;
+    }
+
+    res.json(walletData);
   } catch (error) {
-    console.error('Error fetching wallet data:', error);
-    res.status(error.message.includes('not found') ? 404 : 500).json({ 
-      error: error.message,
-      details: error.response ? await error.response.text() : null
-    });
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Failed to fetch wallet data' });
   }
 });
 
@@ -273,19 +327,11 @@ app.post('/api/request-payment', async (req, res) => {
     const paymentId = crypto.randomBytes(16).toString('hex');
     
     // Store the payment request with timestamp
-    pendingPayments.set(paymentId, {
+    await setInCache(`payment:${paymentId}`, {
       amount: exactAmount,
       timestamp: Date.now(),
       verified: false
-    });
-
-    // Clean up old pending payments (older than 1 hour)
-    const oneHourAgo = Date.now() - (60 * 60 * 1000);
-    for (const [id, payment] of pendingPayments) {
-      if (payment.timestamp < oneHourAgo) {
-        pendingPayments.delete(id);
-      }
-    }
+    }, 3600); // 1 hour expiration
 
     res.json({
       paymentId,
@@ -301,7 +347,7 @@ app.post('/api/request-payment', async (req, res) => {
 app.get('/api/verify-payment/:paymentId', async (req, res) => {
   try {
     const { paymentId } = req.params;
-    const payment = pendingPayments.get(paymentId);
+    const payment = await getFromCache(`payment:${paymentId}`);
 
     if (!payment) {
       return res.status(404).json({ error: 'Payment request not found or expired' });
@@ -342,7 +388,7 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
       // Check if amount matches exactly
       if (amountReceived === parseFloat(payment.amount)) {
         payment.verified = true;
-        pendingPayments.set(paymentId, payment);
+        await setInCache(`payment:${paymentId}`, payment);
         console.log('Payment verified for ID:', paymentId);
         break;
       }
@@ -393,12 +439,16 @@ app.post('/webhook', express.json(), async (req, res) => {
     const amountAda = parseInt(paymentOutput.amount[0].quantity) / 1000000;
     console.log('Payment received:', amountAda, 'ADA');
 
-    // Check pending payments for matching amount
-    for (const [paymentId, payment] of pendingPayments) {
-      if (Math.abs(parseFloat(payment.amount) - amountAda) < 0.000001) { // Account for floating point precision
+    // Get all payment keys from Redis
+    const keys = await redis.keys('payment:*');
+    
+    // Check each payment for matching amount
+    for (const key of keys) {
+      const payment = await getFromCache(key);
+      if (payment && Math.abs(parseFloat(payment.amount) - amountAda) < 0.000001) { // Account for floating point precision
         payment.verified = true;
-        pendingPayments.set(paymentId, payment);
-        console.log('Payment verified for ID:', paymentId);
+        await setInCache(key, payment);
+        console.log('Payment verified for ID:', key.split(':')[1]);
         break;
       }
     }
