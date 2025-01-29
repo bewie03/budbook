@@ -7,6 +7,9 @@
     "storage",
     "notifications"
   ],
+  "host_permissions": [
+    "https://budbook-2410440cbb61.herokuapp.com/*"
+  ],
   "action": {
     "default_popup": "popup.html"
   }
