@@ -155,18 +155,46 @@ async function getAssetInfo(assetId) {
         } else if (assetData.onchain_metadata?.decimals !== undefined) {
             decimals = parseInt(assetData.onchain_metadata.decimals);
         }
+
+        // Process images and metadata
+        let imageUrl = null;
+        let logoUrl = null;
+
+        // Handle NFT image from onchain metadata
+        if (assetData.onchain_metadata?.image) {
+            const image = assetData.onchain_metadata.image;
+            if (image.startsWith('ipfs://')) {
+                imageUrl = `https://ipfs.io/ipfs/${image.slice(7)}`;
+            } else if (!image.startsWith('data:')) {
+                imageUrl = image;
+            }
+        }
+
+        // Handle token logo from metadata
+        if (assetData.metadata?.logo) {
+            const logo = assetData.metadata.logo;
+            if (!logo.startsWith('data:')) {
+                logoUrl = logo;
+            }
+        }
         
         // Process the asset data
         const processedData = {
-            metadata: assetData.metadata || null,
-            onchain_metadata: assetData.onchain_metadata || null,
+            metadata: {
+                decimals: decimals,
+                name: assetData.metadata?.name || assetData.onchain_metadata?.name,
+                ticker: assetData.metadata?.ticker,
+                description: assetData.metadata?.description || assetData.onchain_metadata?.description,
+                image: imageUrl,
+                logo: logoUrl
+            },
             decimals: decimals,
             asset_name: assetData.asset_name ? 
                 Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
                 assetId.substring(56),
             policy_id: assetId.substring(0, 56),
             fingerprint: assetData.fingerprint,
-            ticker: assetData.metadata?.ticker || null,
+            ticker: assetData.metadata?.ticker,
             display_name: assetData.onchain_metadata?.name || 
                         assetData.metadata?.name || 
                         (assetData.asset_name ? Buffer.from(assetData.asset_name, 'hex').toString('utf8') : 
@@ -176,7 +204,9 @@ async function getAssetInfo(assetId) {
         console.log(`Processed asset ${assetId}:`, {
             display_name: processedData.display_name,
             decimals: processedData.decimals,
-            ticker: processedData.ticker
+            ticker: processedData.ticker,
+            has_image: !!imageUrl,
+            has_logo: !!logoUrl
         });
         
         // Store in Redis cache PERMANENTLY - no expiry since assets are immutable
