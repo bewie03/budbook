@@ -3,7 +3,7 @@ const MAX_FREE_SLOTS = 6;
 const SLOTS_PER_PAYMENT = 6;
 const MAX_TOTAL_SLOTS = 100;
 const ADA_PAYMENT_AMOUNT = 2;
-const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
+const API_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 const MAX_STORED_ASSETS = 5; // Store only top 5 assets by value
 const ADA_LOVELACE = 1000000; // 1 ADA = 1,000,000 Lovelace
 
@@ -27,23 +27,19 @@ let currentPaymentId = null;
 // API Functions
 async function fetchWalletData(address) {
   try {
-    console.log('Fetching data for address:', address);
-    const response = await fetch(`${API_BASE_URL}/api/wallet/${address}`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Origin': chrome.runtime.getURL('')
-      }
-    });
-    
+    console.log('Fetching wallet data from server...');
+    const response = await fetch(`${API_URL}/api/wallet/${address}`);
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to fetch wallet data');
     }
-    
     const data = await response.json();
-    console.log('Received wallet data:', data);
+    console.log('Server response:', {
+      address: data.address,
+      balance: data.balance,
+      num_assets: data.assets?.length,
+      sample_asset: data.assets?.[0]
+    });
     return data;
   } catch (error) {
     console.error('Error fetching wallet data:', error);
@@ -53,7 +49,7 @@ async function fetchWalletData(address) {
 
 async function verifyPayment(paymentId) {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`, {
+    const response = await fetch(`${API_URL}/api/verify-payment/${paymentId}`, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
@@ -75,7 +71,7 @@ async function verifyPayment(paymentId) {
 
 async function requestPayment() {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/request-payment`, {
+    const response = await fetch(`${API_URL}/api/request-payment`, {
       method: 'POST',
       headers: {
         'Accept': 'application/json',
@@ -243,9 +239,15 @@ async function addWallet() {
     showSuccess('Adding wallet...');
     console.log('Fetching wallet data for:', address);
     const walletData = await fetchWalletData(address);
+    
+    if (!walletData) {
+      throw new Error('No data received from server');
+    }
+
     console.log('Received wallet data:', {
       hasBalance: !!walletData.balance,
-      numAssets: walletData.assets?.length
+      numAssets: walletData.assets?.length,
+      balance: walletData.balance
     });
     
     // Store wallet data
@@ -256,7 +258,6 @@ async function addWallet() {
       balance: walletData.balance || '0',
       stake_address: walletData.stake_address || '',
       timestamp: Date.now(),
-      // Store all assets
       assets: (walletData.assets || []).map(asset => ({
         unit: asset.unit,
         quantity: asset.quantity,
@@ -269,7 +270,8 @@ async function addWallet() {
 
     console.log('Processed wallet data:', {
       dataSize: JSON.stringify(wallet).length,
-      numAssets: wallet.assets.length
+      numAssets: wallet.assets.length,
+      sample_asset: wallet.assets[0]
     });
 
     // Add to wallets array
@@ -277,14 +279,19 @@ async function addWallet() {
     
     try {
       await saveWallets();
+      console.log('Saved wallet successfully');
       
       // Clear inputs
       addressInput.value = '';
       nameInput.value = '';
       walletTypeSelect.value = 'None';
       
+      // Force re-render
+      renderWalletList();
+      
       showSuccess('Wallet added successfully!');
     } catch (storageError) {
+      console.error('Storage error:', storageError);
       // Remove from array if save failed
       wallets.pop();
       throw new Error(`Failed to save wallet: ${storageError.message}`);
@@ -369,11 +376,15 @@ function convertIpfsUrl(url) {
 }
 
 function renderWallets() {
+  const container = document.getElementById('walletList');
+  if (!container) return;
+
   if (!wallets.length) {
-    return '<p class="no-wallets">No wallets added yet</p>';
+    container.innerHTML = '<p class="no-wallets">No wallets added yet</p>';
+    return;
   }
 
-  return wallets.map((wallet, index) => `
+  container.innerHTML = wallets.map((wallet, index) => `
     <div class="wallet-item">
       <div class="wallet-actions">
         <button class="refresh-btn" data-index="${index}" title="Refresh Balance">↻</button>
@@ -392,7 +403,7 @@ function renderWallets() {
         ''}
       ${wallet.assets && wallet.assets.length > 0 ? `
         <div class="assets">
-          <p>Top Assets:</p>
+          <p>Assets (${wallet.assets.length}):</p>
           <ul>
             ${wallet.assets.map(asset => `
               <li>
@@ -405,14 +416,14 @@ function renderWallets() {
       ` : ''}
     </div>
   `).join('');
+
+  // Re-attach event listeners
+  attachEventListeners();
 }
 
-function renderWalletSelector() {
-  return Object.entries(WALLET_LOGOS).map(([name, logo]) => `
-    <option value="${name}" ${name === 'None' ? 'selected' : ''}>
-      ${name}
-    </option>
-  `).join('');
+function renderWalletList() {
+  renderWallets();
+  updateSlotDisplay();
 }
 
 async function deleteWallet(index) {
@@ -569,6 +580,24 @@ function setupEventListeners() {
     });
   }
 
+  const deleteButtons = document.querySelectorAll('.delete-btn');
+  deleteButtons.forEach(button => {
+    const index = button.dataset.index;
+    if (index !== undefined) {
+      button.addEventListener('click', () => deleteWallet(parseInt(index)));
+    }
+  });
+
+  const refreshButtons = document.querySelectorAll('.refresh-btn');
+  refreshButtons.forEach(button => {
+    const index = button.dataset.index;
+    if (index !== undefined) {
+      button.addEventListener('click', () => refreshWallet(parseInt(index)));
+    }
+  });
+}
+
+function attachEventListeners() {
   const deleteButtons = document.querySelectorAll('.delete-btn');
   deleteButtons.forEach(button => {
     const index = button.dataset.index;
