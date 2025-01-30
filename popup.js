@@ -529,11 +529,20 @@ function setupEventListeners() {
 
   const openFullviewBtn = document.getElementById('openFullview');
   if (openFullviewBtn) {
-    openFullviewBtn.addEventListener('click', () => {
-      chrome.tabs.create({
-        url: chrome.runtime.getURL('fullview.html')
-      });
-      window.close(); // Close the popup
+    openFullviewBtn.addEventListener('click', async () => {
+      // First check if a fullview tab already exists
+      const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
+      
+      if (tabs.length > 0) {
+        // If tab exists, activate it
+        await chrome.tabs.update(tabs[0].id, { active: true });
+      } else {
+        // If no tab exists, create one
+        await chrome.tabs.create({ url: chrome.runtime.getURL('fullview.html') });
+      }
+      
+      // Close the popup
+      window.close();
     });
   }
 
@@ -612,14 +621,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadWallets();
     updateUI();
     setupEventListeners();
-
-    // Handle Open Address Book button
-    document.getElementById('openFullview').addEventListener('click', () => {
-      chrome.tabs.create({
-        url: chrome.runtime.getURL('fullview.html')
-      });
-      window.close();
-    });
   } catch (error) {
     console.error('Error initializing popup:', error);
     showError('Failed to initialize. Please try again.');
