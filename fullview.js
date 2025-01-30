@@ -493,14 +493,61 @@ function createWalletBox(wallet, index) {
   return box;
 }
 
+async function fetchStakingInfo(stakeAddress) {
+  try {
+    console.log('Fetching staking info for stake address:', stakeAddress);
+    
+    const response = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Origin': chrome.runtime.getURL('')
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    console.log('Staking data received:', data);
+    
+    return {
+      ticker: data.ticker || 'Unknown Pool',
+      rewards: data.rewards || 0,
+      stake_address: data.stake_address,
+      active: data.active
+    };
+  } catch (error) {
+    console.error('Error fetching staking info:', error);
+    return {
+      ticker: 'Unknown Pool',
+      rewards: 0,
+      stake_address: stakeAddress,
+      active: false
+    };
+  }
+}
+
 function createStakingPanel(wallet) {
   const panel = document.createElement('div');
   panel.className = 'panel staking-panel';
+  
+  console.log('Creating staking panel with data:', wallet.stakingInfo);
 
   if (!wallet.stakingInfo || !wallet.stakingInfo.active) {
     panel.innerHTML = `
       <div class="staking-info">
         <p class="stake-status">Unstaked</p>
+        <div class="stake-address">
+          <span class="address">${truncateAddress(wallet.stakingInfo?.stake_address || '', 8, 8)}</span>
+          ${wallet.stakingInfo?.stake_address ? `
+            <button class="copy-btn" onclick="copyToClipboard('${wallet.stakingInfo.stake_address}')">
+              <i class="fas fa-copy"></i>
+            </button>
+          ` : ''}
+        </div>
       </div>
     `;
     return panel;
@@ -910,8 +957,7 @@ async function fetchStakingInfo(stakeAddress) {
   try {
     console.log('Fetching staking info for stake address:', stakeAddress);
     
-    // Fetch account info
-    const accountResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}`, {
+    const response = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}`, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
@@ -920,61 +966,73 @@ async function fetchStakingInfo(stakeAddress) {
       }
     });
     
-    if (!accountResponse.ok) {
-      throw new Error(`HTTP error! status: ${accountResponse.status}`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
     }
     
-    const accountData = await accountResponse.json();
-    console.log('Account data:', accountData);
-
-    // Get pool info
-    let poolInfo = null;
-    if (accountData.pool_id) {
-      const poolResponse = await fetch(`${API_BASE_URL}/api/pools/${accountData.pool_id}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'Origin': chrome.runtime.getURL('')
-        }
-      });
-      
-      if (poolResponse.ok) {
-        poolInfo = await poolResponse.json();
-        console.log('Pool info:', poolInfo);
-      }
-    }
+    const data = await response.json();
+    console.log('Staking data received:', data);
     
-    // Fetch rewards info
-    const rewardsResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}/rewards`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Origin': chrome.runtime.getURL('')
-      }
-    });
-    
-    let rewardsData = [];
-    if (rewardsResponse.ok) {
-      rewardsData = await rewardsResponse.json();
-      console.log('Rewards data:', rewardsData);
-    }
-    
-    // Combine the data
-    const stakingInfo = {
-      ...accountData,
-      pool_info: poolInfo,
-      rewards: rewardsData,
-      active: !!accountData.pool_id
+    return {
+      ticker: data.ticker || 'Unknown Pool',
+      rewards: data.rewards || 0,
+      stake_address: data.stake_address,
+      active: data.active
     };
-    
-    console.log('Combined staking info:', stakingInfo);
-    return stakingInfo;
   } catch (error) {
     console.error('Error fetching staking info:', error);
-    return null;
+    return {
+      ticker: 'Unknown Pool',
+      rewards: 0,
+      stake_address: stakeAddress,
+      active: false
+    };
   }
+}
+
+function createStakingPanel(wallet) {
+  const panel = document.createElement('div');
+  panel.className = 'panel staking-panel';
+  
+  console.log('Creating staking panel with data:', wallet.stakingInfo);
+
+  if (!wallet.stakingInfo || !wallet.stakingInfo.active) {
+    panel.innerHTML = `
+      <div class="staking-info">
+        <p class="stake-status">Unstaked</p>
+        <div class="stake-address">
+          <span class="address">${truncateAddress(wallet.stakingInfo?.stake_address || '', 8, 8)}</span>
+          ${wallet.stakingInfo?.stake_address ? `
+            <button class="copy-btn" onclick="copyToClipboard('${wallet.stakingInfo.stake_address}')">
+              <i class="fas fa-copy"></i>
+            </button>
+          ` : ''}
+        </div>
+      </div>
+    `;
+    return panel;
+  }
+
+  panel.innerHTML = `
+    <div class="staking-info">
+      <div class="stake-stats">
+        <div class="stat-item">
+          <span class="pool-ticker">${wallet.stakingInfo.ticker}</span>
+        </div>
+        <div class="stat-item">
+          <span class="rewards-value">${formatBalance(wallet.stakingInfo.rewards)}</span>
+        </div>
+      </div>
+      <div class="stake-address">
+        <span class="address">${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}</span>
+        <button class="copy-btn" onclick="copyToClipboard('${wallet.stakingInfo.stake_address}')">
+          <i class="fas fa-copy"></i>
+        </button>
+      </div>
+    </div>
+  `;
+
+  return panel;
 }
 
 function isValidUrl(url) {
