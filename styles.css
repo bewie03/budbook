@@ -1758,176 +1758,152 @@ body {
 }
 
 .staking-info {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  padding: 20px;
-}
-
-.staking-info.empty-state {
+  padding: 8px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-  color: rgba(255, 255, 255, 0.5);
-  text-align: center;
-}
-
-.staking-info.empty-state i {
-  font-size: 48px;
-  margin-bottom: 16px;
-}
-
-.stake-header {
-  margin-bottom: 24px;
-}
-
-.stake-title {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.stake-title h3 {
-  margin: 0;
-  color: white;
-  font-size: 18px;
+  gap: 6px;
 }
 
 .stake-status {
-  padding: 4px 12px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.stake-status.active {
-  background: rgba(46, 204, 113, 0.15);
-  color: #2ecc71;
-}
-
-.stake-status.inactive {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.pool-info {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 8px;
-  padding: 16px;
-}
-
-.pool-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.pool-header i {
-  color: #3498db;
-  font-size: 20px;
-}
-
-.pool-name {
-  color: white;
-  font-size: 16px;
-  font-weight: 500;
+  font-size: 15px;
+  color: var(--text-color);
+  margin: 0;
+  text-align: center;
 }
 
 .stake-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 16px;
-  margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
 }
 
 .stat-item {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 8px;
-  padding: 16px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.stat-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.1);
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
 }
 
-.stat-icon i {
-  font-size: 18px;
-  color: #3498db;
-}
-
-.stat-content {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.stat-label {
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 12px;
-}
-
-.stat-value {
-  color: white;
+.pool-ticker {
   font-size: 16px;
   font-weight: 500;
+  color: var(--text-color);
 }
 
-.pool-details {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 8px;
-  padding: 16px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 20px;
-}
-
-.pool-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1;
-  min-width: 120px;
-}
-
-.pool-stat .label {
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 12px;
-}
-
-.pool-stat .value {
-  color: white;
-  font-size: 14px;
+.rewards-value {
+  font-size: 15px;
+  color: #00b894;
   font-weight: 500;
 }
 
-.stake-link, .pool-link {
-  display: inline-flex;
+.stake-address {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  color: #3498db;
-  text-decoration: none;
+  justify-content: center;
   font-size: 13px;
-  transition: color 0.2s;
+  color: var(--text-secondary);
+  font-family: monospace;
 }
 
-.stake-link:hover, .pool-link:hover {
-  color: #2980b9;
+.stake-address.clickable {
+  cursor: pointer;
+  background: var(--hover-color);
+  padding: 6px;
+  border-radius: 6px;
+  margin-top: 2px;
+  transition: all 0.2s;
 }
 
-.stake-link i, .pool-link i {
-  font-size: 11px;
+.stake-address.clickable:hover {
+  background: var(--border-color);
+  color: var(--text-color);
+}
+
+.stake-address .copy-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.stake-address .copy-btn:hover {
+  background: var(--border-color);
+  color: var(--text-color);
+}
+
+.wallet-box .wallet-header .wallet-icon {
+  width: 24px;
+  height: 24px;
+  margin-right: 8px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.wallet-box .wallet-header .wallet-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-color);
+  margin: 0;
+  padding: 0;
+}
+
+/* Fix dropdown text color */
+select option {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+}
+
+/* Increase wallet card icon size */
+.wallet-card .wallet-icon {
+  width: 32px;  /* Increased from default */
+  height: 32px; /* Increased from default */
+  margin-right: 10px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.wallet-card .wallet-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Main wallet card header icon */
+.wallet-header img {
+  width: 32px !important;  /* Much bigger */
+  height: 32px !important; /* Much bigger */
+  margin-right: 12px;
+  object-fit: contain;
+}
+
+.wallet-header {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.copied-text {
+  color: #00b894;
+  font-size: 13px;
+  font-weight: 500;
+  animation: fadeIn 0.2s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

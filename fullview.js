@@ -273,13 +273,18 @@ function truncateAddress(address, startLength = 8, endLength = 8) {
   return `${address.slice(0, startLength)}...${address.slice(-endLength)}`;
 }
 
-async function copyToClipboard(text) {
+async function copyToClipboard(text, element) {
   try {
     await navigator.clipboard.writeText(text);
-    showSuccess('Copied to clipboard!');
+    const originalText = element.textContent;
+    element.textContent = 'Copied!';
+    element.style.color = '#00b894';
+    setTimeout(() => {
+      element.textContent = originalText;
+      element.style.color = '';
+    }, 1000);
   } catch (err) {
-    console.error('Failed to copy:', err);
-    showError('Failed to copy to clipboard');
+    console.error('Failed to copy text: ', err);
   }
 }
 
@@ -493,6 +498,58 @@ function createWalletBox(wallet, index) {
   return box;
 }
 
+function createStakingPanel(wallet) {
+  const panel = document.createElement('div');
+  panel.className = 'panel staking-panel';
+
+  if (!wallet.stakingInfo || !wallet.stakingInfo.active) {
+    panel.innerHTML = `
+      <div class="staking-info">
+        <p class="stake-status">Unstaked</p>
+        ${wallet.stakingInfo?.stake_address ? `
+          <div class="stake-address" data-address="${wallet.stakingInfo.stake_address}">
+            ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
+          </div>
+        ` : ''}
+      </div>
+    `;
+
+    if (wallet.stakingInfo?.stake_address) {
+      const addressDiv = panel.querySelector('.stake-address');
+      addressDiv.classList.add('clickable');
+      addressDiv.addEventListener('click', function() {
+        copyToClipboard(this.dataset.address, this);
+      });
+    }
+
+    return panel;
+  }
+
+  panel.innerHTML = `
+    <div class="staking-info">
+      <div class="stake-stats">
+        <div class="stat-item">
+          <span class="pool-ticker">${wallet.stakingInfo.ticker}</span>
+        </div>
+        <div class="stat-item">
+          <span class="rewards-value">${formatBalance(wallet.stakingInfo.rewards)}</span>
+        </div>
+      </div>
+      <div class="stake-address" data-address="${wallet.stakingInfo.stake_address}">
+        ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
+      </div>
+    </div>
+  `;
+
+  const addressDiv = panel.querySelector('.stake-address');
+  addressDiv.classList.add('clickable');
+  addressDiv.addEventListener('click', function() {
+    copyToClipboard(this.dataset.address, this);
+  });
+
+  return panel;
+}
+
 async function fetchStakingInfo(stakeAddress) {
   try {
     console.log('Fetching staking info for stake address:', stakeAddress);
@@ -528,51 +585,6 @@ async function fetchStakingInfo(stakeAddress) {
       active: false
     };
   }
-}
-
-function createStakingPanel(wallet) {
-  const panel = document.createElement('div');
-  panel.className = 'panel staking-panel';
-  
-  console.log('Creating staking panel with data:', wallet.stakingInfo);
-
-  if (!wallet.stakingInfo || !wallet.stakingInfo.active) {
-    panel.innerHTML = `
-      <div class="staking-info">
-        <p class="stake-status">Unstaked</p>
-        <div class="stake-address">
-          <span class="address">${truncateAddress(wallet.stakingInfo?.stake_address || '', 8, 8)}</span>
-          ${wallet.stakingInfo?.stake_address ? `
-            <button class="copy-btn" onclick="copyToClipboard('${wallet.stakingInfo.stake_address}')">
-              <i class="fas fa-copy"></i>
-            </button>
-          ` : ''}
-        </div>
-      </div>
-    `;
-    return panel;
-  }
-
-  panel.innerHTML = `
-    <div class="staking-info">
-      <div class="stake-stats">
-        <div class="stat-item">
-          <span class="pool-ticker">${wallet.stakingInfo.ticker}</span>
-        </div>
-        <div class="stat-item">
-          <span class="rewards-value">${formatBalance(wallet.stakingInfo.rewards)}</span>
-        </div>
-      </div>
-      <div class="stake-address">
-        <span class="address">${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}</span>
-        <button class="copy-btn" onclick="copyToClipboard('${wallet.stakingInfo.stake_address}')">
-          <i class="fas fa-copy"></i>
-        </button>
-      </div>
-    </div>
-  `;
-
-  return panel;
 }
 
 async function refreshWallet(index) {
@@ -1000,16 +1012,22 @@ function createStakingPanel(wallet) {
     panel.innerHTML = `
       <div class="staking-info">
         <p class="stake-status">Unstaked</p>
-        <div class="stake-address">
-          <span class="address">${truncateAddress(wallet.stakingInfo?.stake_address || '', 8, 8)}</span>
-          ${wallet.stakingInfo?.stake_address ? `
-            <button class="copy-btn" onclick="copyToClipboard('${wallet.stakingInfo.stake_address}')">
-              <i class="fas fa-copy"></i>
-            </button>
-          ` : ''}
-        </div>
+        ${wallet.stakingInfo?.stake_address ? `
+          <div class="stake-address" data-address="${wallet.stakingInfo.stake_address}">
+            ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
+          </div>
+        ` : ''}
       </div>
     `;
+
+    if (wallet.stakingInfo?.stake_address) {
+      const addressDiv = panel.querySelector('.stake-address');
+      addressDiv.classList.add('clickable');
+      addressDiv.addEventListener('click', function() {
+        copyToClipboard(this.dataset.address, this);
+      });
+    }
+
     return panel;
   }
 
@@ -1023,14 +1041,17 @@ function createStakingPanel(wallet) {
           <span class="rewards-value">${formatBalance(wallet.stakingInfo.rewards)}</span>
         </div>
       </div>
-      <div class="stake-address">
-        <span class="address">${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}</span>
-        <button class="copy-btn" onclick="copyToClipboard('${wallet.stakingInfo.stake_address}')">
-          <i class="fas fa-copy"></i>
-        </button>
+      <div class="stake-address" data-address="${wallet.stakingInfo.stake_address}">
+        ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
       </div>
     </div>
   `;
+
+  const addressDiv = panel.querySelector('.stake-address');
+  addressDiv.classList.add('clickable');
+  addressDiv.addEventListener('click', function() {
+    copyToClipboard(this.dataset.address, this);
+  });
 
   return panel;
 }
