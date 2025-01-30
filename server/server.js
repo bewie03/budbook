@@ -555,11 +555,9 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
       used: false
     };
     
-    // Cache for 10 minutes
-    await setInCache(`payment:${paymentId}`, payment, 600);
-    
-    // Also store by installation ID for quick lookup
-    await setInCache(`install_payment:${installId}`, paymentId, 600);
+    // Cache for 15 minutes
+    await setInCache(`payment:${paymentId}`, payment, 900);
+    await setInCache(`install_payment:${installId}`, paymentId, 900);
     
     console.log('Payment initiated:', payment);
     
@@ -603,6 +601,63 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
     console.error('Error verifying payment:', error);
     res.status(500).json({ error: 'Failed to verify payment' });
   }
+});
+
+// Payment verification SSE endpoint
+app.get('/api/payment-updates/:paymentId', async (req, res) => {
+  const { paymentId } = req.params;
+  
+  // Check if payment exists first
+  const payment = await getFromCache(`payment:${paymentId}`);
+  if (!payment) {
+    return res.status(404).json({ error: 'Payment not found or expired' });
+  }
+  
+  // Set headers for SSE with CORS
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  });
+
+  // Send initial status
+  res.write(`data: ${JSON.stringify({ verified: payment.verified, used: payment.used })}\n\n`);
+  // Send heartbeat immediately
+  res.write(':\n\n');
+
+  // Create unique client ID
+  const clientId = Date.now();
+
+  // Store the response object for this client
+  if (!global.clients) global.clients = new Map();
+  global.clients.set(clientId, { res, paymentId });
+
+  // Send heartbeat every 30 seconds to keep connection alive
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(':\n\n');
+    } catch (error) {
+      console.error('Error sending heartbeat:', error);
+      clearInterval(heartbeat);
+      global.clients.delete(clientId);
+    }
+  }, 30000);
+
+  // Remove client and clear heartbeat on connection close
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    global.clients.delete(clientId);
+  });
+
+  // Handle errors
+  req.on('error', (error) => {
+    console.error('SSE connection error:', error);
+    clearInterval(heartbeat);
+    global.clients.delete(clientId);
+  });
 });
 
 // Webhook endpoint for payment verification
@@ -649,10 +704,20 @@ app.post('/webhook', express.json(), async (req, res) => {
     // Check each payment for matching amount
     for (const key of keys) {
       const payment = await getFromCache(key);
-      if (payment && Math.abs(parseFloat(payment.amount) - amountAda) < 0.000001) { // Account for floating point precision
+      if (payment && Math.abs(parseFloat(payment.amount) - amountAda) < 0.000001) {
         payment.verified = true;
         await setInCache(key, payment);
-        console.log('Payment verified for ID:', key.split(':')[1]);
+        const paymentId = key.split(':')[1];
+        console.log('Payment verified for ID:', paymentId);
+        
+        // Notify all clients watching this payment
+        if (global.clients) {
+          for (const [clientId, client] of global.clients) {
+            if (client.paymentId === paymentId) {
+              client.res.write(`data: ${JSON.stringify({ verified: true, used: false })}\n\n`);
+            }
+          }
+        }
         break;
       }
     }
@@ -915,12 +980,11 @@ app.get('/api/accounts/:stakeAddress', async (req, res) => {
     let totalRewards = '0';
     try {
       const rewards = await fetchBlockfrost(`/accounts/${stakeAddress}/rewards`, 'fetch rewards');
-      const totalLovelace = rewards.reduce((sum, reward) => {
-        return sum + parseInt(reward.amount || '0');
-      }, 0);
+      // Get the latest reward
+      const latestReward = rewards[0]?.amount || '0';
       // Convert from Lovelace to ADA (1 ADA = 1,000,000 Lovelace)
-      totalRewards = (totalLovelace / 1000000).toString();
-      console.log('Total rewards (ADA):', totalRewards);
+      totalRewards = (parseInt(latestReward) / 1000000).toString();
+      console.log('Latest reward (ADA):', totalRewards);
     } catch (rewardsError) {
       console.error('Error fetching rewards:', rewardsError);
     }

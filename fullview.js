@@ -1,6 +1,6 @@
 // Import the shared constants and functions
-const MAX_FREE_SLOTS = 6;
-const SLOTS_PER_PAYMENT = 6;
+const MAX_FREE_SLOTS = 5;
+const SLOTS_PER_PAYMENT = 5;
 const MAX_TOTAL_SLOTS = 100;
 const ADA_PAYMENT_AMOUNT = 2;
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
@@ -638,32 +638,49 @@ async function fetchStakingInfo(stakeAddress) {
 }
 
 async function refreshWallet(index) {
-  try {
-    const wallet = wallets[index];
-    if (!wallet || !wallet.address) return;
+  const wallets = await loadWallets();
+  const wallet = wallets[index];
+  
+  if (!wallet) {
+    console.error('Wallet not found at index:', index);
+    return;
+  }
 
-    const walletData = await fetchWalletData(wallet.address);
-    
-    // Fetch staking info if stake address is available
-    let stakingInfo = null;
-    if (walletData.stake_address) {
-      stakingInfo = await fetchStakingInfo(walletData.stake_address);
+  try {
+    // Add retry logic with exponential backoff
+    const maxRetries = 3;
+    let retryCount = 0;
+    let lastError;
+
+    while (retryCount < maxRetries) {
+      try {
+        const data = await fetchWalletData(wallet.address);
+        wallets[index] = {
+          ...wallet,
+          ...data,
+          lastRefresh: Date.now()
+        };
+        
+        await saveWallets(wallets);
+        await renderWallets();
+        return;
+      } catch (error) {
+        lastError = error;
+        retryCount++;
+        
+        if (retryCount < maxRetries) {
+          // Wait with exponential backoff (1s, 2s, 4s, etc)
+          const delay = Math.pow(2, retryCount - 1) * 1000;
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
     }
 
-    wallets[index] = {
-      ...wallet,
-      balance: walletData.balance || 0,
-      assets: walletData.assets || [],
-      stake_address: walletData.stake_address,
-      stakingInfo,
-      lastUpdated: Date.now()
-    };
-
-    await chrome.storage.local.set({ wallets });
-    renderWallets();
+    // If we get here, all retries failed
+    throw lastError;
   } catch (error) {
     console.error('Error refreshing wallet:', error);
-    showError('Failed to refresh wallet');
+    showError(error.message || 'Failed to refresh wallet data');
   }
 }
 
@@ -734,8 +751,8 @@ function formatBalance(balance) {
   // Convert null/undefined to 0
   const rawBalance = balance || 0;
   
-  // Balance is already in ADA, just format it
-  const adaValue = parseFloat(rawBalance);
+  // Convert from lovelace to ADA (1 ADA = 1,000,000 lovelace)
+  const adaValue = parseFloat(rawBalance) / 1000000;
   
   // Format with proper decimals
   return `₳${adaValue.toLocaleString(undefined, { 
@@ -793,7 +810,7 @@ async function setupEventListeners() {
   document.querySelectorAll('.asset-tab-btn').forEach(button => {
     button.addEventListener('click', () => {
       const assetsPanel = button.closest('.assets-panel');
-      const tabType = button.dataset.type;
+      const tabType = button.dataset.tab;
       
       // Update active tab button
       assetsPanel.querySelectorAll('.asset-tab-btn').forEach(btn => {
@@ -842,57 +859,36 @@ function renderWalletSelector() {
 // Buy slots button handler
 document.getElementById('buySlots').addEventListener('click', async () => {
   try {
-    // Get current slot count
-    const { availableSlots } = await chrome.storage.local.get('availableSlots');
-    const currentSlots = availableSlots || 3;
-    
-    // Show payment modal
+    // Show confirmation modal
     const modal = document.createElement('div');
     modal.className = 'modal';
     modal.innerHTML = `
-      <div class="modal-content payment-modal">
-        <div class="modal-header">
-          <h2>Buy Additional Wallet Slots</h2>
-          <div class="slot-info">
-            <span>Current slots: ${currentSlots}</span>
-            <span class="price-tag">Price: 2-3 ADA per slot</span>
-          </div>
-        </div>
-
-        <div class="payment-steps">
-          <div class="step">
-            <div class="step-number">1</div>
-            <div class="step-text">Send the required ADA to the verification address</div>
-          </div>
-          <div class="step">
-            <div class="step-number">2</div>
-            <div class="step-text">Wait for transaction confirmation</div>
-          </div>
-          <div class="step">
-            <div class="step-number">3</div>
-            <div class="step-text">Your slots will be automatically added</div>
-          </div>
-        </div>
-
+      <div class="modal-content">
+        <h2>Buy More Slots</h2>
+        <p>Get ${SLOTS_PER_PAYMENT} additional wallet slots for ₳2</p>
         <div class="button-container">
           <button class="modal-button cancel">Cancel</button>
-          <button class="modal-button proceed">Proceed</button>
+          <button class="modal-button proceed">Proceed to Payment</button>
         </div>
       </div>
     `;
     
     document.body.appendChild(modal);
     
-    // Handle modal buttons
-    modal.querySelector('.cancel').addEventListener('click', () => {
-      modal.remove();
-    });
+    // Handle cancel button
+    const cancelButton = modal.querySelector('.cancel');
+    if (cancelButton) {
+      cancelButton.addEventListener('click', () => modal.remove());
+    }
     
-    modal.querySelector('.proceed').addEventListener('click', async () => {
-      modal.remove();
-      await initiatePayment();
-    });
-    
+    // Handle proceed button
+    const proceedButton = modal.querySelector('.proceed');
+    if (proceedButton) {
+      proceedButton.addEventListener('click', async () => {
+        modal.remove();
+        await initiatePayment();
+      });
+    }
   } catch (error) {
     console.error('Error handling buy slots:', error);
     showError('Failed to process slot purchase. Please try again.');
@@ -905,7 +901,7 @@ async function initiatePayment() {
     const installId = chrome.runtime.id;
     
     // Get payment details from server
-    const response = await fetch('https://budbook-2410440cbb61.herokuapp.com/api/initiate-payment', {
+    const response = await fetch(`${API_BASE_URL}/api/initiate-payment`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -925,16 +921,17 @@ async function initiatePayment() {
       <div class="modal-content payment-modal">
         <div class="modal-header">
           <h2>Payment Details</h2>
+          <div class="payment-status">Waiting for payment...</div>
         </div>
         
         <div class="payment-details">
           <div class="amount-display">
-            <span class="label">AMOUNT:</span>
-            <span class="value">${parseFloat(amount).toFixed(6)} ADA</span>
+            <span class="label">Amount:</span>
+            <span class="value">₳${parseFloat(amount).toFixed(2)}</span>
           </div>
           
           <div class="address-container">
-            <span class="label">SEND TO THIS ADDRESS:</span>
+            <span class="label">Send to:</span>
             <div class="address-box">
               <span class="address" title="${address}">${truncateAddress(address, 12, 8)}</span>
               <button class="copy-button" data-address="${address}">
@@ -944,13 +941,18 @@ async function initiatePayment() {
           </div>
           
           <div class="payment-note">
-            Payment will be verified automatically once confirmed on the blockchain. 
-            This payment is linked to your extension installation and can only be used once.
+            <p>Payment will be verified automatically (1-3 minutes)</p>
+          </div>
+          
+          <div class="verification-timer" style="display: none;">
+            <div class="timer-bar"></div>
+            <span class="timer-text">Verifying payment...</span>
           </div>
         </div>
 
         <div class="button-container">
-          <button class="modal-button cancel">Close</button>
+          <button class="modal-button cancel">Cancel</button>
+          <button class="modal-button verify">Check Status</button>
         </div>
       </div>
     `;
@@ -958,56 +960,89 @@ async function initiatePayment() {
     document.body.appendChild(modal);
     
     // Handle copy button
-    modal.querySelector('.copy-button').addEventListener('click', async (e) => {
-      const address = e.currentTarget.dataset.address;
-      if (address) {
-        await copyToClipboard(address);
-        showSuccess('Address copied to clipboard!');
-      }
-    });
+    const copyButton = modal.querySelector('.copy-button');
+    if (copyButton) {
+      copyButton.addEventListener('click', async (e) => {
+        const address = e.currentTarget.dataset.address;
+        if (address) {
+          await copyToClipboard(address);
+          showSuccess('Address copied to clipboard!');
+        }
+      });
+    }
     
     // Handle close button
-    modal.querySelector('.cancel').addEventListener('click', () => {
-      modal.remove();
-    });
-    
-    // Start polling for payment verification
-    let attempts = 0;
-    const maxAttempts = 180; // 3 minutes
-    const pollInterval = setInterval(async () => {
-      try {
-        const verifyResponse = await fetch(`https://budbook-2410440cbb61.herokuapp.com/api/verify-payment/${paymentId}`);
-        if (!verifyResponse.ok) throw new Error('Failed to verify payment');
-        const { verified, used } = await verifyResponse.json();
+    const cancelButton = modal.querySelector('.cancel');
+    if (cancelButton) {
+      cancelButton.addEventListener('click', () => {
+        if (eventSource) {
+          eventSource.close();
+        }
+        modal.remove();
+      });
+    }
+
+    let eventSource;
+    try {
+      eventSource = new EventSource(`${API_BASE_URL}/api/payment-updates/${paymentId}`);
+      
+      eventSource.onmessage = async (event) => {
+        const data = JSON.parse(event.data);
         
-        if (verified) {
-          clearInterval(pollInterval);
-          modal.remove();
+        if (data.verified) {
+          eventSource.close();
           
-          if (used) {
+          if (data.used) {
             showError('This payment has already been used to add slots.');
+            modal.remove();
             return;
           }
           
-          showSuccess('Payment verified! Your slots have been added.');
-          // Refresh available slots
+          // Update status and add slots
+          const statusDiv = modal.querySelector('.payment-status');
+          if (statusDiv) {
+            statusDiv.textContent = 'Payment verified!';
+            statusDiv.className = 'payment-status success';
+          }
+          
           const { availableSlots } = await chrome.storage.local.get('availableSlots');
           await chrome.storage.local.set({ 
-            availableSlots: (availableSlots || 3) + 1 
+            availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
           });
-          // Update UI
-          updateSlotDisplay();
+          
+          showSuccess('Payment verified! Your slots have been added.');
+          
+          // Close modal after 2 seconds
+          setTimeout(() => {
+            modal.remove();
+            updateUI();
+          }, 2000);
         }
-        
-        attempts++;
-        if (attempts >= maxAttempts) {
-          clearInterval(pollInterval);
-          showError('Payment verification timed out. Please contact support if payment was sent.');
+      };
+      
+      eventSource.onerror = (error) => {
+        console.error('SSE Error:', error);
+        // Fall back to polling if SSE fails
+        pollPaymentStatus(paymentId, modal);
+      };
+      
+    } catch (error) {
+      console.error('Failed to setup SSE:', error);
+      // Fall back to polling if SSE setup fails
+      pollPaymentStatus(paymentId, modal);
+    }
+
+    // Add timeout after 3 minutes
+    setTimeout(() => {
+      if (eventSource) {
+        eventSource.close();
+        const statusDiv = modal.querySelector('.payment-status');
+        if (statusDiv) {
+          statusDiv.textContent = 'Verification timeout';
+          statusDiv.className = 'payment-status error';
         }
-      } catch (error) {
-        console.error('Error verifying payment:', error);
       }
-    }, 1000);
+    }, 180000);
     
   } catch (error) {
     console.error('Error initiating payment:', error);
@@ -1098,7 +1133,7 @@ function getFirstLetter(name) {
 function getRandomColor(text) {
   // Generate a consistent color based on text
   let hash = 0;
-  for (let i = 0; i < text.length; i++) {
+  for (let i = 0; i <text.length; i++) {
     hash = text.charCodeAt(i) + ((hash << 5) - hash);
   }
   const hue = hash % 360;
@@ -1204,9 +1239,6 @@ function needsRefresh(wallet) {
 
 async function fetchWalletData(address) {
   try {
-    console.log('Fetching data for address:', address);
-    console.log('Using API URL:', `${API_BASE_URL}/api/wallet/${address}`);
-    
     const response = await fetch(`${API_BASE_URL}/api/wallet/${address}`, {
       method: 'GET',
       headers: {
@@ -1215,49 +1247,60 @@ async function fetchWalletData(address) {
         'Origin': chrome.runtime.getURL('')
       }
     });
-    
-    // Log the full response details
-    console.log('Response details:', {
-      status: response.status,
-      statusText: response.statusText,
-      headers: Object.fromEntries([...response.headers]),
-      ok: response.ok
-    });
-    
+
     if (!response.ok) {
       let errorMessage = `HTTP error! status: ${response.status}`;
-      try {
-        const errorData = await response.json();
-        console.error('Error response body:', errorData);
-        errorMessage = errorData.error || errorMessage;
-      } catch (parseError) {
-        console.error('Could not parse error response:', parseError);
-        try {
-          // Try to get the raw text if JSON parsing fails
-          const textError = await response.text();
-          console.error('Raw error response:', textError);
-        } catch (textError) {
-          console.error('Could not get error text:', textError);
-        }
+      
+      // Handle specific status codes
+      switch (response.status) {
+        case 503:
+          errorMessage = 'Server is temporarily unavailable. Please try again in a few minutes.';
+          break;
+        case 429:
+          errorMessage = 'Too many requests. Please wait a moment before trying again.';
+          break;
+        case 404:
+          errorMessage = 'Wallet not found.';
+          break;
+        default:
+          // Try to get error details from response
+          try {
+            const errorData = await response.clone().json();
+            if (errorData.error) {
+              errorMessage = errorData.error;
+            }
+          } catch (parseError) {
+            // If JSON parsing fails, try to get text
+            try {
+              const errorText = await response.text();
+              if (errorText) {
+                errorMessage = errorText;
+              }
+            } catch (textError) {
+              console.warn('Could not get error details:', textError);
+            }
+          }
       }
+      
       throw new Error(errorMessage);
     }
-    
+
     const data = await response.json();
-    console.log('Wallet data received:', {
-      hasStakingInfo: !!data.stakingInfo,
-      hasPoolInfo: !!(data.stakingInfo?.pool || data.stakingInfo?.pool_info),
-      hasRewards: Array.isArray(data.stakingInfo?.rewards),
-      rewardsLength: data.stakingInfo?.rewards?.length
-    });
     
-    return data;
+    // Add timestamp to track when the data was last fetched
+    return {
+      ...data,
+      lastFetched: Date.now()
+    };
+
   } catch (error) {
-    console.error('Error in fetchWalletData:', {
-      message: error.message,
-      stack: error.stack,
-      address: address
-    });
+    // Log the error for debugging
+    console.error('Error in fetchWalletData:', error);
+    
+    // Show user-friendly error message
+    showError(error.message || 'Failed to load wallet data. Please try again later.');
+    
+    // Re-throw the error for the calling function to handle
     throw error;
   }
 }
@@ -1360,3 +1403,73 @@ document.addEventListener('keydown', function(e) {
     }
   }
 });
+
+// Polling fallback function
+async function pollPaymentStatus(paymentId, modal) {
+  let attempts = 0;
+  const maxAttempts = 36; // 3 minutes total with increasing intervals
+  
+  const checkStatus = async () => {
+    try {
+      attempts++;
+      const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
+      if (!response.ok) throw new Error('Failed to verify payment');
+      const { verified, used } = await response.json();
+      
+      if (verified) {
+        if (used) {
+          showError('This payment has already been used to add slots.');
+          modal.remove();
+          return true;
+        }
+        
+        // Update status and add slots
+        const statusDiv = modal.querySelector('.payment-status');
+        if (statusDiv) {
+          statusDiv.textContent = 'Payment verified!';
+          statusDiv.className = 'payment-status success';
+        }
+        
+        const { availableSlots } = await chrome.storage.local.get('availableSlots');
+        await chrome.storage.local.set({ 
+          availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
+        });
+        
+        showSuccess('Payment verified! Your slots have been added.');
+        
+        // Close modal after 2 seconds
+        setTimeout(() => {
+          modal.remove();
+          updateUI();
+        }, 2000);
+        
+        return true;
+      }
+      
+      if (attempts >= maxAttempts) {
+        const statusDiv = modal.querySelector('.payment-status');
+        if (statusDiv) {
+          statusDiv.textContent = 'Verification timeout';
+          statusDiv.className = 'payment-status error';
+        }
+        return true;
+      }
+      
+      // Calculate next delay with exponential backoff
+      const nextDelay = Math.min(2000 * Math.pow(1.2, attempts), 10000); // Cap at 10 seconds
+      setTimeout(checkStatus, nextDelay);
+      
+      return false;
+    } catch (error) {
+      console.error('Error polling payment status:', error);
+      const statusDiv = modal.querySelector('.payment-status');
+      if (statusDiv) {
+        statusDiv.textContent = 'Error checking payment status';
+        statusDiv.className = 'payment-status error';
+      }
+      return true;
+    }
+  };
+  
+  checkStatus();
+}
