@@ -497,23 +497,56 @@ function createStakingPanel(wallet) {
   const panel = document.createElement('div');
   panel.className = 'panel staking-panel';
 
-  // Show stake address if available
-  const stakeAddress = wallet.stake_address;
+  if (!wallet.stakingInfo) {
+    panel.innerHTML = `
+      <div class="staking-info empty-state">
+        <i class="fas fa-chart-line"></i>
+        ${wallet.stake_address ? `
+          <p>Loading staking information...</p>
+          <div class="stake-address-info">
+            <p class="stake-address">${wallet.stake_address}</p>
+            <a href="https://cardanoscan.io/stakekey/${wallet.stake_address}" target="_blank" rel="noopener noreferrer" class="stake-link">
+              View on Cardanoscan <i class="fas fa-external-link-alt"></i>
+            </a>
+          </div>
+        ` : '<p>No staking information available</p>'}
+      </div>
+    `;
+    return panel;
+  }
+
+  const { active, controlled_amount, rewards_sum, pool_id } = wallet.stakingInfo;
+  const rewardsData = wallet.stakingInfo.rewards || [];
   
   panel.innerHTML = `
-    <div class="staking-info empty-state">
-      ${stakeAddress ? `
-        <div class="stake-address-info">
-          <h3>Stake Address</h3>
-          <p class="stake-address">${stakeAddress}</p>
-          <a href="https://cardanoscan.io/stakekey/${stakeAddress}" target="_blank" rel="noopener noreferrer" class="stake-link">
-            View on Cardanoscan <i class="fas fa-external-link-alt"></i>
+    <div class="staking-info">
+      <div class="stake-header">
+        <h3>Staking Details</h3>
+        <div class="stake-status ${active ? 'active' : 'inactive'}">${active ? 'Active' : 'Inactive'}</div>
+      </div>
+      
+      <div class="stake-stats">
+        <div class="stat-item">
+          <span class="stat-label">Total Stake</span>
+          <span class="stat-value">${formatBalance(controlled_amount || 0)}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Total Rewards</span>
+          <span class="stat-value">${formatBalance(rewards_sum || 0)}</span>
+        </div>
+      </div>
+
+      ${pool_id ? `
+        <div class="pool-info">
+          <div class="info-row">
+            <span class="label">Pool ID:</span>
+            <span class="value pool-id">${truncateAddress(pool_id)}</span>
+          </div>
+          <a href="https://cardanoscan.io/pool/${pool_id}" target="_blank" rel="noopener noreferrer" class="stake-link">
+            View Pool on Cardanoscan <i class="fas fa-external-link-alt"></i>
           </a>
         </div>
-      ` : `
-        <i class="fas fa-chart-line"></i>
-        <p>No staking information available</p>
-      `}
+      ` : ''}
     </div>
   `;
 
@@ -527,13 +560,18 @@ async function refreshWallet(index) {
 
     const walletData = await fetchWalletData(wallet.address);
     
-    // Store the stake address but don't fetch staking info yet
-    // We'll implement this once the backend endpoints are ready
+    // Fetch staking info if stake address is available
+    let stakingInfo = null;
+    if (walletData.stake_address) {
+      stakingInfo = await fetchStakingInfo(walletData.stake_address);
+    }
+
     wallets[index] = {
       ...wallet,
       balance: walletData.balance || 0,
       assets: walletData.assets || [],
       stake_address: walletData.stake_address,
+      stakingInfo,
       lastUpdated: Date.now()
     };
 
@@ -1019,13 +1057,18 @@ async function refreshWallet(index) {
 
     const walletData = await fetchWalletData(wallet.address);
     
-    // Store the stake address but don't fetch staking info yet
-    // We'll implement this once the backend endpoints are ready
+    // Fetch staking info if stake address is available
+    let stakingInfo = null;
+    if (walletData.stake_address) {
+      stakingInfo = await fetchStakingInfo(walletData.stake_address);
+    }
+
     wallets[index] = {
       ...wallet,
       balance: walletData.balance || 0,
       assets: walletData.assets || [],
       stake_address: walletData.stake_address,
+      stakingInfo,
       lastUpdated: Date.now()
     };
 
