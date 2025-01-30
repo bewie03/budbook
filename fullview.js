@@ -878,7 +878,12 @@ document.getElementById('buySlots').addEventListener('click', async () => {
     // Handle cancel button
     const cancelButton = modal.querySelector('.cancel');
     if (cancelButton) {
-      cancelButton.addEventListener('click', () => modal.remove());
+      cancelButton.addEventListener('click', () => {
+        if (eventSource) {
+          eventSource.close();
+        }
+        modal.remove();
+      });
     }
     
     // Handle proceed button
@@ -941,12 +946,8 @@ async function initiatePayment() {
           </div>
           
           <div class="payment-note">
+            <p>Send exactly ₳${parseFloat(amount).toFixed(2)} to verify your payment</p>
             <p>Payment will be verified automatically (1-3 minutes)</p>
-          </div>
-          
-          <div class="verification-timer" style="display: none;">
-            <div class="timer-bar"></div>
-            <span class="timer-text">Verifying payment...</span>
           </div>
         </div>
 
@@ -982,6 +983,59 @@ async function initiatePayment() {
       });
     }
 
+    // Handle verify button
+    const verifyButton = modal.querySelector('.verify');
+    if (verifyButton) {
+      verifyButton.addEventListener('click', async () => {
+        const statusDiv = modal.querySelector('.payment-status');
+        if (statusDiv) {
+          statusDiv.textContent = 'Checking payment status...';
+        }
+
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
+          if (!response.ok) throw new Error('Failed to verify payment');
+          const { verified, used } = await response.json();
+
+          if (verified) {
+            if (used) {
+              showError('This payment has already been used to add slots.');
+              modal.remove();
+              return;
+            }
+
+            if (statusDiv) {
+              statusDiv.textContent = 'Payment verified!';
+              statusDiv.className = 'payment-status success';
+            }
+
+            const { availableSlots } = await chrome.storage.local.get('availableSlots');
+            await chrome.storage.local.set({
+              availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
+            });
+
+            showSuccess('Payment verified! Your slots have been added.');
+
+            setTimeout(() => {
+              modal.remove();
+              updateUI();
+            }, 2000);
+          } else {
+            if (statusDiv) {
+              statusDiv.textContent = 'Payment not detected yet';
+            }
+          }
+        } catch (error) {
+          console.error('Error checking payment status:', error);
+          if (statusDiv) {
+            statusDiv.textContent = 'Error checking payment status';
+            statusDiv.className = 'payment-status error';
+          }
+        }
+      });
+    }
+
+    // Setup SSE for payment updates
     let eventSource;
     try {
       eventSource = new EventSource(`${API_BASE_URL}/api/payment-updates/${paymentId}`);
@@ -1038,12 +1092,11 @@ async function initiatePayment() {
         eventSource.close();
         const statusDiv = modal.querySelector('.payment-status');
         if (statusDiv) {
-          statusDiv.textContent = 'Verification timeout';
+          statusDiv.textContent = 'Verification timeout - click Check Status to retry';
           statusDiv.className = 'payment-status error';
         }
       }
     }, 180000);
-    
   } catch (error) {
     console.error('Error initiating payment:', error);
     showError('Failed to initiate payment. Please try again.');
