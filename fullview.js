@@ -497,73 +497,52 @@ function createStakingPanel(wallet) {
   const panel = document.createElement('div');
   panel.className = 'panel staking-panel';
 
-  if (!wallet.stakingInfo) {
-    panel.innerHTML = `
-      <div class="staking-info empty-state">
+  // Show stake address if available
+  const stakeAddress = wallet.stake_address;
+  
+  panel.innerHTML = `
+    <div class="staking-info empty-state">
+      ${stakeAddress ? `
+        <div class="stake-address-info">
+          <h3>Stake Address</h3>
+          <p class="stake-address">${stakeAddress}</p>
+          <a href="https://cardanoscan.io/stakekey/${stakeAddress}" target="_blank" rel="noopener noreferrer" class="stake-link">
+            View on Cardanoscan <i class="fas fa-external-link-alt"></i>
+          </a>
+        </div>
+      ` : `
         <i class="fas fa-chart-line"></i>
         <p>No staking information available</p>
-      </div>
-    `;
-    return panel;
-  }
-
-  const {
-    poolId,
-    poolName,
-    rewards,
-    delegated,
-    roa,
-    saturation,
-    stake,
-    status
-  } = wallet.stakingInfo;
-
-  panel.innerHTML = `
-    <div class="staking-info">
-      <div class="stake-header">
-        <h3>Staking Details</h3>
-        <div class="stake-status ${status || 'inactive'}">${status || 'Not Delegated'}</div>
-      </div>
-      
-      ${poolId ? `
-        <div class="pool-info">
-          <div class="info-row">
-            <span class="label">Pool Name:</span>
-            <span class="value">${poolName || 'Unknown'}</span>
-          </div>
-          <div class="info-row">
-            <span class="label">Pool ID:</span>
-            <span class="value pool-id">${truncateAddress(poolId)}</span>
-          </div>
-        </div>
-      ` : ''}
-      
-      <div class="stake-stats">
-        <div class="stat-item">
-          <span class="stat-label">Total Stake</span>
-          <span class="stat-value">${formatBalance(stake || 0)}</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Rewards Earned</span>
-          <span class="stat-value">${formatBalance(rewards || 0)}</span>
-        </div>
-        ${roa ? `
-          <div class="stat-item">
-            <span class="stat-label">ROA</span>
-            <span class="stat-value">${(roa * 100).toFixed(2)}%</span>
-          </div>
-        ` : ''}
-        ${saturation ? `
-          <div class="stat-item">
-            <span class="stat-label">Pool Saturation</span>
-            <span class="stat-value">${(saturation * 100).toFixed(2)}%</span>
-          </div>
-        ` : ''}
-      </div>
+      `}
     </div>
   `;
 
   return panel;
+}
+
+async function refreshWallet(index) {
+  try {
+    const wallet = wallets[index];
+    if (!wallet || !wallet.address) return;
+
+    const walletData = await fetchWalletData(wallet.address);
+    
+    // Store the stake address but don't fetch staking info yet
+    // We'll implement this once the backend endpoints are ready
+    wallets[index] = {
+      ...wallet,
+      balance: walletData.balance || 0,
+      assets: walletData.assets || [],
+      stake_address: walletData.stake_address,
+      lastUpdated: Date.now()
+    };
+
+    await chrome.storage.local.set({ wallets });
+    renderWallets();
+  } catch (error) {
+    console.error('Error refreshing wallet:', error);
+    showError('Failed to refresh wallet');
+  }
 }
 
 // Drag and drop functionality
@@ -1038,21 +1017,15 @@ async function refreshWallet(index) {
     const wallet = wallets[index];
     if (!wallet || !wallet.address) return;
 
-    // Fetch basic wallet data
     const walletData = await fetchWalletData(wallet.address);
     
-    // Fetch staking info if stake address is available
-    let stakingInfo = null;
-    if (walletData.stake_address) {
-      stakingInfo = await fetchStakingInfo(walletData.stake_address);
-    }
-
+    // Store the stake address but don't fetch staking info yet
+    // We'll implement this once the backend endpoints are ready
     wallets[index] = {
       ...wallet,
       balance: walletData.balance || 0,
       assets: walletData.assets || [],
       stake_address: walletData.stake_address,
-      stakingInfo,
       lastUpdated: Date.now()
     };
 

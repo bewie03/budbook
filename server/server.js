@@ -740,6 +740,58 @@ app.post('/api/clear-cache', async (req, res) => {
   }
 });
 
+// Get account info
+app.get('/api/accounts/:stake_address', async (req, res) => {
+  try {
+    const { stake_address } = req.params;
+    console.log('Fetching account info for stake address:', stake_address);
+
+    // Check cache first
+    const cacheKey = `account_${stake_address}`;
+    const cachedData = await getFromCache(cacheKey);
+    if (cachedData) {
+      console.log('Returning cached account data');
+      return res.json(cachedData);
+    }
+
+    const accountData = await fetchBlockfrost(`/accounts/${stake_address}`, 'Failed to fetch account data');
+    
+    // Cache the data for 5 minutes
+    await setInCache(cacheKey, accountData, 300);
+    
+    res.json(accountData);
+  } catch (error) {
+    console.error('Error in /api/accounts/:stake_address:', error);
+    res.status(500).json({ error: 'Failed to fetch account data' });
+  }
+});
+
+// Get account rewards
+app.get('/api/accounts/:stake_address/rewards', async (req, res) => {
+  try {
+    const { stake_address } = req.params;
+    console.log('Fetching rewards for stake address:', stake_address);
+
+    // Check cache first
+    const cacheKey = `rewards_${stake_address}`;
+    const cachedData = await getFromCache(cacheKey);
+    if (cachedData) {
+      console.log('Returning cached rewards data');
+      return res.json(cachedData);
+    }
+
+    const rewardsData = await fetchBlockfrost(`/accounts/${stake_address}/rewards`, 'Failed to fetch rewards data');
+    
+    // Cache the data for 5 minutes
+    await setInCache(cacheKey, rewardsData, 300);
+    
+    res.json(rewardsData);
+  } catch (error) {
+    console.error('Error in /api/accounts/:stake_address/rewards:', error);
+    res.status(500).json({ error: 'Failed to fetch rewards data' });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
