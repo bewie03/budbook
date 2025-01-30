@@ -882,6 +882,42 @@ app.get('/api/pools/:poolId', async (req, res) => {
   }
 });
 
+// Get account/staking info
+app.get('/api/accounts/:stakeAddress', async (req, res) => {
+  try {
+    const { stakeAddress } = req.params;
+    console.log('Fetching account info for stake address:', stakeAddress);
+
+    // Get account info from Blockfrost
+    const accountInfo = await fetchBlockfrost(`/accounts/${stakeAddress}`, 'fetch account info');
+    console.log('Account info received:', accountInfo);
+
+    // Get pool ticker if staked
+    let ticker = 'Unstaked';
+    if (accountInfo.pool_id) {
+      const poolInfo = await fetchBlockfrost(`/pools/${accountInfo.pool_id}/metadata`, 'fetch pool metadata');
+      ticker = poolInfo?.ticker || 'Unknown Pool';
+    }
+
+    // Get rewards sum
+    const rewards = await fetchBlockfrost(`/accounts/${stakeAddress}/rewards`, 'fetch rewards');
+    const totalRewards = rewards.reduce((sum, reward) => sum + parseInt(reward.amount || 0), 0);
+
+    // Format response
+    const response = {
+      stake_address: stakeAddress,
+      ticker,
+      rewards: totalRewards,
+      active: !!accountInfo.pool_id
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('Error in /api/accounts/:stakeAddress:', error);
+    res.status(500).json({ error: 'Failed to fetch account info' });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);

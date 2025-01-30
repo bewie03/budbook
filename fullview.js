@@ -493,77 +493,6 @@ function createWalletBox(wallet, index) {
   return box;
 }
 
-async function fetchStakingInfo(stakeAddress) {
-  try {
-    console.log('Fetching staking info for stake address:', stakeAddress);
-    
-    // Fetch account info
-    const accountResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Origin': chrome.runtime.getURL('')
-      }
-    });
-    
-    if (!accountResponse.ok) {
-      throw new Error(`HTTP error! status: ${accountResponse.status}`);
-    }
-    
-    const accountData = await accountResponse.json();
-    console.log('Account data:', accountData);
-
-    // Get pool info
-    let poolInfo = null;
-    if (accountData.pool_id) {
-      const poolResponse = await fetch(`${API_BASE_URL}/api/pools/${accountData.pool_id}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'Origin': chrome.runtime.getURL('')
-        }
-      });
-      
-      if (poolResponse.ok) {
-        poolInfo = await poolResponse.json();
-        console.log('Pool info:', poolInfo);
-      }
-    }
-    
-    // Fetch rewards info
-    const rewardsResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}/rewards`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Origin': chrome.runtime.getURL('')
-      }
-    });
-    
-    let rewardsData = [];
-    if (rewardsResponse.ok) {
-      rewardsData = await rewardsResponse.json();
-      console.log('Rewards data:', rewardsData);
-    }
-    
-    // Combine the data
-    const stakingInfo = {
-      ...accountData,
-      pool_info: poolInfo,
-      rewards: rewardsData,
-      active: !!accountData.pool_id
-    };
-    
-    console.log('Combined staking info:', stakingInfo);
-    return stakingInfo;
-  } catch (error) {
-    console.error('Error fetching staking info:', error);
-    return null;
-  }
-}
-
 function createStakingPanel(wallet) {
   const panel = document.createElement('div');
   panel.className = 'panel staking-panel';
@@ -571,38 +500,27 @@ function createStakingPanel(wallet) {
   if (!wallet.stakingInfo || !wallet.stakingInfo.active) {
     panel.innerHTML = `
       <div class="staking-info">
-        <p>Unstaked</p>
+        <p class="stake-status">Unstaked</p>
       </div>
     `;
     return panel;
   }
 
-  // Get pool info and calculate total rewards
-  const poolInfo = wallet.stakingInfo.pool_info;
-  const poolTicker = poolInfo?.metadata?.ticker || poolInfo?.ticker || 'Unknown Pool';
-  
-  // Calculate total rewards in lovelace
-  const totalRewards = (wallet.stakingInfo.rewards || [])
-    .reduce((sum, reward) => {
-      const amount = typeof reward === 'object' ? reward.amount : reward;
-      return sum + (parseInt(amount) || 0);
-    }, 0);
-  
-  console.log('Staking display data:', {
-    poolTicker,
-    totalRewards,
-    rawRewards: wallet.stakingInfo.rewards
-  });
-  
   panel.innerHTML = `
     <div class="staking-info">
       <div class="stake-stats">
         <div class="stat-item">
-          <span class="pool-ticker">${poolTicker}</span>
+          <span class="pool-ticker">${wallet.stakingInfo.ticker}</span>
         </div>
         <div class="stat-item">
-          <span class="rewards-value">${formatBalance(totalRewards)}</span>
+          <span class="rewards-value">${formatBalance(wallet.stakingInfo.rewards)}</span>
         </div>
+      </div>
+      <div class="stake-address">
+        <span class="address">${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}</span>
+        <button class="copy-btn" onclick="copyToClipboard('${wallet.stakingInfo.stake_address}')">
+          <i class="fas fa-copy"></i>
+        </button>
       </div>
     </div>
   `;
@@ -988,6 +906,197 @@ async function initiatePayment() {
   }
 }
 
+async function fetchStakingInfo(stakeAddress) {
+  try {
+    console.log('Fetching staking info for stake address:', stakeAddress);
+    
+    // Fetch account info
+    const accountResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Origin': chrome.runtime.getURL('')
+      }
+    });
+    
+    if (!accountResponse.ok) {
+      throw new Error(`HTTP error! status: ${accountResponse.status}`);
+    }
+    
+    const accountData = await accountResponse.json();
+    console.log('Account data:', accountData);
+
+    // Get pool info
+    let poolInfo = null;
+    if (accountData.pool_id) {
+      const poolResponse = await fetch(`${API_BASE_URL}/api/pools/${accountData.pool_id}`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Origin': chrome.runtime.getURL('')
+        }
+      });
+      
+      if (poolResponse.ok) {
+        poolInfo = await poolResponse.json();
+        console.log('Pool info:', poolInfo);
+      }
+    }
+    
+    // Fetch rewards info
+    const rewardsResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}/rewards`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Origin': chrome.runtime.getURL('')
+      }
+    });
+    
+    let rewardsData = [];
+    if (rewardsResponse.ok) {
+      rewardsData = await rewardsResponse.json();
+      console.log('Rewards data:', rewardsData);
+    }
+    
+    // Combine the data
+    const stakingInfo = {
+      ...accountData,
+      pool_info: poolInfo,
+      rewards: rewardsData,
+      active: !!accountData.pool_id
+    };
+    
+    console.log('Combined staking info:', stakingInfo);
+    return stakingInfo;
+  } catch (error) {
+    console.error('Error fetching staking info:', error);
+    return null;
+  }
+}
+
+function isValidUrl(url) {
+  try {
+    new URL(url);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function getFirstLetter(name) {
+  return (name || 'A').charAt(0).toUpperCase();
+}
+
+function getRandomColor(text) {
+  // Generate a consistent color based on text
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = text.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = hash % 360;
+  return `hsl(${hue}, 70%, 60%)`; // Consistent but random-looking color
+}
+
+function setupAssetsPanelListeners() {
+  const panel = document.querySelector('.assets-panel');
+  if (!panel) return; // Exit if panel doesn't exist
+
+  const closeBtn = panel.querySelector('.close-assets');
+  const tabs = panel.querySelectorAll('.assets-tab');
+  
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      panel.classList.remove('expanded');
+    });
+  }
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const currentWallet = panel.dataset.walletIndex;
+      const tabType = tab.dataset.tab;
+      
+      // Update active tab button
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+
+      // Render assets for the selected tab
+      renderAssetsList(currentWallet, tabType);
+    });
+  });
+}
+
+async function addWallet() {
+  try {
+    const addressInput = document.getElementById('addressInput');
+    const nameInput = document.getElementById('nameInput');
+    const walletSelect = document.getElementById('walletType');
+    
+    if (!addressInput || !nameInput || !walletSelect) {
+      throw new Error('UI elements not found');
+    }
+
+    const address = addressInput.value.trim();
+    const name = nameInput.value.trim();
+    const selectedWallet = walletSelect.value;
+
+    if (!validateAddress(address)) {
+      showError('Invalid Cardano address');
+      return;
+    }
+
+    if (!name) {
+      showError('Please enter a wallet name');
+      return;
+    }
+
+    if (wallets.length >= unlockedSlots) {
+      showError('Maximum wallet slots reached. Please unlock more slots.');
+      return;
+    }
+
+    if (wallets.some(w => w.address === address)) {
+      showError('This wallet is already in your address book');
+      return;
+    }
+
+    const walletData = await fetchWalletData(address);
+
+    wallets.push({
+      address,
+      name,
+      balance: walletData.balance || 0,
+      stake_address: walletData.stake_address,
+      timestamp: Date.now(),
+      walletType: selectedWallet,
+      logo: WALLET_LOGOS[selectedWallet],
+      assets: walletData.assets || []
+    });
+
+    await saveWallets();
+    updateUI();
+    addressInput.value = '';
+    nameInput.value = '';
+    walletSelect.value = 'None';
+    showSuccess('Wallet added successfully!');
+  } catch (error) {
+    showError(error.message || 'Failed to add wallet');
+  }
+}
+
+function updateUI() {
+  renderWallets();
+  setupEventListeners();
+}
+
+function needsRefresh(wallet) {
+  if (!wallet.lastUpdated) return true;
+  const fiveMinutes = 5 * 60 * 1000;
+  return Date.now() - wallet.lastUpdated > fiveMinutes;
+}
+
 async function fetchWalletData(address) {
   try {
     console.log('Fetching data for address:', address);
@@ -1146,123 +1255,3 @@ document.addEventListener('keydown', function(e) {
     }
   }
 });
-
-function isValidUrl(url) {
-  try {
-    new URL(url);
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
-function getFirstLetter(name) {
-  return (name || 'A').charAt(0).toUpperCase();
-}
-
-function getRandomColor(text) {
-  // Generate a consistent color based on text
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) {
-    hash = text.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const hue = hash % 360;
-  return `hsl(${hue}, 70%, 60%)`; // Consistent but random-looking color
-}
-
-function setupAssetsPanelListeners() {
-  const panel = document.querySelector('.assets-panel');
-  if (!panel) return; // Exit if panel doesn't exist
-
-  const closeBtn = panel.querySelector('.close-assets');
-  const tabs = panel.querySelectorAll('.assets-tab');
-  
-  if (closeBtn) {
-    closeBtn.addEventListener('click', () => {
-      panel.classList.remove('expanded');
-    });
-  }
-
-  tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const currentWallet = panel.dataset.walletIndex;
-      const tabType = tab.dataset.tab;
-      
-      // Update active tab
-      tabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-
-      // Render assets for the selected tab
-      renderAssetsList(currentWallet, tabType);
-    });
-  });
-}
-
-async function addWallet() {
-  try {
-    const addressInput = document.getElementById('addressInput');
-    const nameInput = document.getElementById('nameInput');
-    const walletSelect = document.getElementById('walletType');
-    
-    if (!addressInput || !nameInput || !walletSelect) {
-      throw new Error('UI elements not found');
-    }
-
-    const address = addressInput.value.trim();
-    const name = nameInput.value.trim();
-    const selectedWallet = walletSelect.value;
-
-    if (!validateAddress(address)) {
-      showError('Invalid Cardano address');
-      return;
-    }
-
-    if (!name) {
-      showError('Please enter a wallet name');
-      return;
-    }
-
-    if (wallets.length >= unlockedSlots) {
-      showError('Maximum wallet slots reached. Please unlock more slots.');
-      return;
-    }
-
-    if (wallets.some(w => w.address === address)) {
-      showError('This wallet is already in your address book');
-      return;
-    }
-
-    const walletData = await fetchWalletData(address);
-
-    wallets.push({
-      address,
-      name,
-      balance: walletData.balance || 0,
-      stake_address: walletData.stake_address,
-      timestamp: Date.now(),
-      walletType: selectedWallet,
-      logo: WALLET_LOGOS[selectedWallet],
-      assets: walletData.assets || []
-    });
-
-    await saveWallets();
-    updateUI();
-    addressInput.value = '';
-    nameInput.value = '';
-    walletSelect.value = 'None';
-    showSuccess('Wallet added successfully!');
-  } catch (error) {
-    showError(error.message || 'Failed to add wallet');
-  }
-}
-
-function updateUI() {
-  renderWallets();
-  setupEventListeners();
-}
-
-function needsRefresh(wallet) {
-  if (!wallet.lastUpdated) return true;
-  const fiveMinutes = 5 * 60 * 1000;
-  return Date.now() - wallet.lastUpdated > fiveMinutes;
-}
