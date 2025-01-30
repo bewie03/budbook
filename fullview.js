@@ -493,60 +493,117 @@ function createWalletBox(wallet, index) {
   return box;
 }
 
+async function fetchStakingInfo(stakeAddress) {
+  try {
+    console.log('Fetching staking info for stake address:', stakeAddress);
+    
+    // Fetch account info
+    const accountResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Origin': chrome.runtime.getURL('')
+      }
+    });
+    
+    if (!accountResponse.ok) {
+      throw new Error(`HTTP error! status: ${accountResponse.status}`);
+    }
+    
+    const accountData = await accountResponse.json();
+    console.log('Account data:', accountData);
+
+    // Get pool info
+    let poolInfo = null;
+    if (accountData.pool_id) {
+      const poolResponse = await fetch(`${API_BASE_URL}/api/pools/${accountData.pool_id}`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Origin': chrome.runtime.getURL('')
+        }
+      });
+      
+      if (poolResponse.ok) {
+        poolInfo = await poolResponse.json();
+        console.log('Pool info:', poolInfo);
+      }
+    }
+    
+    // Fetch rewards info
+    const rewardsResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}/rewards`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Origin': chrome.runtime.getURL('')
+      }
+    });
+    
+    let rewardsData = [];
+    if (rewardsResponse.ok) {
+      rewardsData = await rewardsResponse.json();
+      console.log('Rewards data:', rewardsData);
+    }
+    
+    // Combine the data
+    const stakingInfo = {
+      ...accountData,
+      pool_info: poolInfo,
+      rewards: rewardsData,
+      active: !!accountData.pool_id
+    };
+    
+    console.log('Combined staking info:', stakingInfo);
+    return stakingInfo;
+  } catch (error) {
+    console.error('Error fetching staking info:', error);
+    return null;
+  }
+}
+
 function createStakingPanel(wallet) {
   const panel = document.createElement('div');
   panel.className = 'panel staking-panel';
 
-  if (!wallet.stakingInfo) {
+  if (!wallet.stakingInfo || !wallet.stakingInfo.active) {
     panel.innerHTML = `
-      <div class="staking-info empty-state">
-        <i class="fas fa-chart-line"></i>
-        ${wallet.stake_address ? `
-          <p>Loading staking information...</p>
-          <div class="stake-address-info">
-            <p class="stake-address">${wallet.stake_address}</p>
-            <a href="https://cardanoscan.io/stakekey/${wallet.stake_address}" target="_blank" rel="noopener noreferrer" class="stake-link">
-              View on Cardanoscan <i class="fas fa-external-link-alt"></i>
-            </a>
-          </div>
-        ` : '<p>No staking information available</p>'}
+      <div class="staking-info">
+        <p>Unstaked</p>
       </div>
     `;
     return panel;
   }
 
-  const { active, controlled_amount, rewards_sum, pool_id } = wallet.stakingInfo;
-  const rewardsData = wallet.stakingInfo.rewards || [];
+  // Get pool info and calculate total rewards
+  const poolInfo = wallet.stakingInfo.pool_info;
+  const poolTicker = poolInfo?.metadata?.ticker || poolInfo?.ticker || 'Unknown Pool';
+  
+  // Calculate total rewards in lovelace
+  const totalRewards = (wallet.stakingInfo.rewards || [])
+    .reduce((sum, reward) => {
+      const amount = typeof reward === 'object' ? reward.amount : reward;
+      return sum + (parseInt(amount) || 0);
+    }, 0);
+  
+  console.log('Staking display data:', {
+    poolTicker,
+    totalRewards,
+    rawRewards: wallet.stakingInfo.rewards
+  });
   
   panel.innerHTML = `
     <div class="staking-info">
-      <div class="stake-header">
-        <h3>Staking Details</h3>
-        <div class="stake-status ${active ? 'active' : 'inactive'}">${active ? 'Active' : 'Inactive'}</div>
-      </div>
-      
       <div class="stake-stats">
         <div class="stat-item">
-          <span class="stat-label">Total Stake</span>
-          <span class="stat-value">${formatBalance(controlled_amount || 0)}</span>
+          <span class="pool-ticker">${poolTicker}</span>
         </div>
         <div class="stat-item">
-          <span class="stat-label">Total Rewards</span>
-          <span class="stat-value">${formatBalance(rewards_sum || 0)}</span>
+          <span class="rewards-value">${formatBalance(totalRewards)}</span>
         </div>
       </div>
-
-      ${pool_id ? `
-        <div class="pool-info">
-          <div class="info-row">
-            <span class="label">Pool ID:</span>
-            <span class="value pool-id">${truncateAddress(pool_id)}</span>
-          </div>
-          <a href="https://cardanoscan.io/pool/${pool_id}" target="_blank" rel="noopener noreferrer" class="stake-link">
-            View Pool on Cardanoscan <i class="fas fa-external-link-alt"></i>
-          </a>
-        </div>
-      ` : ''}
     </div>
   `;
 
@@ -934,6 +991,8 @@ async function initiatePayment() {
 async function fetchWalletData(address) {
   try {
     console.log('Fetching data for address:', address);
+    console.log('Using API URL:', `${API_BASE_URL}/api/wallet/${address}`);
+    
     const response = await fetch(`${API_BASE_URL}/api/wallet/${address}`, {
       method: 'GET',
       headers: {
@@ -943,88 +1002,49 @@ async function fetchWalletData(address) {
       }
     });
     
+    // Log the full response details
+    console.log('Response details:', {
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries([...response.headers]),
+      ok: response.ok
+    });
+    
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('Server response not OK:', {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorData.error || 'Unknown error'
-      });
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      let errorMessage = `HTTP error! status: ${response.status}`;
+      try {
+        const errorData = await response.json();
+        console.error('Error response body:', errorData);
+        errorMessage = errorData.error || errorMessage;
+      } catch (parseError) {
+        console.error('Could not parse error response:', parseError);
+        try {
+          // Try to get the raw text if JSON parsing fails
+          const textError = await response.text();
+          console.error('Raw error response:', textError);
+        } catch (textError) {
+          console.error('Could not get error text:', textError);
+        }
+      }
+      throw new Error(errorMessage);
     }
     
     const data = await response.json();
-    console.log('Full wallet data response:', JSON.stringify(data, null, 2));
-    
-    // Log specific staking info
-    if (data.stakingInfo) {
-      console.log('Staking info received:', {
-        poolId: data.stakingInfo.poolId,
-        poolName: data.stakingInfo.poolName,
-        rewards: data.stakingInfo.rewards,
-        delegated: data.stakingInfo.delegated,
-        roa: data.stakingInfo.roa,
-        saturation: data.stakingInfo.saturation,
-        stake: data.stakingInfo.stake,
-        status: data.stakingInfo.status
-      });
-    } else {
-      console.log('No staking info in response');
-    }
+    console.log('Wallet data received:', {
+      hasStakingInfo: !!data.stakingInfo,
+      hasPoolInfo: !!(data.stakingInfo?.pool || data.stakingInfo?.pool_info),
+      hasRewards: Array.isArray(data.stakingInfo?.rewards),
+      rewardsLength: data.stakingInfo?.rewards?.length
+    });
     
     return data;
   } catch (error) {
-    console.error('Error fetching wallet data:', error);
+    console.error('Error in fetchWalletData:', {
+      message: error.message,
+      stack: error.stack,
+      address: address
+    });
     throw error;
-  }
-}
-
-async function fetchStakingInfo(stakeAddress) {
-  try {
-    console.log('Fetching staking info for stake address:', stakeAddress);
-    
-    // Fetch account info
-    const accountResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Origin': chrome.runtime.getURL('')
-      }
-    });
-    
-    if (!accountResponse.ok) {
-      throw new Error(`HTTP error! status: ${accountResponse.status}`);
-    }
-    
-    const accountData = await accountResponse.json();
-    
-    // Fetch rewards info
-    const rewardsResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}/rewards`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Origin': chrome.runtime.getURL('')
-      }
-    });
-    
-    let rewardsData = null;
-    if (rewardsResponse.ok) {
-      rewardsData = await rewardsResponse.json();
-    }
-    
-    // Combine the data
-    const stakingInfo = {
-      ...accountData,
-      rewards: rewardsData
-    };
-    
-    console.log('Combined staking info:', stakingInfo);
-    return stakingInfo;
-  } catch (error) {
-    console.error('Error fetching staking info:', error);
-    return null;
   }
 }
 

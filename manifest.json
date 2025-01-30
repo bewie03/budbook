@@ -8,25 +8,27 @@
     "tabs"
   ],
   "host_permissions": [
-    "https://budbook-2410440cbb61.herokuapp.com/*"
+    "https://budbook-2410440cbb61.herokuapp.com/*",
+    "https://cdnjs.cloudflare.com/*",
+    "https://ipfs.io/*"
   ],
   "content_security_policy": {
-    "extension_pages": "default-src 'self'; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+    "extension_pages": "default-src 'self'; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com; img-src 'self' data: https://ipfs.io;"
   },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
-      "16": "icons/icon16.png",
-      "32": "icons/icon32.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
+      "16": "icons/extensionlogo.png",
+      "32": "icons/extensionlogo.png",
+      "48": "icons/extensionlogo.png",
+      "128": "icons/extensionlogo.png"
     }
   },
   "icons": {
-    "16": "icons/icon16.png",
-    "32": "icons/icon32.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+    "16": "icons/extensionlogo.png",
+    "32": "icons/extensionlogo.png",
+    "48": "icons/extensionlogo.png",
+    "128": "icons/extensionlogo.png"
   },
   "web_accessible_resources": [
     {

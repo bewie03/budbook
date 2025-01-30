@@ -756,6 +756,12 @@ app.get('/api/accounts/:stake_address', async (req, res) => {
 
     const accountData = await fetchBlockfrost(`/accounts/${stake_address}`, 'Failed to fetch account data');
     
+    // If account is delegated, fetch pool info
+    if (accountData.pool_id) {
+      const poolData = await fetchBlockfrost(`/pools/${accountData.pool_id}`, 'Failed to fetch pool data');
+      accountData.pool_info = poolData;
+    }
+    
     // Cache the data for 5 minutes
     await setInCache(cacheKey, accountData, 300);
     
@@ -789,6 +795,90 @@ app.get('/api/accounts/:stake_address/rewards', async (req, res) => {
   } catch (error) {
     console.error('Error in /api/accounts/:stake_address/rewards:', error);
     res.status(500).json({ error: 'Failed to fetch rewards data' });
+  }
+});
+
+// Get account/staking info
+app.get('/api/accounts/:stakeAddress', async (req, res) => {
+  try {
+    const { stakeAddress } = req.params;
+    console.log('Fetching account info for stake address:', stakeAddress);
+
+    // Get account info from Blockfrost
+    const accountInfo = await fetchBlockfrost(`/accounts/${stakeAddress}`, 'fetch account info');
+    console.log('Account info received:', accountInfo);
+
+    // Get pool info if the account is delegating
+    let poolInfo = null;
+    if (accountInfo.pool_id) {
+      console.log('Fetching pool info for:', accountInfo.pool_id);
+      poolInfo = await fetchBlockfrost(`/pools/${accountInfo.pool_id}`, 'fetch pool info');
+      console.log('Pool info received:', poolInfo);
+    }
+
+    // Format response
+    const response = {
+      ...accountInfo,
+      pool_info: poolInfo,
+      active: !!accountInfo.pool_id
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('Error in /api/accounts/:stakeAddress:', error);
+    res.status(500).json({ error: 'Failed to fetch account info' });
+  }
+});
+
+// Get account rewards
+app.get('/api/accounts/:stakeAddress/rewards', async (req, res) => {
+  try {
+    const { stakeAddress } = req.params;
+    console.log('Fetching rewards for stake address:', stakeAddress);
+
+    // Get rewards history from Blockfrost
+    const rewards = await fetchBlockfrost(`/accounts/${stakeAddress}/rewards`, 'fetch rewards');
+    console.log('Rewards received:', rewards);
+
+    res.json(rewards);
+  } catch (error) {
+    console.error('Error in /api/accounts/:stakeAddress/rewards:', error);
+    res.status(500).json({ error: 'Failed to fetch rewards' });
+  }
+});
+
+// Get pool information
+app.get('/api/pools/:poolId', async (req, res) => {
+  try {
+    const { poolId } = req.params;
+    console.log('Fetching pool info for:', poolId);
+
+    // Get pool info from Blockfrost
+    const poolInfo = await fetchBlockfrost(`/pools/${poolId}`, 'fetch pool info');
+    console.log('Pool info received:', poolInfo);
+
+    // Get pool metadata if available
+    let metadata = null;
+    if (poolInfo.metadata_url) {
+      try {
+        const metadataResponse = await fetch(poolInfo.metadata_url);
+        metadata = await metadataResponse.json();
+        console.log('Pool metadata received:', metadata);
+      } catch (metadataError) {
+        console.error('Error fetching pool metadata:', metadataError);
+      }
+    }
+
+    // Format response
+    const response = {
+      ...poolInfo,
+      metadata
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('Error in /api/pools/:poolId:', error);
+    res.status(500).json({ error: 'Failed to fetch pool info' });
   }
 });
 
