@@ -107,8 +107,8 @@ html, body {
 .wallet-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 20px;
-  padding: 16px;
+  gap: 24px;
+  padding: 24px;
 }
 
 .wallet-item {
@@ -119,8 +119,21 @@ html, body {
   flex-direction: column;
   position: relative;
   min-height: 320px;
-  max-height: 320px;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: move;
+  user-select: none;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.wallet-item.dragging {
+  opacity: 0.8;
+  transform: scale(1.02);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+}
+
+.wallet-item.drag-over {
+  border: 2px dashed var(--primary-color);
 }
 
 .wallet-header {
@@ -146,9 +159,37 @@ html, body {
 }
 
 .wallet-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+  position: relative;
+}
+
+.wallet-text:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.copy-message {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%) translateX(20px);
+  background: rgba(0, 255, 0, 0.2);
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.2s ease-out;
+  visibility: hidden;
+}
+
+.copy-message.show {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+  visibility: visible;
 }
 
 .wallet-name {
@@ -158,6 +199,9 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 500;
+  color: #fff;
+  margin-bottom: 4px;
 }
 
 .wallet-address {
@@ -166,6 +210,8 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .wallet-content {
@@ -314,17 +360,19 @@ html, body {
 .asset-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  gap: 16px;
+  margin-top: 16px;
 }
 
 .asset-thumbnail {
   aspect-ratio: 1;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.05);
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .asset-thumbnail img {
@@ -392,20 +440,42 @@ html, body {
 }
 
 .refresh-btn {
-  color: #5b86e5;
+  padding: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-color);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s;
 }
 
 .refresh-btn:hover {
-  background: rgba(91, 134, 229, 0.1);
-  transform: rotate(180deg);
+  background: var(--primary-color-hover);
+}
+
+.refresh-btn img {
+  width: 16px;
+  height: 16px;
 }
 
 .delete-btn {
-  color: #ff4757;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+  line-height: 1;
+  transition: color 0.2s;
+  font-family: Arial, sans-serif;
 }
 
 .delete-btn:hover {
-  background: rgba(255, 71, 87, 0.1);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .copy-btn {
@@ -464,8 +534,10 @@ html, body {
 }
 
 .balance-container {
-  margin: 24px 0;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 
 .balance {
@@ -1055,39 +1127,12 @@ body {
 
 #walletList {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 24px;
+  padding: 24px;
   width: 100%;
-  padding: 0;
-  margin: 0;
-}
-
-#walletType {
-  width: 100%;
-  padding: 10px;
-  border-radius: 6px;
-  background: #1e1f23;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #ffffff;
-  font-size: 14px;
-  appearance: none;
-  cursor: pointer;
-  transition: border-color 0.2s;
-}
-
-#walletType:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-#walletType:focus {
-  outline: none;
-  border-color: #3490dc;
-}
-
-#walletType option {
-  background: #1e1f23;
-  color: #ffffff;
-  padding: 8px;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .buy-slots-button {
@@ -1790,4 +1835,146 @@ body {
   width: 16px;
   height: 16px;
   object-fit: contain;
+}
+
+.balance-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.refresh-btn {
+  padding: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-color);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.refresh-btn:hover {
+  background: var(--primary-color-hover);
+}
+
+.refresh-btn img {
+  width: 16px;
+  height: 16px;
+}
+
+.staking-panel {
+  padding: 16px;
+}
+
+.staking-info {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.staking-info.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: center;
+}
+
+.staking-info.empty-state i {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.stake-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.stake-header h3 {
+  margin: 0;
+  color: white;
+  font-size: 18px;
+}
+
+.stake-status {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.stake-status.active {
+  background: rgba(46, 204, 113, 0.2);
+  color: #2ecc71;
+}
+
+.stake-status.inactive {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.pool-info {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.info-row:last-child {
+  margin-bottom: 0;
+}
+
+.info-row .label {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.info-row .value {
+  color: white;
+  font-weight: 500;
+}
+
+.pool-id {
+  font-family: monospace;
+  font-size: 14px;
+}
+
+.stake-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.stat-item {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-label {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  color: white;
+  font-size: 16px;
+  font-weight: 500;
 }

@@ -16,8 +16,16 @@ const WALLET_LOGOS = {
   'Lace': 'icons/lace.png'
 };
 
+const CURRENCIES = {
+  'ADA': { symbol: '₳', rate: 1 },
+  'USD': { symbol: '$', rate: 0 },
+  'EUR': { symbol: '€', rate: 0 },
+  'GBP': { symbol: '£', rate: 0 }
+};
+
 let wallets = [];
 let unlockedSlots = MAX_FREE_SLOTS;
+let selectedCurrency = 'ADA';
 
 // Cache management
 const ASSET_CACHE_KEY = 'walletpup_asset_cache';
@@ -98,7 +106,13 @@ async function loadWallets() {
     })).filter(Boolean);
 
     console.log('Loaded wallets:', wallets);
-    updateUI();
+    renderWallets();
+    // Automatically fetch balances for all wallets
+    wallets.forEach((wallet, index) => {
+      if (wallet && wallet.address) {
+        refreshWallet(index);
+      }
+    });
   } catch (error) {
     console.error('Error loading wallets:', error);
     showError('Failed to load wallets');
@@ -289,196 +303,363 @@ function renderWallets() {
   wallets.forEach((wallet, index) => {
     if (!wallet) return; // Skip if wallet is undefined
     
-    const walletBox = document.createElement('div');
-    walletBox.className = 'wallet-item';
-    
-    // Create wallet header
-    const header = document.createElement('div');
-    header.className = 'wallet-header';
-    header.innerHTML = `
-      <div class="wallet-info">
-        ${wallet.walletType && WALLET_LOGOS[wallet.walletType] ? `
-          <img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-icon">
-        ` : ''}
-        <div class="wallet-text">
-          <div class="wallet-name">${wallet.name || 'Unnamed Wallet'}</div>
-          <div class="wallet-address">${truncateAddress(wallet.address || '')}</div>
-        </div>
-      </div>
-    `;
-    
-    // Create content sections
-    const content = document.createElement('div');
-    content.className = 'wallet-content';
-    
-    // General section
-    const generalSection = document.createElement('div');
-    generalSection.className = 'wallet-section active';
-    generalSection.setAttribute('data-section', 'general');
-    generalSection.innerHTML = `
-      <div class="balance-group">
-        <span class="balance-label">Balance:</span>
-        <span class="balance-value">${formatBalance(wallet.balance || 0)} ₳</span>
-      </div>
-      <div class="action-buttons">
-        <button class="action-button refresh" onclick="refreshWallet(${index})">
-          <i class="fas fa-sync-alt"></i>
-        </button>
-        <button class="action-button copy" onclick="copyToClipboard('${wallet.address || ''}')">
-          <i class="fas fa-copy"></i>
-        </button>
-        <button class="action-button delete" onclick="deleteWallet(${index})">
-          <i class="fas fa-trash"></i>
-        </button>
-      </div>
-    `;
-    
-    // Assets section
-    const assetsSection = document.createElement('div');
-    assetsSection.className = 'wallet-section';
-    assetsSection.setAttribute('data-section', 'assets');
-    const nftCount = wallet.assets.filter(asset => isNFT(asset)).length;
-    const tokenCount = wallet.assets.filter(asset => !isNFT(asset)).length;
-    const assetsHTML = wallet.assets.map(asset => {
-      const imageUrl = getAssetImage(asset);
-      return `
-        <div class="asset-thumbnail ${isNFT(asset) ? 'nft' : 'token'}">
-          ${imageUrl ? `
-            <img src="${imageUrl}" alt="${asset.name || asset.unit}">
-          ` : `
-            <span>${getFirstLetter(asset.name || asset.unit)}</span>
-          `}
-        </div>
-      `;
-    }).join('');
-    assetsSection.innerHTML = `
-        <div class="asset-filters">
-            <button class="asset-filter-btn active" data-filter="all">
-                <span class="asset-count">All (${nftCount + tokenCount})</span>
-            </button>
-            <button class="asset-filter-btn" data-filter="nfts">
-                <span class="asset-count">${nftCount} NFTs</span>
-            </button>
-            <button class="asset-filter-btn" data-filter="tokens">
-                <span class="asset-count">${tokenCount} Tokens</span>
-            </button>
-        </div>
-        <div class="asset-grid">
-            ${assetsHTML}
-        </div>
-    `;
-
-    // Add click handlers for filter buttons
-    const filterBtns = assetsSection.querySelectorAll('.asset-filter-btn');
-    filterBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            // Remove active class from all buttons
-            filterBtns.forEach(b => b.classList.remove('active'));
-            // Add active class to clicked button
-            btn.classList.add('active');
-            
-            const filter = btn.dataset.filter;
-            const assetItems = assetsSection.querySelectorAll('.asset-thumbnail');
-            
-            assetItems.forEach(item => {
-                if (filter === 'all') {
-                    item.style.display = '';
-                } else if (filter === 'nfts') {
-                    item.style.display = item.classList.contains('nft') ? '' : 'none';
-                } else if (filter === 'tokens') {
-                    item.style.display = item.classList.contains('token') ? '' : 'none';
-                }
-            });
-        });
-    });
-
-    // Staking section
-    const stakingSection = document.createElement('div');
-    stakingSection.className = 'wallet-section';
-    stakingSection.setAttribute('data-section', 'staking');
-    stakingSection.innerHTML = `
-      <div class="staking-info">
-        <div class="stake-pool">
-          ${wallet.stakingInfo ? `
-            <div>Pool: ${wallet.stakingInfo.poolName || 'Not delegated'}</div>
-            <div>Rewards: ${formatBalance(wallet.stakingInfo.rewards || 0)} ₳</div>
-          ` : 'Staking information not available'}
-        </div>
-      </div>
-    `;
-    
-    content.appendChild(generalSection);
-    content.appendChild(assetsSection);
-    content.appendChild(stakingSection);
-    
-    // Create bottom navigation
-    const nav = document.createElement('div');
-    nav.className = 'wallet-nav';
-    nav.innerHTML = `
-      <button class="wallet-nav-button active" data-section="general">
-        <i class="fas fa-wallet"></i>
-        General
-      </button>
-      <button class="wallet-nav-button" data-section="assets">
-        <i class="fas fa-coins"></i>
-        Assets
-      </button>
-      <button class="wallet-nav-button" data-section="staking">
-        <i class="fas fa-chart-line"></i>
-        Staking
-      </button>
-    `;
-    
-    walletBox.appendChild(header);
-    walletBox.appendChild(content);
-    walletBox.appendChild(nav);
-    
-    // Add navigation event listeners
-    nav.querySelectorAll('.wallet-nav-button').forEach(button => {
-      button.addEventListener('click', () => {
-        // Update active button
-        nav.querySelectorAll('.wallet-nav-button').forEach(b => b.classList.remove('active'));
-        button.classList.add('active');
-        
-        // Update active section
-        const sectionName = button.getAttribute('data-section');
-        content.querySelectorAll('.wallet-section').forEach(section => {
-          section.classList.toggle('active', section.getAttribute('data-section') === sectionName);
-        });
-      });
-    });
+    const walletBox = createWalletBox(wallet, index);
     
     walletList.appendChild(walletBox);
   });
 }
 
-function setupEventListeners() {
-  // Add copy button listeners
-  document.querySelectorAll('.copy-btn').forEach(button => {
-    button.addEventListener('click', async () => {
-      const textToCopy = button.dataset.copy;
-      if (textToCopy) {
-        await copyToClipboard(textToCopy);
-      }
-    });
+function createWalletBox(wallet, index) {
+  const box = document.createElement('div');
+  box.className = 'wallet-item';
+  box.setAttribute('draggable', 'true');
+  box.setAttribute('data-index', index);
+
+  // Add drag and drop event listeners
+  box.addEventListener('dragstart', handleDragStart);
+  box.addEventListener('dragend', handleDragEnd);
+  box.addEventListener('dragover', handleDragOver);
+  box.addEventListener('dragenter', handleDragEnter);
+  box.addEventListener('dragleave', handleDragLeave);
+  box.addEventListener('drop', handleDrop);
+
+  // Create header
+  const header = document.createElement('div');
+  header.className = 'wallet-header';
+  header.innerHTML = `
+    <div class="wallet-info">
+      ${wallet.walletType && WALLET_LOGOS[wallet.walletType] ? `
+        <img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-icon">
+      ` : ''}
+      <div class="wallet-text" role="button" title="Click to copy address">
+        <div class="wallet-name">${wallet.name || 'Unnamed Wallet'}</div>
+        <div class="wallet-address">${truncateAddress(wallet.address || '')}</div>
+        <span class="copy-message">Copied!</span>
+      </div>
+    </div>
+    <button class="delete-btn" title="Delete">×</button>
+  `;
+
+  // Add click handler for wallet info
+  const walletText = header.querySelector('.wallet-text');
+  const copyMessage = walletText.querySelector('.copy-message');
+  walletText.addEventListener('click', () => {
+      copyToClipboard(wallet.address);
+      copyMessage.classList.add('show');
+      setTimeout(() => {
+          copyMessage.classList.remove('show');
+      }, 1500);
   });
 
+  // Add delete button event listener
+  const deleteBtn = header.querySelector('.delete-btn');
+  deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (confirm('Are you sure you want to delete this wallet?')) {
+          deleteWallet(index);
+      }
+  });
+
+  // Create content sections
+  const contentContainer = document.createElement('div');
+  contentContainer.className = 'wallet-content';
+
+  // General section
+  const generalSection = document.createElement('div');
+  generalSection.className = 'wallet-section active';
+  generalSection.setAttribute('data-section', 'general');
+  generalSection.innerHTML = `
+    <div class="balance-group">
+      <div class="balance-label">Balance:</div>
+      <div class="balance-value">${formatBalance(wallet.balance)}</div>
+    </div>
+    <div class="action-buttons">
+      <button class="action-button refresh-btn" title="Refresh">
+        <i class="fas fa-sync-alt"></i>
+      </button>
+    </div>
+  `;
+
+  // Add event listeners for action buttons
+  const refreshBtn = generalSection.querySelector('.refresh-btn');
+  refreshBtn.addEventListener('click', () => refreshWallet(index));
+
+  // Assets section
+  const assetsSection = document.createElement('div');
+  assetsSection.className = 'wallet-section';
+  assetsSection.setAttribute('data-section', 'assets');
+  const nftCount = wallet.assets.filter(asset => isNFT(asset)).length;
+  const tokenCount = wallet.assets.filter(asset => !isNFT(asset)).length;
+  const assetsHTML = wallet.assets.map(asset => {
+    const imageUrl = getAssetImage(asset);
+    return `
+      <div class="asset-thumbnail ${isNFT(asset) ? 'nft' : 'token'}">
+        ${imageUrl ? `
+          <img src="${imageUrl}" alt="${asset.name || asset.unit}">
+        ` : `
+          <span>${getFirstLetter(asset.name || asset.unit)}</span>
+        `}
+      </div>
+    `;
+  }).join('');
+  assetsSection.innerHTML = `
+      <div class="asset-filters">
+          <button class="asset-filter-btn active" data-filter="all">
+              <span class="asset-count">All (${nftCount + tokenCount})</span>
+          </button>
+          <button class="asset-filter-btn" data-filter="nfts">
+              <span class="asset-count">${nftCount} NFTs</span>
+          </button>
+          <button class="asset-filter-btn" data-filter="tokens">
+              <span class="asset-count">${tokenCount} Tokens</span>
+          </button>
+      </div>
+      <div class="asset-grid">
+          ${assetsHTML}
+      </div>
+  `;
+
+  // Add click handlers for filter buttons
+  const filterBtns = assetsSection.querySelectorAll('.asset-filter-btn');
+  filterBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+          // Remove active class from all buttons
+          filterBtns.forEach(b => b.classList.remove('active'));
+          // Add active class to clicked button
+          btn.classList.add('active');
+          
+          const filter = btn.dataset.filter;
+          const assetItems = assetsSection.querySelectorAll('.asset-thumbnail');
+          
+          assetItems.forEach(item => {
+              if (filter === 'all') {
+                  item.style.display = '';
+              } else if (filter === 'nfts') {
+                  item.style.display = item.classList.contains('nft') ? '' : 'none';
+              } else if (filter === 'tokens') {
+                  item.style.display = item.classList.contains('token') ? '' : 'none';
+              }
+          });
+      });
+  });
+
+  // Staking section
+  const stakingSection = document.createElement('div');
+  stakingSection.className = 'wallet-section';
+  stakingSection.setAttribute('data-section', 'staking');
+  stakingSection.appendChild(createStakingPanel(wallet));
+
+  contentContainer.appendChild(generalSection);
+  contentContainer.appendChild(assetsSection);
+  contentContainer.appendChild(stakingSection);
+  
+  // Create bottom navigation
+  const nav = document.createElement('div');
+  nav.className = 'wallet-nav';
+  nav.innerHTML = `
+    <button class="wallet-nav-button active" data-section="general">
+      <i class="fas fa-wallet"></i>
+      General
+    </button>
+    <button class="wallet-nav-button" data-section="assets">
+      <i class="fas fa-coins"></i>
+      Assets
+    </button>
+    <button class="wallet-nav-button" data-section="staking">
+      <i class="fas fa-chart-line"></i>
+      Staking
+    </button>
+  `;
+  
+  box.appendChild(header);
+  box.appendChild(contentContainer);
+  box.appendChild(nav);
+  
+  // Add navigation event listeners
+  nav.querySelectorAll('.wallet-nav-button').forEach(button => {
+    button.addEventListener('click', () => {
+      // Update active button
+      nav.querySelectorAll('.wallet-nav-button').forEach(b => b.classList.remove('active'));
+      button.classList.add('active');
+      
+      // Update active section
+      const sectionName = button.getAttribute('data-section');
+      contentContainer.querySelectorAll('.wallet-section').forEach(section => {
+        section.classList.toggle('active', section.getAttribute('data-section') === sectionName);
+      });
+    });
+  });
+  
+  return box;
+}
+
+function createStakingPanel(wallet) {
+  const panel = document.createElement('div');
+  panel.className = 'panel staking-panel';
+
+  if (!wallet.stakingInfo) {
+    panel.innerHTML = `
+      <div class="staking-info empty-state">
+        <i class="fas fa-chart-line"></i>
+        <p>No staking information available</p>
+      </div>
+    `;
+    return panel;
+  }
+
+  const {
+    poolId,
+    poolName,
+    rewards,
+    delegated,
+    roa,
+    saturation,
+    stake,
+    status
+  } = wallet.stakingInfo;
+
+  panel.innerHTML = `
+    <div class="staking-info">
+      <div class="stake-header">
+        <h3>Staking Details</h3>
+        <div class="stake-status ${status || 'inactive'}">${status || 'Not Delegated'}</div>
+      </div>
+      
+      ${poolId ? `
+        <div class="pool-info">
+          <div class="info-row">
+            <span class="label">Pool Name:</span>
+            <span class="value">${poolName || 'Unknown'}</span>
+          </div>
+          <div class="info-row">
+            <span class="label">Pool ID:</span>
+            <span class="value pool-id">${truncateAddress(poolId)}</span>
+          </div>
+        </div>
+      ` : ''}
+      
+      <div class="stake-stats">
+        <div class="stat-item">
+          <span class="stat-label">Total Stake</span>
+          <span class="stat-value">${formatBalance(stake || 0)}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Rewards Earned</span>
+          <span class="stat-value">${formatBalance(rewards || 0)}</span>
+        </div>
+        ${roa ? `
+          <div class="stat-item">
+            <span class="stat-label">ROA</span>
+            <span class="stat-value">${(roa * 100).toFixed(2)}%</span>
+          </div>
+        ` : ''}
+        ${saturation ? `
+          <div class="stat-item">
+            <span class="stat-label">Pool Saturation</span>
+            <span class="stat-value">${(saturation * 100).toFixed(2)}%</span>
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
+
+  return panel;
+}
+
+// Drag and drop functionality
+let draggedItem = null;
+
+function handleDragStart(e) {
+    draggedItem = this;
+    this.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', this.getAttribute('data-index'));
+}
+
+function handleDragEnd(e) {
+    this.classList.remove('dragging');
+    document.querySelectorAll('.wallet-item').forEach(item => {
+        item.classList.remove('drag-over');
+    });
+    draggedItem = null;
+}
+
+function handleDragOver(e) {
+    if (e.preventDefault) {
+        e.preventDefault();
+    }
+    e.dataTransfer.dropEffect = 'move';
+    return false;
+}
+
+function handleDragEnter(e) {
+    this.classList.add('drag-over');
+}
+
+function handleDragLeave(e) {
+    this.classList.remove('drag-over');
+}
+
+async function handleDrop(e) {
+    e.stopPropagation();
+    e.preventDefault();
+    
+    if (draggedItem === this) return;
+    
+    this.classList.remove('drag-over');
+    
+    const fromIndex = parseInt(draggedItem.getAttribute('data-index'));
+    const toIndex = parseInt(this.getAttribute('data-index'));
+    
+    if (isNaN(fromIndex) || isNaN(toIndex)) return;
+    
+    // Reorder wallets array
+    const [movedWallet] = wallets.splice(fromIndex, 1);
+    wallets.splice(toIndex, 0, movedWallet);
+    
+    // Update indices
+    wallets.forEach((wallet, index) => {
+        wallet.index = index;
+    });
+    
+    // Save the new order
+    await chrome.storage.local.set({ wallets });
+    
+    // Re-render wallets
+    renderWallets();
+}
+
+function formatBalance(balance) {
+  // Convert null/undefined to 0
+  const rawBalance = balance || 0;
+  
+  // Convert lovelace to ADA (1 ADA = 1,000,000 lovelace)
+  const adaValue = parseFloat(rawBalance) / 1000000;
+  
+  // Format with proper decimals
+  return `₳${adaValue.toLocaleString(undefined, { 
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 6 
+  })}`;
+}
+
+function formatTokenAmount(amount, decimals = 0) {
+  if (!amount) return '0';
+  
+  const value = parseFloat(amount) / Math.pow(10, decimals);
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals
+  });
+}
+
+async function setupEventListeners() {
   // Add refresh button listeners
   document.querySelectorAll('.refresh-btn').forEach(button => {
     button.addEventListener('click', async () => {
       const index = parseInt(button.dataset.index);
       if (!isNaN(index)) {
         await refreshWallet(index);
-      }
-    });
-  });
-
-  // Add delete button listeners
-  document.querySelectorAll('.delete-btn').forEach(button => {
-    button.addEventListener('click', async () => {
-      const index = parseInt(button.dataset.index);
-      if (!isNaN(index)) {
-        await deleteWallet(index);
       }
     });
   });
@@ -524,141 +705,18 @@ function setupEventListeners() {
       });
     });
   });
-}
 
-async function refreshWallet(index) {
-  const walletElement = document.querySelector(`[data-wallet-index="${index}"]`);
-  if (walletElement) {
-    walletElement.classList.add('loading');
-  }
-  
-  try {
-    const wallet = wallets[index];
-    if (!wallet) {
-      throw new Error('Wallet not found');
+  // Load saved currency preference
+  chrome.storage.local.get('selectedCurrency', (data) => {
+    if (data.selectedCurrency) {
+      selectedCurrency = data.selectedCurrency;
+      renderWallets();
     }
+  });
 
-    console.log('Refreshing wallet:', wallet.address);
-    const walletData = await fetchWalletData(wallet.address);
-    
-    // Update wallet data
-    wallets[index] = {
-      ...wallet,
-      balance: walletData.balance,
-      assets: walletData.assets,
-      stake_address: walletData.stake_address,
-      timestamp: Date.now()
-    };
-    
-    // Save changes
-    await saveWallets();
-    
-    // Update UI
-    updateUI();
-    
-    showSuccess('Wallet data updated successfully!');
-    
-    console.log('Wallet refreshed:', {
-      address: wallet.address,
-      balance: wallet.balance,
-      assetCount: wallet.assets.length
-    });
-  } catch (error) {
-    console.error('Error refreshing wallet:', error);
-    showError(error.message || 'Failed to refresh wallet');
-  } finally {
-    if (walletElement) {
-      walletElement.classList.remove('loading');
-    }
-  }
-}
-
-async function addWallet() {
-  try {
-    const addressInput = document.getElementById('addressInput');
-    const nameInput = document.getElementById('nameInput');
-    const walletSelect = document.getElementById('walletType');
-    
-    if (!addressInput || !nameInput || !walletSelect) {
-      throw new Error('UI elements not found');
-    }
-
-    const address = addressInput.value.trim();
-    const name = nameInput.value.trim();
-    const selectedWallet = walletSelect.value;
-
-    if (!validateAddress(address)) {
-      showError('Invalid Cardano address');
-      return;
-    }
-
-    if (!name) {
-      showError('Please enter a wallet name');
-      return;
-    }
-
-    if (wallets.length >= unlockedSlots) {
-      showError('Maximum wallet slots reached. Please unlock more slots.');
-      return;
-    }
-
-    if (wallets.some(w => w.address === address)) {
-      showError('This wallet is already in your address book');
-      return;
-    }
-
-    const walletData = await fetchWalletData(address);
-
-    wallets.push({
-      address,
-      name,
-      balance: walletData.balance || 0,
-      stake_address: walletData.stake_address,
-      timestamp: Date.now(),
-      walletType: selectedWallet,
-      logo: WALLET_LOGOS[selectedWallet],
-      assets: walletData.assets || []
-    });
-
-    await saveWallets();
-    updateUI();
-    addressInput.value = '';
-    nameInput.value = '';
-    walletSelect.value = 'None';
-    showSuccess('Wallet added successfully!');
-  } catch (error) {
-    showError(error.message || 'Failed to add wallet');
-  }
-}
-
-function updateUI() {
-  renderWallets();
-  setupEventListeners();
-}
-
-function formatBalance(balance) {
-  if (!balance) return '0';
-  // Convert lovelace to ADA (1 ADA = 1,000,000 lovelace)
-  const adaValue = parseFloat(balance) / 1000000;
-  return adaValue.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 6
-  }) + ' ₳';
-}
-
-function formatTokenAmount(amount, decimals = 0) {
-  try {
-    if (!amount) return '0';
-    const value = BigInt(amount);
-    if (decimals === 0) return value.toString();
-    const divisor = BigInt(10 ** decimals);
-    const wholePart = (value / divisor).toString();
-    const fractionalPart = (value % divisor).toString().padStart(decimals, '0');
-    return `${wholePart}.${fractionalPart}`;
-  } catch (error) {
-    console.error('Error formatting token amount:', error);
-    return amount;
-  }
+  // Update exchange rates periodically
+  // updateExchangeRates();
+  // setInterval(updateExchangeRates, 5 * 60 * 1000); // Update every 5 minutes
 }
 
 async function deleteWallet(index) {
@@ -857,12 +915,9 @@ async function initiatePayment() {
 }
 
 async function fetchWalletData(address) {
-  console.log('Starting fetchWalletData for address:', address);
   try {
-    const url = `${API_BASE_URL}/api/wallet/${address}`;
-    console.log('Making request to:', url);
-    
-    const response = await fetch(url, {
+    console.log('Fetching data for address:', address);
+    const response = await fetch(`${API_BASE_URL}/api/wallet/${address}`, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
@@ -872,59 +927,71 @@ async function fetchWalletData(address) {
     });
     
     if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
       console.error('Server response not OK:', {
         status: response.status,
-        statusText: response.statusText
+        statusText: response.statusText,
+        error: errorData.error || 'Unknown error'
       });
-      throw new Error(`HTTP error! status: ${response.status}`);
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
     }
-
-    const data = await response.json();
-    console.log('Raw server response:', JSON.stringify(data, null, 2));
     
-    if (!data.assets || !Array.isArray(data.assets)) {
-      console.error('Invalid assets data received:', data.assets);
-      throw new Error('Invalid asset data received from server');
-    }
-
-    // Log each asset for debugging
-    data.assets.forEach((asset, index) => {
-      console.log(`Asset ${index}:`, {
-        unit: asset.unit,
-        quantity: asset.quantity,
-        name: asset.name,
-        decimals: asset.decimals,
-        metadata: asset.metadata,
-        onchainMetadata: asset.onchainMetadata
+    const data = await response.json();
+    console.log('Full wallet data response:', JSON.stringify(data, null, 2));
+    
+    // Log specific staking info
+    if (data.stakingInfo) {
+      console.log('Staking info received:', {
+        poolId: data.stakingInfo.poolId,
+        poolName: data.stakingInfo.poolName,
+        rewards: data.stakingInfo.rewards,
+        delegated: data.stakingInfo.delegated,
+        roa: data.stakingInfo.roa,
+        saturation: data.stakingInfo.saturation,
+        stake: data.stakingInfo.stake,
+        status: data.stakingInfo.status
       });
-    });
-
-    return {
-      address: data.address,
-      stake_address: data.stake_address,
-      balance: data.balance,
-      assets: data.assets.map(asset => ({
-        unit: asset.unit,
-        quantity: asset.quantity,
-        decimals: asset.decimals || 0,
-        ticker: asset.ticker || '',
-        name: asset.name || asset.unit,
-        image: asset.image || '',
-        description: asset.description || '',
-        fingerprint: asset.fingerprint || '',
-        metadata: asset.metadata || {},
-        onchainMetadata: asset.onchainMetadata || {},
-        is_nft: asset.quantity === '1' || asset.onchainMetadata?.type === 'NFT' || false
-      }))
-    };
-  } catch (error) {
-    console.error('Error in fetchWalletData:', error);
-    if (error.message.includes('Failed to fetch')) {
-      showError('Could not connect to server. Please check your internet connection and try again.');
     } else {
-      showError(`Failed to fetch wallet data: ${error.message}`);
+      console.log('No staking info in response');
     }
+    
+    return data;
+  } catch (error) {
+    console.error('Error fetching wallet data:', error);
     throw error;
+  }
+}
+
+async function fetchBalance(address) {
+  try {
+    console.log('Fetching balance for address:', address);
+    const data = await fetchWalletData(address);
+    return data.balance || 0;
+  } catch (error) {
+    console.error('Error fetching balance:', error);
+    return 0;
+  }
+}
+
+async function fetchAssets(address) {
+  try {
+    console.log('Fetching assets for address:', address);
+    const data = await fetchWalletData(address);
+    return data.assets || [];
+  } catch (error) {
+    console.error('Error fetching assets:', error);
+    return [];
+  }
+}
+
+async function fetchStakingInfo(address) {
+  try {
+    console.log('Fetching staking info for address:', address);
+    const data = await fetchWalletData(address);
+    return data.stakingInfo || null;
+  } catch (error) {
+    console.error('Error fetching staking info:', error);
+    return null;
   }
 }
 
@@ -991,7 +1058,7 @@ function getFirstLetter(name) {
 function getRandomColor(text) {
   // Generate a consistent color based on text
   let hash = 0;
-  for (let i = 0; i <text.length; i++) {
+  for (let i = 0; i < text.length; i++) {
     hash = text.charCodeAt(i) + ((hash << 5) - hash);
   }
   const hue = hash % 360;
@@ -1024,4 +1091,100 @@ function setupAssetsPanelListeners() {
       renderAssetsList(currentWallet, tabType);
     });
   });
+}
+
+async function addWallet() {
+  try {
+    const addressInput = document.getElementById('addressInput');
+    const nameInput = document.getElementById('nameInput');
+    const walletSelect = document.getElementById('walletType');
+    
+    if (!addressInput || !nameInput || !walletSelect) {
+      throw new Error('UI elements not found');
+    }
+
+    const address = addressInput.value.trim();
+    const name = nameInput.value.trim();
+    const selectedWallet = walletSelect.value;
+
+    if (!validateAddress(address)) {
+      showError('Invalid Cardano address');
+      return;
+    }
+
+    if (!name) {
+      showError('Please enter a wallet name');
+      return;
+    }
+
+    if (wallets.length >= unlockedSlots) {
+      showError('Maximum wallet slots reached. Please unlock more slots.');
+      return;
+    }
+
+    if (wallets.some(w => w.address === address)) {
+      showError('This wallet is already in your address book');
+      return;
+    }
+
+    const walletData = await fetchWalletData(address);
+
+    wallets.push({
+      address,
+      name,
+      balance: walletData.balance || 0,
+      stake_address: walletData.stake_address,
+      timestamp: Date.now(),
+      walletType: selectedWallet,
+      logo: WALLET_LOGOS[selectedWallet],
+      assets: walletData.assets || []
+    });
+
+    await saveWallets();
+    updateUI();
+    addressInput.value = '';
+    nameInput.value = '';
+    walletSelect.value = 'None';
+    showSuccess('Wallet added successfully!');
+  } catch (error) {
+    showError(error.message || 'Failed to add wallet');
+  }
+}
+
+function updateUI() {
+  renderWallets();
+  setupEventListeners();
+}
+
+async function refreshWallet(index) {
+  try {
+    const wallet = wallets[index];
+    if (!wallet || !wallet.address) return;
+
+    const data = await fetchWalletData(wallet.address);
+    const balance = data.balance || 0;
+    const assets = data.assets || [];
+    const stakingInfo = data.stakingInfo || null;
+
+    wallets[index] = {
+      ...wallet,
+      balance,
+      assets,
+      stakingInfo,
+      lastUpdated: Date.now()
+    };
+
+    await chrome.storage.local.set({ wallets });
+    renderWallets();
+  } catch (error) {
+    console.error('Error refreshing wallet:', error);
+    showError('Failed to refresh wallet');
+  }
+}
+
+// Function to check if wallet needs refresh (older than 5 minutes)
+function needsRefresh(wallet) {
+  if (!wallet.lastUpdated) return true;
+  const fiveMinutes = 5 * 60 * 1000;
+  return Date.now() - wallet.lastUpdated > fiveMinutes;
 }
