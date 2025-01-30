@@ -678,19 +678,26 @@ app.post('/webhook', express.json(), async (req, res) => {
     }
 
     const payload = req.body;
-    console.log('Received webhook payload:', payload);
+    console.log('Received webhook payload:', JSON.stringify(payload, null, 2));
 
     // Extract transaction details
     const tx = payload.payload;
     if (!tx || !tx.outputs) {
-      console.error('Invalid webhook payload');
+      console.error('Invalid webhook payload - missing tx or outputs');
       return res.status(400).json({ error: 'Invalid payload' });
     }
 
     // Find the output to our payment address
-    const paymentOutput = tx.outputs.find(output => output.address === PAYMENT_ADDRESS);
+    const paymentOutput = tx.outputs.find(output => 
+      output.address === PAYMENT_ADDRESS && 
+      output.amount && 
+      output.amount.length > 0 &&
+      output.amount[0].unit === 'lovelace'
+    );
+
     if (!paymentOutput) {
-      console.error('No payment to verification address found');
+      console.error('No valid payment to verification address found');
+      console.log('Available outputs:', JSON.stringify(tx.outputs, null, 2));
       return res.status(400).json({ error: 'No relevant payment found' });
     }
 
@@ -700,25 +707,43 @@ app.post('/webhook', express.json(), async (req, res) => {
 
     // Get all payment keys from Redis
     const keys = await redis.keys('payment:*');
+    console.log('Found payment keys:', keys);
     
     // Check each payment for matching amount
     for (const key of keys) {
       const payment = await getFromCache(key);
-      if (payment && Math.abs(parseFloat(payment.amount) - amountAda) < 0.000001) {
-        payment.verified = true;
-        await setInCache(key, payment);
-        const paymentId = key.split(':')[1];
-        console.log('Payment verified for ID:', paymentId);
-        
-        // Notify all clients watching this payment
-        if (global.clients) {
-          for (const [clientId, client] of global.clients) {
-            if (client.paymentId === paymentId) {
-              client.res.write(`data: ${JSON.stringify({ verified: true, used: false })}\n\n`);
+      console.log('Checking payment:', key, payment);
+      
+      if (payment) {
+        const requestedAmount = parseFloat(payment.amount);
+        console.log('Comparing amounts:', {
+          received: amountAda,
+          requested: requestedAmount,
+          difference: amountAda - requestedAmount
+        });
+
+        // Verify if received amount is at least the requested amount
+        if (amountAda >= requestedAmount) {
+          payment.verified = true;
+          await setInCache(key, payment);
+          const paymentId = key.split(':')[1];
+          console.log('Payment verified for ID:', paymentId);
+          
+          // Notify all clients watching this payment
+          if (global.clients) {
+            for (const [clientId, client] of global.clients) {
+              if (client.paymentId === paymentId) {
+                try {
+                  client.res.write(`data: ${JSON.stringify({ verified: true, used: false })}\n\n`);
+                  console.log('Notified client:', clientId);
+                } catch (error) {
+                  console.error('Error notifying client:', error);
+                }
+              }
             }
           }
+          break;
         }
-        break;
       }
     }
 
@@ -726,6 +751,74 @@ app.post('/webhook', express.json(), async (req, res) => {
   } catch (error) {
     console.error('Error processing webhook:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Manual payment verification endpoint
+app.get('/api/verify-payment/:paymentId', async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    console.log('Manual verification request for payment:', paymentId);
+    
+    const payment = await getFromCache(`payment:${paymentId}`);
+    console.log('Payment details:', payment);
+
+    if (!payment) {
+      console.log('Payment not found or expired');
+      return res.status(404).json({ error: 'Payment request not found or expired' });
+    }
+
+    if (payment.verified) {
+      console.log('Payment already verified');
+      if (payment.used) {
+        return res.json({ verified: true, used: true });
+      }
+      // Mark payment as used
+      payment.used = true;
+      await setInCache(`payment:${paymentId}`, payment);
+      // Remove the installation ID payment reference
+      await redis.del(`install_payment:${payment.installId}`);
+      return res.json({ verified: true, used: false });
+    }
+
+    // If not verified, check blockchain
+    try {
+      const txs = await fetchBlockfrost(`/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`);
+      console.log('Recent transactions:', JSON.stringify(txs, null, 2));
+
+      // Check last 10 transactions
+      for (const tx of txs.slice(0, 10)) {
+        const txDetails = await fetchBlockfrost(`/txs/${tx.tx_hash}/utxos`);
+        console.log('Transaction details:', JSON.stringify(txDetails, null, 2));
+
+        // Find output to our address
+        const output = txDetails.outputs.find(o => 
+          o.address === PAYMENT_ADDRESS && 
+          o.amount.some(a => a.unit === 'lovelace')
+        );
+
+        if (output) {
+          const amountAda = parseInt(output.amount.find(a => a.unit === 'lovelace').quantity) / 1000000;
+          console.log('Found payment:', amountAda, 'ADA');
+
+          if (amountAda >= parseFloat(payment.amount)) {
+            payment.verified = true;
+            await setInCache(`payment:${paymentId}`, payment);
+            console.log('Payment verified through blockchain check');
+            return res.json({ verified: true, used: false });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking blockchain:', error);
+    }
+
+    // Not verified
+    return res.json({ verified: false });
+
+  } catch (error) {
+    console.error('Error verifying payment:', error);
+    res.status(500).json({ error: 'Failed to verify payment' });
   }
 });
 
