@@ -822,6 +822,46 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
   }
 });
 
+// Debug endpoint to check recent transactions
+app.get('/api/debug/recent-transactions', async (req, res) => {
+  try {
+    console.log('Checking recent transactions...');
+    const txs = await fetchBlockfrost(`/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`);
+    console.log('Recent transactions:', JSON.stringify(txs, null, 2));
+
+    const transactions = [];
+    
+    // Check last 10 transactions
+    for (const tx of txs.slice(0, 10)) {
+      const txDetails = await fetchBlockfrost(`/txs/${tx.tx_hash}/utxos`);
+      console.log('Transaction details:', JSON.stringify(txDetails, null, 2));
+
+      // Find output to our address
+      const output = txDetails.outputs.find(o => 
+        o.address === PAYMENT_ADDRESS && 
+        o.amount.some(a => a.unit === 'lovelace')
+      );
+
+      if (output) {
+        const amountAda = parseInt(output.amount.find(a => a.unit === 'lovelace').quantity) / 1000000;
+        transactions.push({
+          tx_hash: tx.tx_hash,
+          amount: amountAda,
+          block_time: tx.block_time
+        });
+      }
+    }
+
+    res.json({
+      address: PAYMENT_ADDRESS,
+      transactions
+    });
+  } catch (error) {
+    console.error('Error checking transactions:', error);
+    res.status(500).json({ error: 'Failed to check transactions' });
+  }
+});
+
 // Add endpoint to view cache
 app.get('/api/cache', async (req, res) => {
   try {
