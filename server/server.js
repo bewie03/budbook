@@ -896,24 +896,28 @@ app.get('/api/accounts/:stakeAddress', async (req, res) => {
     let ticker = 'Unstaked';
     if (accountInfo.pool_id) {
       try {
-        const poolInfo = await fetchBlockfrost(`/pools/${accountInfo.pool_id}/metadata`, 'fetch pool metadata');
-        ticker = poolInfo?.ticker || 'Unknown Pool';
-        console.log('Pool ticker:', ticker);
+        const poolInfo = await fetchBlockfrost(`/pools/${accountInfo.pool_id}`, 'fetch pool info');
+        console.log('Pool info received:', poolInfo);
+        
+        // Get pool metadata
+        if (poolInfo.metadata_hash) {
+          const poolMetadata = await fetchBlockfrost(`/pools/${accountInfo.pool_id}/metadata`, 'fetch pool metadata');
+          ticker = poolMetadata?.ticker || 'Unknown Pool';
+          console.log('Pool metadata received:', poolMetadata);
+        }
       } catch (poolError) {
         console.error('Error fetching pool info:', poolError);
         ticker = 'Unknown Pool';
       }
     }
 
-    // Get rewards sum
-    let totalRewards = 0;
+    // Get total rewards
+    let totalRewards = '0';
     try {
       const rewards = await fetchBlockfrost(`/accounts/${stakeAddress}/rewards`, 'fetch rewards');
       totalRewards = rewards.reduce((sum, reward) => {
-        const amount = parseInt(reward.amount || '0');
-        console.log('Processing reward:', amount);
-        return sum + amount;
-      }, 0);
+        return sum + parseInt(reward.amount || '0');
+      }, 0).toString();
       console.log('Total rewards:', totalRewards);
     } catch (rewardsError) {
       console.error('Error fetching rewards:', rewardsError);
@@ -923,7 +927,7 @@ app.get('/api/accounts/:stakeAddress', async (req, res) => {
     const response = {
       stake_address: stakeAddress,
       ticker,
-      rewards: totalRewards.toString(),
+      rewards: totalRewards,
       active: !!accountInfo.pool_id
     };
 
