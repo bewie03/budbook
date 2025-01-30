@@ -911,14 +911,16 @@ app.get('/api/accounts/:stakeAddress', async (req, res) => {
       }
     }
 
-    // Get total rewards
+    // Get total rewards (convert from Lovelace to ADA)
     let totalRewards = '0';
     try {
       const rewards = await fetchBlockfrost(`/accounts/${stakeAddress}/rewards`, 'fetch rewards');
-      totalRewards = rewards.reduce((sum, reward) => {
+      const totalLovelace = rewards.reduce((sum, reward) => {
         return sum + parseInt(reward.amount || '0');
-      }, 0).toString();
-      console.log('Total rewards:', totalRewards);
+      }, 0);
+      // Convert from Lovelace to ADA (1 ADA = 1,000,000 Lovelace)
+      totalRewards = (totalLovelace / 1000000).toString();
+      console.log('Total rewards (ADA):', totalRewards);
     } catch (rewardsError) {
       console.error('Error fetching rewards:', rewardsError);
     }

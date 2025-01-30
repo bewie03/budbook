@@ -734,12 +734,12 @@ function formatBalance(balance) {
   // Convert null/undefined to 0
   const rawBalance = balance || 0;
   
-  // Convert lovelace to ADA (1 ADA = 1,000,000 lovelace)
-  const adaValue = parseFloat(rawBalance) / 1000000;
+  // Balance is already in ADA, just format it
+  const adaValue = parseFloat(rawBalance);
   
   // Format with proper decimals
   return `₳${adaValue.toLocaleString(undefined, { 
-    minimumFractionDigits: 0,
+    minimumFractionDigits: 2,
     maximumFractionDigits: 6 
   })}`;
 }
