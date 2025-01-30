@@ -962,6 +962,55 @@ async function fetchWalletData(address) {
   }
 }
 
+async function fetchStakingInfo(stakeAddress) {
+  try {
+    console.log('Fetching staking info for stake address:', stakeAddress);
+    
+    // Fetch account info
+    const accountResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Origin': chrome.runtime.getURL('')
+      }
+    });
+    
+    if (!accountResponse.ok) {
+      throw new Error(`HTTP error! status: ${accountResponse.status}`);
+    }
+    
+    const accountData = await accountResponse.json();
+    
+    // Fetch rewards info
+    const rewardsResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}/rewards`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Origin': chrome.runtime.getURL('')
+      }
+    });
+    
+    let rewardsData = null;
+    if (rewardsResponse.ok) {
+      rewardsData = await rewardsResponse.json();
+    }
+    
+    // Combine the data
+    const stakingInfo = {
+      ...accountData,
+      rewards: rewardsData
+    };
+    
+    console.log('Combined staking info:', stakingInfo);
+    return stakingInfo;
+  } catch (error) {
+    console.error('Error fetching staking info:', error);
+    return null;
+  }
+}
+
 async function fetchBalance(address) {
   try {
     console.log('Fetching balance for address:', address);
@@ -984,14 +1033,34 @@ async function fetchAssets(address) {
   }
 }
 
-async function fetchStakingInfo(address) {
+async function refreshWallet(index) {
   try {
-    console.log('Fetching staking info for address:', address);
-    const data = await fetchWalletData(address);
-    return data.stakingInfo || null;
+    const wallet = wallets[index];
+    if (!wallet || !wallet.address) return;
+
+    // Fetch basic wallet data
+    const walletData = await fetchWalletData(wallet.address);
+    
+    // Fetch staking info if stake address is available
+    let stakingInfo = null;
+    if (walletData.stake_address) {
+      stakingInfo = await fetchStakingInfo(walletData.stake_address);
+    }
+
+    wallets[index] = {
+      ...wallet,
+      balance: walletData.balance || 0,
+      assets: walletData.assets || [],
+      stake_address: walletData.stake_address,
+      stakingInfo,
+      lastUpdated: Date.now()
+    };
+
+    await chrome.storage.local.set({ wallets });
+    renderWallets();
   } catch (error) {
-    console.error('Error fetching staking info:', error);
-    return null;
+    console.error('Error refreshing wallet:', error);
+    showError('Failed to refresh wallet');
   }
 }
 
@@ -1156,33 +1225,6 @@ function updateUI() {
   setupEventListeners();
 }
 
-async function refreshWallet(index) {
-  try {
-    const wallet = wallets[index];
-    if (!wallet || !wallet.address) return;
-
-    const data = await fetchWalletData(wallet.address);
-    const balance = data.balance || 0;
-    const assets = data.assets || [];
-    const stakingInfo = data.stakingInfo || null;
-
-    wallets[index] = {
-      ...wallet,
-      balance,
-      assets,
-      stakingInfo,
-      lastUpdated: Date.now()
-    };
-
-    await chrome.storage.local.set({ wallets });
-    renderWallets();
-  } catch (error) {
-    console.error('Error refreshing wallet:', error);
-    showError('Failed to refresh wallet');
-  }
-}
-
-// Function to check if wallet needs refresh (older than 5 minutes)
 function needsRefresh(wallet) {
   if (!wallet.lastUpdated) return true;
   const fiveMinutes = 5 * 60 * 1000;
