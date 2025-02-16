@@ -43,6 +43,189 @@
       font-size: 14px;
       margin: 0;
     }
+
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.7);
+    }
+
+    .modal-content {
+      position: relative;
+      background-color: var(--background-color);
+      margin: 5% auto;
+      padding: 20px;
+      width: 80%;
+      max-width: 800px;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    .close-modal {
+      position: absolute;
+      right: 20px;
+      top: 10px;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+      color: var(--text-color);
+    }
+
+    .close-modal:hover {
+      color: var(--accent-color);
+    }
+
+    .asset-details {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+
+    #modal-asset-image {
+      max-width: 100%;
+      max-height: 60vh;
+      object-fit: contain;
+      border-radius: 8px;
+    }
+
+    .asset-info {
+      text-align: center;
+      width: 100%;
+    }
+
+    .asset-info h2 {
+      margin: 0 0 10px 0;
+      color: var(--text-color);
+    }
+
+    .asset-info p {
+      margin: 5px 0;
+      color: var(--text-color);
+    }
+
+    .assets-grid .asset-item {
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+
+    .assets-grid .asset-item:hover {
+      transform: scale(1.05);
+    }
+
+    .assets-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 15px;
+      padding: 15px;
+    }
+
+    .asset-card {
+      background: var(--card-background);
+      border-radius: 8px;
+      padding: 10px;
+      position: relative;
+      cursor: pointer;
+      transition: transform 0.2s;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .asset-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+
+    .asset-image {
+      width: 100%;
+      height: 150px;
+      object-fit: contain;
+      border-radius: 6px;
+      margin-bottom: 8px;
+    }
+
+    .asset-info {
+      text-align: center;
+    }
+
+    .asset-name {
+      font-weight: 500;
+      margin-bottom: 4px;
+      word-break: break-word;
+    }
+
+    .asset-amount {
+      font-size: 0.9em;
+      opacity: 0.8;
+    }
+
+    .drag-handle {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: grab;
+      background: rgba(0,0,0,0.1);
+      border-radius: 50%;
+      color: var(--text-color);
+      opacity: 0.5;
+      transition: opacity 0.2s;
+    }
+
+    .drag-handle:hover {
+      opacity: 1;
+    }
+
+    .asset-tabs {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin: 15px 0;
+      padding: 0 15px;
+    }
+
+    .asset-tab-btn {
+      background: var(--card-background);
+      border: 1px solid var(--border-color);
+      color: var(--text-color);
+      padding: 8px 16px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s ease;
+      min-width: 100px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    .asset-tab-btn:hover {
+      background: var(--hover-color);
+      transform: translateY(-1px);
+    }
+
+    .asset-tab-btn.active {
+      background: var(--accent-color);
+      color: white;
+      border-color: var(--accent-color);
+    }
+
+    .asset-tab-btn .count {
+      font-size: 12px;
+      opacity: 0.8;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 2px 6px;
+      border-radius: 10px;
+    }
   </style>
 </head>
 <body>
@@ -57,7 +240,7 @@
       </div>
     </header>
     
-    <div id="walletList" class="wallet-grid"></div>
+    <div id="walletList" class="wallet-grid assets-container"></div>
     <div id="errorMsg" class="error"></div>
     <div id="successMsg" class="success"></div>
 
@@ -67,6 +250,20 @@
         Buy More Wallet Slots
       </button>
       <div class="slots-info">Get additional wallet slots for 100 BONE tokens</div>
+    </div>
+
+    <div id="asset-modal" class="modal">
+      <div class="modal-content">
+        <span class="close-modal">&times;</span>
+        <div class="asset-details">
+          <img id="modal-asset-image" src="" alt="Asset Image">
+          <div class="asset-info">
+            <h2 id="modal-asset-name"></h2>
+            <p id="modal-asset-quantity"></p>
+            <p id="modal-asset-description"></p>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

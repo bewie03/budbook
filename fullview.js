@@ -243,7 +243,7 @@ async function fetchWalletData(address) {
 
     console.log('Fetching data for address:', address);
     const data = await requestQueue.add({
-      url: `${API_BASE_URL}/api/wallet/${address}`,
+      url: `${API_BASE_URL}/api/wallet/${address}?forceRefresh=true`,
       options: {
         method: 'GET',
         headers: {
@@ -331,6 +331,9 @@ function getAssetImage(asset) {
       // Clean the URL first
       url = url.trim();
       if (!url) return null;
+      
+      // Skip base64 URLs
+      if (url.startsWith('data:')) return null;
       
       // Convert IPFS URL if needed
       if (url.startsWith('ipfs://') || url.includes('/ipfs/')) {
@@ -940,19 +943,49 @@ async function refreshWallet(index) {
       walletBox.classList.add('loading');
     }
 
+    // Clear all caches for this wallet
+    const walletCacheKey = `wallet_data_${wallet.address}`;
+    const assetCachePattern = `asset_${wallet.address}_*`;
+    
+    // Clear wallet data cache
+    await chrome.storage.local.remove(walletCacheKey);
+    
+    // Clear asset caches
+    const storage = await chrome.storage.local.get(null);
+    const keysToRemove = Object.keys(storage).filter(key => 
+      key.startsWith(`asset_${wallet.address}_`) || 
+      key.startsWith(`metadata_${wallet.address}_`)
+    );
+    if (keysToRemove.length > 0) {
+      await chrome.storage.local.remove(keysToRemove);
+    }
+
     // Fetch data with retry
     let retries = 3;
     let error;
     
     while (retries > 0) {
       try {
+        // Fetch wallet data
         const data = await fetchWalletData(wallet.address);
+        
+        // If we have a stake address, fetch staking info too
+        if (data.stake_address) {
+          try {
+            const stakingInfo = await fetchStakingInfo(data.stake_address);
+            data.stakingInfo = stakingInfo;
+          } catch (e) {
+            console.error('Error fetching staking info:', e);
+          }
+        }
+        
         // Preserve metadata while updating with new data
         Object.assign(wallet, {
           ...data,
           name: wallet.name,
           walletType: wallet.walletType
         });
+        
         await saveWallets();
         renderWallets();
         return;
@@ -1087,249 +1120,181 @@ document.addEventListener('keydown', function(e) {
   }
 });
 
-// Polling fallback function
-async function pollPaymentStatus(paymentId, modal) {
-  let attempts = 0;
-  const maxAttempts = 36; // 3 minutes total with increasing intervals
+// Modal handling
+const modal = document.getElementById('asset-modal');
+const modalImage = document.getElementById('modal-asset-image');
+const modalName = document.getElementById('modal-asset-name');
+const modalQuantity = document.getElementById('modal-asset-quantity');
+const modalDescription = document.getElementById('modal-asset-description');
+const closeModal = document.querySelector('.close-modal');
+
+function showAssetModal(asset) {
+    modalImage.src = asset.image || 'placeholder.png';
+    modalName.textContent = asset.name;
+    modalQuantity.textContent = `Quantity: ${formatAmount(asset.quantity, asset.decimals)}`;
+    modalDescription.textContent = asset.description || 'No description available';
+    modal.style.display = 'block';
+}
+
+function hideModal() {
+    modal.style.display = 'none';
+}
+
+closeModal.onclick = hideModal;
+window.onclick = (event) => {
+    if (event.target === modal) {
+        hideModal();
+    }
+};
+
+// Update asset rendering to add click handlers
+function appendAssetsToGrid(assets, container, type) {
+  container.innerHTML = ''; // Clear existing assets
   
-  const checkStatus = async () => {
-    attempts++;
-    const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-    if (!response.ok) throw new Error('Failed to verify payment');
-    const { verified, used } = await response.json();
-    
-    if (verified) {
-      if (used) {
-        showError('This payment has already been used to add slots.');
-        modal.remove();
-        return true;
-      }
-      
-      // Update status and add slots
-      const statusDiv = modal.querySelector('.payment-status');
-      if (statusDiv) {
-        statusDiv.textContent = 'Payment verified!';
-        statusDiv.className = 'payment-status success';
-      }
-      
-      const { availableSlots } = await chrome.storage.local.get('availableSlots');
-      await chrome.storage.local.set({ 
-        availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
-      });
-      
-      showSuccess('Payment verified! Your slots have been added.');
-      
-      // Close modal after 2 seconds
-      setTimeout(() => {
-        modal.remove();
-        updateUI();
-      }, 2000);
-      
-      return true;
+  assets.forEach(asset => {
+    const isNFTAsset = isNFT(asset);
+    if (type !== 'all' && ((type === 'nft' && !isNFTAsset) || (type === 'token' && isNFTAsset))) {
+      return;
     }
+
+    const card = document.createElement('div');
+    card.className = 'asset-card';
     
-    if (attempts >= maxAttempts) {
-      const statusDiv = modal.querySelector('.payment-status');
-      if (statusDiv) {
-        statusDiv.textContent = 'Verification timeout';
-        statusDiv.className = 'payment-status error';
-      }
-      return true;
+    // Create content container
+    const content = document.createElement('div');
+    content.className = 'asset-content';
+    content.onclick = () => showAssetModal(asset);
+    
+    // Add image
+    const imageUrl = getAssetImage(asset);
+    if (imageUrl) {
+      const img = document.createElement('img');
+      img.className = 'asset-image';
+      img.src = imageUrl;
+      img.alt = asset.metadata?.name || 'Asset Image';
+      img.onerror = () => img.src = 'icons/placeholder.png';
+      content.appendChild(img);
     }
+
+    // Add info
+    const info = document.createElement('div');
+    info.className = 'asset-info';
+    info.innerHTML = `
+      <div class="asset-name">${asset.metadata?.name || asset.onchainMetadata?.name || 'Unknown Asset'}</div>
+      <div class="asset-amount">${formatTokenAmount(asset.quantity, asset.decimals)}</div>
+    `;
+    content.appendChild(info);
     
-    // Calculate next delay with exponential backoff
-    const nextDelay = Math.min(2000 * Math.pow(1.2, attempts), 10000); // Cap at 10 seconds
-    setTimeout(checkStatus, nextDelay);
+    // Add drag handle
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'drag-handle';
+    dragHandle.innerHTML = '⋮';
+    dragHandle.onclick = (e) => {
+      e.stopPropagation(); // Prevent modal from opening
+    };
     
+    card.appendChild(content);
+    card.appendChild(dragHandle);
+    container.appendChild(card);
+  });
+}
+
+function createAssetsPanel(wallet) {
+  const panel = document.createElement('div');
+  panel.className = 'assets-panel';
+  panel.dataset.address = wallet.address;
+
+  // Count NFTs and tokens
+  const nftCount = wallet.assets.filter(a => isNFT(a)).length;
+  const tokenCount = wallet.assets.filter(a => !isNFT(a)).length;
+
+  const tabs = document.createElement('div');
+  tabs.className = 'asset-tabs';
+  tabs.innerHTML = `
+    <button class="asset-tab-btn active" data-tab="all">
+      All <span class="count">${wallet.assets.length}</span>
+    </button>
+    <button class="asset-tab-btn" data-tab="nft">
+      NFTs <span class="count">${nftCount}</span>
+    </button>
+    <button class="asset-tab-btn" data-tab="token">
+      Tokens <span class="count">${tokenCount}</span>
+    </button>
+  `;
+
+  const assetsContainer = document.createElement('div');
+  assetsContainer.className = 'assets-container';
+  
+  // Add tab click handlers
+  tabs.querySelectorAll('.asset-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      // Update active state
+      tabs.querySelectorAll('.asset-tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      
+      // Clear and repopulate assets
+      const tabType = btn.dataset.tab;
+      appendAssetsToGrid(wallet.assets, assetsContainer, tabType);
+    });
+  });
+
+  panel.appendChild(tabs);
+  panel.appendChild(assetsContainer);
+  
+  // Initial load of all assets
+  appendAssetsToGrid(wallet.assets, assetsContainer, 'all');
+
+  return panel;
+}
+
+function isValidUrl(url) {
+  try {
+    new URL(url);
+    return true;
+  } catch (error) {
     return false;
-  };
-  
-  checkStatus();
-}
-
-function updateSlotCount() {
-  const slotCountElement = document.getElementById('slotCount');
-  if (slotCountElement) {
-    const { length } = wallets;
-    slotCountElement.textContent = `${length}/${unlockedSlots}`;
   }
 }
 
-function createModal(html) {
-  const modal = document.createElement('div');
-  modal.className = 'modal';
-  modal.style.backgroundColor = 'rgba(0, 0, 0, 0.75)';
-  modal.innerHTML = html;
-  return modal;
+function getFirstLetter(name) {
+  return (name || 'A').charAt(0).toUpperCase();
 }
 
-// Buy slots button handler
-document.getElementById('buySlots').addEventListener('click', async () => {
-  try {
-    // Show confirmation modal
-    const modal = createModal(`
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Buy More Slots</h2>
-        </div>
-        <div class="payment-details">
-          <div class="amount-display">
-            ${BONE_PAYMENT_AMOUNT} BONE
-          </div>
-          <p>Get ${SLOTS_PER_PAYMENT} additional wallet slots</p>
-        </div>
-        <div class="modal-buttons">
-          <button class="modal-button secondary">Cancel</button>
-          <button class="modal-button primary">Proceed to Payment</button>
-        </div>
-      </div>
-    `);
-    
-    document.body.appendChild(modal);
-    
-    // Handle cancel button
-    const cancelButton = modal.querySelector('.secondary');
-    if (cancelButton) {
-      cancelButton.addEventListener('click', () => {
-        modal.remove();
-      });
-    }
-    
-    // Handle proceed button
-    const proceedButton = modal.querySelector('.primary');
-    if (proceedButton) {
-      proceedButton.addEventListener('click', async () => {
-        modal.remove();
-        await initiatePayment();
-      });
-    }
-  } catch (error) {
-    console.error('Error handling buy slots:', error);
-    showError('Failed to show payment modal');
+function getRandomColor(text) {
+  // Generate a consistent color based on text
+  let hash = 0;
+  for (let i = 0; i <text.length; i++) {
+    hash = text.charCodeAt(i) + ((hash << 5) - hash);
   }
-});
+  const hue = hash % 360;
+  return `hsl(${hue}, 70%, 60%)`; // Consistent but random-looking color
+}
 
-async function initiatePayment() {
-  try {
-    // Get extension's installation ID
-    const installId = chrome.runtime.id;
-    
-    // Get payment details from server
-    const response = await fetch(`${API_BASE_URL}/api/initiate-payment`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        installId
-      })
+function setupAssetsPanelListeners() {
+  const panel = document.querySelector('.assets-panel');
+  if (!panel) return; // Exit if panel doesn't exist
+
+  const closeBtn = panel.querySelector('.close-assets');
+  const tabs = panel.querySelectorAll('.assets-tab');
+  
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      panel.classList.remove('expanded');
     });
-
-    if (!response.ok) throw new Error('Failed to initiate payment');
-    const { paymentId, address } = await response.json();
-    
-    // Show payment details modal
-    const modal = createModal(`
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Buy More Slots</h2>
-          <div class="payment-status">Waiting for payment...</div>
-        </div>
-        
-        <div class="payment-details">
-          <div class="amount-display">
-            ${BONE_PAYMENT_AMOUNT} BONE
-          </div>
-          
-          <div class="address-container">
-            <span class="label">Send to:</span>
-            <div class="address-box">${address}</div>
-          </div>
-        </div>
-
-        <div class="modal-buttons">
-          <button class="modal-button secondary">Cancel</button>
-          <button class="modal-button primary">Check Status</button>
-        </div>
-      </div>
-    `);
-
-    document.body.appendChild(modal);
-
-    // Add button handlers
-    const cancelButton = modal.querySelector('.modal-button.secondary');
-    const checkButton = modal.querySelector('.modal-button.primary');
-
-    cancelButton.addEventListener('click', () => {
-      modal.remove();
-    });
-
-    checkButton.addEventListener('click', async () => {
-      const statusDiv = modal.querySelector('.payment-status');
-      statusDiv.textContent = 'Checking payment status...';
-
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-        if (!response.ok) throw new Error('Failed to verify payment');
-        const { verified, used } = await response.json();
-
-        if (verified) {
-          if (used) {
-            showError('This payment has already been used.');
-            modal.remove();
-            return;
-          }
-
-          statusDiv.textContent = 'Payment verified!';
-          const { availableSlots } = await chrome.storage.local.get('availableSlots');
-          await chrome.storage.local.set({
-            availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
-          });
-
-          showSuccess('Payment verified! Your slots have been added.');
-          setTimeout(() => {
-            modal.remove();
-            updateUI();
-          }, 2000);
-        } else {
-          statusDiv.textContent = 'Payment not detected yet. Try again in a few moments.';
-        }
-      } catch (error) {
-        console.error('Error checking payment:', error);
-        statusDiv.textContent = 'Error checking payment status';
-      }
-    });
-
-    // Start polling for payment status
-    pollPaymentStatus(paymentId, modal);
-
-  } catch (error) {
-    console.error('Payment initiation error:', error);
-    showError('Failed to initiate payment. Please try again.');
   }
-}
 
-function formatBalance(balance) {
-  // Convert null/undefined to 0
-  const rawBalance = balance || 0;
-  
-  // Convert from lovelace to ADA (1 ADA = 1,000,000 lovelace)
-  const adaValue = parseFloat(rawBalance) / 1000000;
-  
-  // Format with proper decimals
-  return `₳${adaValue.toLocaleString(undefined, { 
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6 
-  })}`;
-}
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const currentWallet = panel.dataset.walletIndex;
+      const tabType = tab.dataset.tab;
+      
+      // Update active tab button
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
 
-function formatTokenAmount(amount, decimals = 0) {
-  if (!amount) return '0';
-  
-  const value = parseFloat(amount) / Math.pow(10, decimals);
-  return value.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: decimals
+      // Render assets for the selected tab
+      renderAssetsList(currentWallet, tabType);
+    });
   });
 }
 
@@ -1375,14 +1340,11 @@ async function setupEventListeners() {
       const tabType = button.dataset.tab;
       
       // Update active tab button
-      assetsPanel.querySelectorAll('.asset-tab-btn').forEach(btn => {
-        btn.classList.toggle('active', btn === button);
-      });
-      
-      // Update active grid
-      assetsPanel.querySelectorAll('.assets-grid').forEach(grid => {
-        grid.classList.toggle('active', grid.classList.contains(tabType));
-      });
+      assetsPanel.querySelectorAll('.asset-tab-btn').forEach(t => t.classList.remove('active'));
+      button.classList.add('active');
+
+      // Render assets for the selected tab
+      renderAssetsList(assetsPanel.dataset.walletIndex, tabType);
     });
   });
 
@@ -1575,6 +1537,13 @@ function appendAssetsToGrid(assets, container, type, observer) {
     const card = document.createElement('div');
     card.className = 'asset-card';
     
+    // Create content container for click handling
+    const contentContainer = document.createElement('div');
+    contentContainer.className = 'asset-content';
+    
+    // Add click handler to content container
+    contentContainer.onclick = () => showAssetModal(asset);
+    
     // Handle NFT/token images
     const imageUrl = getAssetImage(asset);
     if (imageUrl) {
@@ -1601,7 +1570,7 @@ function appendAssetsToGrid(assets, container, type, observer) {
       };
       
       observer.observe(img);
-      card.appendChild(img);
+      contentContainer.appendChild(img);
     }
 
     const info = document.createElement('div');
@@ -1611,7 +1580,17 @@ function appendAssetsToGrid(assets, container, type, observer) {
       <div class="asset-amount">${formatTokenAmount(asset.quantity, asset.decimals)}</div>
     `;
     
-    card.appendChild(info);
+    contentContainer.appendChild(info);
+    
+    // Create drag handle
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'drag-handle';
+    dragHandle.innerHTML = '⋮'; // Vertical dots for drag indicator
+    
+    // Add both to the asset element
+    card.appendChild(dragHandle);
+    card.appendChild(contentContainer);
+    
     container.appendChild(card);
   });
 }
@@ -1621,11 +1600,22 @@ function createAssetsPanel(wallet) {
   panel.className = 'assets-panel';
   panel.dataset.address = wallet.address;
 
+  // Count NFTs and tokens
+  const nftCount = wallet.assets.filter(a => isNFT(a)).length;
+  const tokenCount = wallet.assets.filter(a => !isNFT(a)).length;
+
   const tabs = document.createElement('div');
   tabs.className = 'asset-tabs';
   tabs.innerHTML = `
-    <button class="asset-tab-btn active" data-tab="token">Tokens</button>
-    <button class="asset-tab-btn" data-tab="nft">NFTs</button>
+    <button class="asset-tab-btn active" data-tab="all">
+      All <span class="count">${wallet.assets.length}</span>
+    </button>
+    <button class="asset-tab-btn" data-tab="nft">
+      NFTs <span class="count">${nftCount}</span>
+    </button>
+    <button class="asset-tab-btn" data-tab="token">
+      Tokens <span class="count">${tokenCount}</span>
+    </button>
   `;
 
   const { container: tokenGrid, observer: tokenObserver } = createAssetGrid(wallet.assets, 'token');
@@ -1714,4 +1704,251 @@ function renderAssetsList(walletIndex, tabType) {
     // Append assets to grid
     appendAssetsToGrid(filteredAssets, assetGrid, tabType);
   });
+}
+
+// Buy slots button handler
+document.getElementById('buySlots').addEventListener('click', async () => {
+  try {
+    // Show confirmation modal
+    const modal = createModal(`
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Buy More Slots</h2>
+        </div>
+        <div class="payment-details">
+          <div class="amount-display">
+            ${BONE_PAYMENT_AMOUNT} BONE
+          </div>
+          <p>Get ${SLOTS_PER_PAYMENT} additional wallet slots</p>
+        </div>
+        <div class="modal-buttons">
+          <button class="modal-button secondary">Cancel</button>
+          <button class="modal-button primary">Proceed to Payment</button>
+        </div>
+      </div>
+    `);
+    
+    document.body.appendChild(modal);
+    
+    // Handle cancel button
+    const cancelButton = modal.querySelector('.secondary');
+    if (cancelButton) {
+      cancelButton.addEventListener('click', () => {
+        modal.remove();
+      });
+    }
+    
+    // Handle proceed button
+    const proceedButton = modal.querySelector('.primary');
+    if (proceedButton) {
+      proceedButton.addEventListener('click', async () => {
+        modal.remove();
+        await initiatePayment();
+      });
+    }
+  } catch (error) {
+    console.error('Error handling buy slots:', error);
+    showError('Failed to show payment modal');
+  }
+});
+
+async function initiatePayment() {
+  try {
+    // Get extension's installation ID
+    const installId = chrome.runtime.id;
+    
+    // Get payment details from server
+    const response = await fetch(`${API_BASE_URL}/api/initiate-payment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        installId
+      })
+    });
+
+    if (!response.ok) throw new Error('Failed to initiate payment');
+    const { paymentId, address } = await response.json();
+    
+    // Show payment details modal
+    const modal = createModal(`
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Buy More Slots</h2>
+          <div class="payment-status">Waiting for payment...</div>
+        </div>
+        
+        <div class="payment-details">
+          <div class="amount-display">
+            ${BONE_PAYMENT_AMOUNT} BONE
+          </div>
+          
+          <div class="address-container">
+            <span class="label">Send to:</span>
+            <div class="address-box">${address}</div>
+          </div>
+        </div>
+
+        <div class="modal-buttons">
+          <button class="modal-button secondary">Cancel</button>
+          <button class="modal-button primary">Check Status</button>
+        </div>
+      </div>
+    `);
+
+    document.body.appendChild(modal);
+
+    // Add button handlers
+    const cancelButton = modal.querySelector('.modal-button.secondary');
+    const checkButton = modal.querySelector('.modal-button.primary');
+
+    cancelButton.addEventListener('click', () => {
+      modal.remove();
+    });
+
+    checkButton.addEventListener('click', async () => {
+      const statusDiv = modal.querySelector('.payment-status');
+      statusDiv.textContent = 'Checking payment status...';
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
+        if (!response.ok) throw new Error('Failed to verify payment');
+        const { verified, used } = await response.json();
+
+        if (verified) {
+          if (used) {
+            showError('This payment has already been used.');
+            modal.remove();
+            return;
+          }
+
+          statusDiv.textContent = 'Payment verified!';
+          const { availableSlots } = await chrome.storage.local.get('availableSlots');
+          await chrome.storage.local.set({
+            availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
+          });
+
+          showSuccess('Payment verified! Your slots have been added.');
+          
+          // Close modal after 2 seconds
+          setTimeout(() => {
+            modal.remove();
+            updateUI();
+          }, 2000);
+        } else {
+          statusDiv.textContent = 'Payment not detected yet. Try again in a few moments.';
+        }
+      } catch (error) {
+        console.error('Error checking payment:', error);
+        statusDiv.textContent = 'Error checking payment status';
+      }
+    });
+
+    // Start polling for payment status
+    pollPaymentStatus(paymentId, modal);
+
+  } catch (error) {
+    console.error('Payment initiation error:', error);
+    showError('Failed to initiate payment. Please try again.');
+  }
+}
+
+function formatBalance(balance) {
+  // Convert null/undefined to 0
+  const rawBalance = balance || 0;
+  
+  // Convert from lovelace to ADA (1 ADA = 1,000,000 lovelace)
+  const adaValue = parseFloat(rawBalance) / 1000000;
+  
+  // Format with proper decimals
+  return `₳${adaValue.toLocaleString(undefined, { 
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6 
+  })}`;
+}
+
+function formatTokenAmount(amount, decimals = 0) {
+  if (!amount) return '0';
+  
+  const value = parseFloat(amount) / Math.pow(10, decimals);
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals
+  });
+}
+
+function updateSlotCount() {
+  const slotCountElement = document.getElementById('slotCount');
+  if (slotCountElement) {
+    const { length } = wallets;
+    slotCountElement.textContent = `${length}/${unlockedSlots}`;
+  }
+}
+
+function createModal(html) {
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.style.backgroundColor = 'rgba(0, 0, 0, 0.75)';
+  modal.innerHTML = html;
+  return modal;
+}
+
+function pollPaymentStatus(paymentId, modal) {
+  let attempts = 0;
+  const maxAttempts = 36; // 3 minutes total with increasing intervals
+  
+  const checkStatus = async () => {
+    attempts++;
+    const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
+    if (!response.ok) throw new Error('Failed to verify payment');
+    const { verified, used } = await response.json();
+
+    if (verified) {
+      if (used) {
+        showError('This payment has already been used to add slots.');
+        modal.remove();
+        return true;
+      }
+
+      // Update status and add slots
+      const statusDiv = modal.querySelector('.payment-status');
+      if (statusDiv) {
+        statusDiv.textContent = 'Payment verified!';
+        statusDiv.className = 'payment-status success';
+      }
+      
+      const { availableSlots } = await chrome.storage.local.get('availableSlots');
+      await chrome.storage.local.set({ 
+        availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
+      });
+      
+      showSuccess('Payment verified! Your slots have been added.');
+      
+      // Close modal after 2 seconds
+      setTimeout(() => {
+        modal.remove();
+        updateUI();
+      }, 2000);
+      
+      return true;
+    }
+    
+    if (attempts >= maxAttempts) {
+      const statusDiv = modal.querySelector('.payment-status');
+      if (statusDiv) {
+        statusDiv.textContent = 'Verification timeout';
+        statusDiv.className = 'payment-status error';
+      }
+      return true;
+    }
+    
+    // Calculate next delay with exponential backoff
+    const nextDelay = Math.min(2000 * Math.pow(1.2, attempts), 10000); // Cap at 10 seconds
+    setTimeout(checkStatus, nextDelay);
+    
+    return false;
+  };
+  
+  checkStatus();
 }

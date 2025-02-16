@@ -171,11 +171,21 @@ function isValidUrl(url) {
 app.get('/api/wallet/:address', async (req, res) => {
     try {
         const { address } = req.params;
-        console.log('Fetching wallet data for address:', address);
+        const forceRefresh = req.query.forceRefresh === 'true';
+        console.log('Fetching wallet data for address:', address, 'Force refresh:', forceRefresh);
         
         if (!isValidCardanoAddress(address)) {
             console.error('Invalid address format:', address);
             return res.status(400).json({ error: 'Invalid Cardano address' });
+        }
+
+        // Clear asset caches if force refresh
+        if (forceRefresh) {
+            const cacheKeys = await cache.keys(`asset_${address}_*`);
+            if (cacheKeys.length > 0) {
+                await Promise.all(cacheKeys.map(key => cache.del(key)));
+                console.log('Cleared asset caches:', cacheKeys.length);
+            }
         }
 
         // 1. Get address data from Blockfrost
@@ -200,17 +210,17 @@ app.get('/api/wallet/:address', async (req, res) => {
                 return 0;
             });
         
-        // Only process top 20 assets initially
-        const assetsToProcess = sortedAmounts.slice(0, 20);
-        console.log('Processing top 20 assets out of:', sortedAmounts.length);
+        // Process top 100 assets
+        const assetsToProcess = sortedAmounts.slice(0, 100);
+        console.log('Processing top 100 assets out of:', sortedAmounts.length);
         
         for (const amount of assetsToProcess) {
             try {
                 console.log('Processing asset:', amount.unit);
                 
                 // Get asset details from cache or Blockfrost
-                const cacheKey = `asset:${amount.unit}`;
-                let assetInfo = await getFromCache(cacheKey);
+                const cacheKey = `asset_${address}_${amount.unit}`;
+                let assetInfo = forceRefresh ? null : await getFromCache(cacheKey);
                 
                 if (!assetInfo) {
                     console.log('Cache miss for asset:', amount.unit);
