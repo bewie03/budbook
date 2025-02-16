@@ -1,7 +1,7 @@
 // Import the shared constants and functions
 const MAX_FREE_SLOTS = 5;
 const SLOTS_PER_PAYMENT = 5;
-const MAX_TOTAL_SLOTS = 100;
+const MAX_TOTAL_SLOTS = 500;
 const BONE_PAYMENT_AMOUNT = 100;
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 const BONE_POLICY_ID = ''; // Add your BONE token policy ID here
@@ -24,6 +24,8 @@ const CURRENCIES = {
   'EUR': { symbol: '€', rate: 0 },
   'GBP': { symbol: '£', rate: 0 }
 };
+
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache duration
 
 let wallets = [];
 let unlockedSlots = 0;
@@ -1038,6 +1040,14 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
+// Listen for reload messages from popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'RELOAD_WALLETS') {
+    console.log('Reloading wallets due to popup update');
+    loadWallets();
+  }
+});
+
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'walletLoading') {
@@ -1080,78 +1090,71 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// Initialize everything when the page loads
+// Modal elements
+let modal;
+let modalImage;
+let modalName;
+let modalQuantity;
+let modalDescription;
+let closeModalButton;
+
+// Modal functions
+function showAssetModal(asset) {
+  const imageUrl = getAssetImage(asset);
+  modalImage.src = imageUrl || 'icons/placeholder.png';
+  modalName.textContent = asset.metadata?.name || asset.onchainMetadata?.name || 'Unknown Asset';
+  modalQuantity.textContent = `Quantity: ${formatTokenAmount(asset.quantity, asset.decimals)}`;
+  modalDescription.textContent = asset.metadata?.description || asset.onchainMetadata?.description || 'No description available';
+  modal.style.display = 'block';
+}
+
+function hideAssetModal() {
+  modal.style.display = 'none';
+}
+
+function initializeModal() {
+  modal = document.getElementById('asset-modal');
+  modalImage = document.getElementById('modal-asset-image');
+  modalName = document.getElementById('modal-asset-name');
+  modalQuantity = document.getElementById('modal-asset-quantity');
+  modalDescription = document.getElementById('modal-asset-description');
+  closeModalButton = document.querySelector('.close-modal');
+
+  // Add modal event listeners
+  if (closeModalButton) {
+    closeModalButton.onclick = hideAssetModal;
+  }
+  
+  window.onclick = (event) => {
+    if (event.target === modal) {
+      hideAssetModal();
+    }
+  };
+}
+
+// Initial load
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    console.log('Initializing fullview page...');
+    initializeModal();
     await loadWallets();
-    await setupEventListeners();
-    console.log('Initialization complete');
+    setupEventListeners();
   } catch (error) {
     console.error('Error initializing fullview:', error);
-    showError('Failed to initialize the page. Please refresh.');
   }
 });
 
-document.addEventListener('click', function(e) {
-  const addressValue = e.target.closest('.address-value');
-  if (addressValue) {
-    const textToCopy = addressValue.dataset.copy;
-    if (textToCopy) {
-      navigator.clipboard.writeText(textToCopy).then(() => {
-        // Show feedback
-        const indicator = addressValue.querySelector('.copy-indicator');
-        indicator.textContent = 'Copied!';
-        setTimeout(() => {
-          indicator.textContent = 'Copy';
-        }, 1000);
-      });
-    }
+// Listen for reload messages from popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'RELOAD_WALLETS') {
+    console.log('Reloading wallets due to popup update');
+    loadWallets();
   }
 });
 
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Enter' || e.key === ' ') {
-    const addressValue = e.target.closest('.address-value');
-    if (addressValue) {
-      e.preventDefault();
-      addressValue.click();
-    }
-  }
-});
-
-// Modal handling
-const modal = document.getElementById('asset-modal');
-const modalImage = document.getElementById('modal-asset-image');
-const modalName = document.getElementById('modal-asset-name');
-const modalQuantity = document.getElementById('modal-asset-quantity');
-const modalDescription = document.getElementById('modal-asset-description');
-const closeModal = document.querySelector('.close-modal');
-
-function showAssetModal(asset) {
-    modalImage.src = asset.image || 'placeholder.png';
-    modalName.textContent = asset.name;
-    modalQuantity.textContent = `Quantity: ${formatAmount(asset.quantity, asset.decimals)}`;
-    modalDescription.textContent = asset.description || 'No description available';
-    modal.style.display = 'block';
-}
-
-function hideModal() {
-    modal.style.display = 'none';
-}
-
-closeModal.onclick = hideModal;
-window.onclick = (event) => {
-    if (event.target === modal) {
-        hideModal();
-    }
-};
-
-// Update asset rendering to add click handlers
-function appendAssetsToGrid(assets, container, type) {
+function renderAssets(assets, container, type) {
   container.innerHTML = ''; // Clear existing assets
   
-  assets.forEach(asset => {
+  assets.forEach((asset, index) => {
     const isNFTAsset = isNFT(asset);
     if (type !== 'all' && ((type === 'nft' && !isNFTAsset) || (type === 'token' && isNFTAsset))) {
       return;
@@ -1159,10 +1162,37 @@ function appendAssetsToGrid(assets, container, type) {
 
     const card = document.createElement('div');
     card.className = 'asset-card';
+    card.dataset.index = index;
+    card.setAttribute('draggable', 'false');
+    
+    // Create drag handle at the top
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'drag-handle';
+    dragHandle.innerHTML = '⋮';
+    dragHandle.style.cursor = 'grab';
+    dragHandle.style.height = '20px';
+    dragHandle.style.backgroundColor = '#f0f0f0';
+    dragHandle.style.borderBottom = '1px solid #ddd';
+    dragHandle.style.display = 'flex';
+    dragHandle.style.alignItems = 'center';
+    dragHandle.style.justifyContent = 'center';
+    
+    // Only allow dragging from the handle
+    dragHandle.onmousedown = () => {
+      card.setAttribute('draggable', 'true');
+      dragHandle.style.cursor = 'grabbing';
+    };
+    dragHandle.onmouseup = () => {
+      card.setAttribute('draggable', 'false');
+      dragHandle.style.cursor = 'grab';
+    };
+    // Prevent handle click from triggering modal
+    dragHandle.onclick = (e) => e.stopPropagation();
     
     // Create content container
     const content = document.createElement('div');
     content.className = 'asset-content';
+    content.style.cursor = 'pointer';
     content.onclick = () => showAssetModal(asset);
     
     // Add image
@@ -1185,524 +1215,21 @@ function appendAssetsToGrid(assets, container, type) {
     `;
     content.appendChild(info);
     
-    // Add drag handle
-    const dragHandle = document.createElement('div');
-    dragHandle.className = 'drag-handle';
-    dragHandle.innerHTML = '⋮';
-    dragHandle.onclick = (e) => {
-      e.stopPropagation(); // Prevent modal from opening
-    };
-    
+    card.appendChild(dragHandle);
     card.appendChild(content);
-    card.appendChild(dragHandle);
     container.appendChild(card);
-  });
-}
-
-function createAssetsPanel(wallet) {
-  const panel = document.createElement('div');
-  panel.className = 'assets-panel';
-  panel.dataset.address = wallet.address;
-
-  // Count NFTs and tokens
-  const nftCount = wallet.assets.filter(a => isNFT(a)).length;
-  const tokenCount = wallet.assets.filter(a => !isNFT(a)).length;
-
-  const tabs = document.createElement('div');
-  tabs.className = 'asset-tabs';
-  tabs.innerHTML = `
-    <button class="asset-tab-btn active" data-tab="all">
-      All <span class="count">${wallet.assets.length}</span>
-    </button>
-    <button class="asset-tab-btn" data-tab="nft">
-      NFTs <span class="count">${nftCount}</span>
-    </button>
-    <button class="asset-tab-btn" data-tab="token">
-      Tokens <span class="count">${tokenCount}</span>
-    </button>
-  `;
-
-  const assetsContainer = document.createElement('div');
-  assetsContainer.className = 'assets-container';
-  
-  // Add tab click handlers
-  tabs.querySelectorAll('.asset-tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      // Update active state
-      tabs.querySelectorAll('.asset-tab-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      
-      // Clear and repopulate assets
-      const tabType = btn.dataset.tab;
-      appendAssetsToGrid(wallet.assets, assetsContainer, tabType);
+    
+    // Add drag event listeners to the card
+    card.addEventListener('dragstart', handleDragStart);
+    card.addEventListener('dragend', (e) => {
+      handleDragEnd(e);
+      card.setAttribute('draggable', 'false');
+      dragHandle.style.cursor = 'grab';
     });
-  });
-
-  panel.appendChild(tabs);
-  panel.appendChild(assetsContainer);
-  
-  // Initial load of all assets
-  appendAssetsToGrid(wallet.assets, assetsContainer, 'all');
-
-  return panel;
-}
-
-function isValidUrl(url) {
-  try {
-    new URL(url);
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
-function getFirstLetter(name) {
-  return (name || 'A').charAt(0).toUpperCase();
-}
-
-function getRandomColor(text) {
-  // Generate a consistent color based on text
-  let hash = 0;
-  for (let i = 0; i <text.length; i++) {
-    hash = text.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const hue = hash % 360;
-  return `hsl(${hue}, 70%, 60%)`; // Consistent but random-looking color
-}
-
-function setupAssetsPanelListeners() {
-  const panel = document.querySelector('.assets-panel');
-  if (!panel) return; // Exit if panel doesn't exist
-
-  const closeBtn = panel.querySelector('.close-assets');
-  const tabs = panel.querySelectorAll('.assets-tab');
-  
-  if (closeBtn) {
-    closeBtn.addEventListener('click', () => {
-      panel.classList.remove('expanded');
-    });
-  }
-
-  tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const currentWallet = panel.dataset.walletIndex;
-      const tabType = tab.dataset.tab;
-      
-      // Update active tab button
-      tabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-
-      // Render assets for the selected tab
-      renderAssetsList(currentWallet, tabType);
-    });
-  });
-}
-
-async function setupEventListeners() {
-  // Add refresh button listeners
-  document.querySelectorAll('.refresh-btn').forEach(button => {
-    button.addEventListener('click', async () => {
-      const index = parseInt(button.dataset.index);
-      if (!isNaN(index)) {
-        await refreshWallet(index);
-      }
-    });
-  });
-
-  // Add view assets button listeners
-  document.querySelectorAll('.view-assets-btn').forEach(button => {
-    button.addEventListener('click', () => {
-      const walletItem = button.closest('.wallet-item');
-      const mainPanel = walletItem.querySelector('.main-panel');
-      const assetsPanel = walletItem.querySelector('.assets-panel');
-      
-      mainPanel.classList.remove('active');
-      assetsPanel.classList.add('active');
-    });
-  });
-
-  // Add back button listeners
-  document.querySelectorAll('.back-to-wallet').forEach(button => {
-    button.addEventListener('click', () => {
-      const walletItem = button.closest('.wallet-item');
-      const mainPanel = walletItem.querySelector('.main-panel');
-      const assetsPanel = walletItem.querySelector('.assets-panel');
-      
-      assetsPanel.classList.remove('active');
-      mainPanel.classList.add('active');
-    });
-  });
-
-  // Add asset tab button listeners
-  document.querySelectorAll('.asset-tab-btn').forEach(button => {
-    button.addEventListener('click', () => {
-      const assetsPanel = button.closest('.assets-panel');
-      const tabType = button.dataset.tab;
-      
-      // Update active tab button
-      assetsPanel.querySelectorAll('.asset-tab-btn').forEach(t => t.classList.remove('active'));
-      button.classList.add('active');
-
-      // Render assets for the selected tab
-      renderAssetsList(assetsPanel.dataset.walletIndex, tabType);
-    });
-  });
-
-  // Load saved currency preference
-  chrome.storage.local.get('selectedCurrency', (data) => {
-    if (data.selectedCurrency) {
-      selectedCurrency = data.selectedCurrency;
-      renderWallets();
-    }
-  });
-
-  // Update exchange rates periodically
-  // updateExchangeRates();
-  // setInterval(updateExchangeRates, 5 * 60 * 1000); // Update every 5 minutes
-}
-
-async function deleteWallet(index) {
-  try {
-    wallets.splice(index, 1);
-    await saveWallets();
-    updateUI();
-    showSuccess('Wallet deleted successfully!');
-  } catch (error) {
-    showError('Failed to delete wallet');
-  }
-}
-
-function renderWalletSelector() {
-  return Object.entries(WALLET_LOGOS).map(([name, logo]) => `
-    <option value="${name}" ${name === 'None' ? 'selected' : ''}>
-      ${name}
-    </option>
-  `).join('');
-}
-
-// Drag and drop functionality
-let draggedItem = null;
-
-function handleDragStart(e) {
-    draggedItem = this;
-    this.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', this.getAttribute('data-index'));
-}
-
-function handleDragEnd(e) {
-    this.classList.remove('dragging');
-    document.querySelectorAll('.wallet-item').forEach(item => {
-        item.classList.remove('drag-over');
-    });
-    draggedItem = null;
-}
-
-function handleDragOver(e) {
-    if (e.preventDefault) {
-        e.preventDefault();
-    }
-    e.dataTransfer.dropEffect = 'move';
-    return false;
-}
-
-function handleDragEnter(e) {
-    this.classList.add('drag-over');
-}
-
-function handleDragLeave(e) {
-    this.classList.remove('drag-over');
-}
-
-async function handleDrop(e) {
-    e.stopPropagation();
-    e.preventDefault();
-    
-    if (draggedItem === this) return;
-    
-    this.classList.remove('drag-over');
-    
-    const fromIndex = parseInt(draggedItem.getAttribute('data-index'));
-    const toIndex = parseInt(this.getAttribute('data-index'));
-    
-    if (isNaN(fromIndex) || isNaN(toIndex)) return;
-    
-    // Reorder wallets array
-    const [movedWallet] = wallets.splice(fromIndex, 1);
-    wallets.splice(toIndex, 0, movedWallet);
-    
-    // Update indices
-    wallets.forEach((wallet, index) => {
-        wallet.index = index;
-    });
-    
-    // Save the new order
-    await chrome.storage.local.set({ wallets });
-    
-    // Re-render wallets
-    renderWallets();
-}
-
-// Asset loading and caching
-const ASSETS_PER_PAGE = 12; // Load 12 assets at a time
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-
-async function loadAssetsInBatches(wallet, startIndex = 0) {
-  try {
-    // Check cache first
-    const cacheKey = `assets_${wallet.address}`;
-    const cachedData = await chrome.storage.local.get(cacheKey);
-    const cached = cachedData[cacheKey];
-
-    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
-      return cached.assets;
-    }
-
-    // Load initial batch
-    const assets = wallet.assets || [];
-    const batch = assets.slice(startIndex, startIndex + ASSETS_PER_PAGE);
-    
-    // Load metadata for the batch
-    const loadedBatch = await Promise.all(
-      batch.map(async (asset) => {
-        const metadata = await getAssetFromCache(asset.unit);
-        return { ...asset, metadata };
-      })
-    );
-
-    // Update the assets array
-    assets.splice(startIndex, loadedBatch.length, ...loadedBatch);
-
-    // Cache the results
-    await chrome.storage.local.set({
-      [cacheKey]: {
-        assets,
-        timestamp: Date.now()
-      }
-    });
-
-    return assets;
-  } catch (error) {
-    console.error('Error loading assets:', error);
-    return [];
-  }
-}
-
-function createAssetGrid(assets, type = 'token') {
-  const container = document.createElement('div');
-  container.className = `assets-grid ${type}`;
-  
-  // Create intersection observer for lazy loading
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        const img = entry.target;
-        if (img.dataset.src) {
-          img.src = img.dataset.src;
-          observer.unobserve(img);
-        }
-      }
-    });
-  });
-
-  // Add scroll listener for infinite loading
-  let loading = false;
-  container.addEventListener('scroll', async () => {
-    if (loading) return;
-    
-    const { scrollTop, scrollHeight, clientHeight } = container;
-    if (scrollTop + clientHeight >= scrollHeight - 100) {
-      loading = true;
-      const currentCount = container.children.length;
-      const wallet = wallets.find(w => w.address === container.dataset.address);
-      
-      if (wallet && currentCount < wallet.assets.length) {
-        const newAssets = await loadAssetsInBatches(wallet, currentCount);
-        appendAssetsToGrid(newAssets.slice(currentCount), container, type, observer);
-      }
-      loading = false;
-    }
-  });
-
-  return { container, observer };
-}
-
-function appendAssetsToGrid(assets, container, type, observer) {
-  assets.forEach(asset => {
-    const isNFTAsset = isNFT(asset);
-    if ((type === 'nft' && !isNFTAsset) || (type === 'token' && isNFTAsset)) {
-      return;
-    }
-
-    const card = document.createElement('div');
-    card.className = 'asset-card';
-    
-    // Create content container for click handling
-    const contentContainer = document.createElement('div');
-    contentContainer.className = 'asset-content';
-    
-    // Add click handler to content container
-    contentContainer.onclick = () => showAssetModal(asset);
-    
-    // Handle NFT/token images
-    const imageUrl = getAssetImage(asset);
-    if (imageUrl) {
-      const img = document.createElement('img');
-      img.className = 'asset-image';
-      img.dataset.src = imageUrl;
-      img.src = 'icons/placeholder.png'; // Add a placeholder image
-      
-      // Handle image loading errors
-      img.onerror = function() {
-        // Try next IPFS gateway if it's an IPFS URL
-        if (this.src.includes('/ipfs/')) {
-          const currentGateway = IPFS_GATEWAYS.find(g => this.src.includes(g));
-          if (currentGateway) {
-            const hash = this.src.split(currentGateway)[1];
-            const nextGatewayIndex = (IPFS_GATEWAYS.indexOf(currentGateway) + 1) % IPFS_GATEWAYS.length;
-            this.src = `${IPFS_GATEWAYS[nextGatewayIndex]}${hash}`;
-            return;
-          }
-        }
-        // If all gateways fail or it's not an IPFS URL, show fallback
-        this.src = 'icons/image-error.png';
-        this.classList.add('image-error');
-      };
-      
-      observer.observe(img);
-      contentContainer.appendChild(img);
-    }
-
-    const info = document.createElement('div');
-    info.className = 'asset-info';
-    info.innerHTML = `
-      <div class="asset-name">${asset.metadata?.name || asset.onchainMetadata?.name || 'Unknown Asset'}</div>
-      <div class="asset-amount">${formatTokenAmount(asset.quantity, asset.decimals)}</div>
-    `;
-    
-    contentContainer.appendChild(info);
-    
-    // Create drag handle
-    const dragHandle = document.createElement('div');
-    dragHandle.className = 'drag-handle';
-    dragHandle.innerHTML = '⋮'; // Vertical dots for drag indicator
-    
-    // Add both to the asset element
-    card.appendChild(dragHandle);
-    card.appendChild(contentContainer);
-    
-    container.appendChild(card);
-  });
-}
-
-function createAssetsPanel(wallet) {
-  const panel = document.createElement('div');
-  panel.className = 'assets-panel';
-  panel.dataset.address = wallet.address;
-
-  // Count NFTs and tokens
-  const nftCount = wallet.assets.filter(a => isNFT(a)).length;
-  const tokenCount = wallet.assets.filter(a => !isNFT(a)).length;
-
-  const tabs = document.createElement('div');
-  tabs.className = 'asset-tabs';
-  tabs.innerHTML = `
-    <button class="asset-tab-btn active" data-tab="all">
-      All <span class="count">${wallet.assets.length}</span>
-    </button>
-    <button class="asset-tab-btn" data-tab="nft">
-      NFTs <span class="count">${nftCount}</span>
-    </button>
-    <button class="asset-tab-btn" data-tab="token">
-      Tokens <span class="count">${tokenCount}</span>
-    </button>
-  `;
-
-  const { container: tokenGrid, observer: tokenObserver } = createAssetGrid(wallet.assets, 'token');
-  const { container: nftGrid, observer: nftObserver } = createAssetGrid(wallet.assets, 'nft');
-
-  tokenGrid.classList.add('active');
-  panel.appendChild(tabs);
-  panel.appendChild(tokenGrid);
-  panel.appendChild(nftGrid);
-
-  // Initial load
-  loadAssetsInBatches(wallet).then(assets => {
-    appendAssetsToGrid(assets.slice(0, ASSETS_PER_PAGE), tokenGrid, 'token', tokenObserver);
-    appendAssetsToGrid(assets.slice(0, ASSETS_PER_PAGE), nftGrid, 'nft', nftObserver);
-  });
-
-  return panel;
-}
-
-function isValidUrl(url) {
-  try {
-    new URL(url);
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
-function getFirstLetter(name) {
-  return (name || 'A').charAt(0).toUpperCase();
-}
-
-function getRandomColor(text) {
-  // Generate a consistent color based on text
-  let hash = 0;
-  for (let i = 0; i <text.length; i++) {
-    hash = text.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const hue = hash % 360;
-  return `hsl(${hue}, 70%, 60%)`; // Consistent but random-looking color
-}
-
-function setupAssetsPanelListeners() {
-  const panel = document.querySelector('.assets-panel');
-  if (!panel) return; // Exit if panel doesn't exist
-
-  const closeBtn = panel.querySelector('.close-assets');
-  const tabs = panel.querySelectorAll('.assets-tab');
-  
-  if (closeBtn) {
-    closeBtn.addEventListener('click', () => {
-      panel.classList.remove('expanded');
-    });
-  }
-
-  tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const currentWallet = panel.dataset.walletIndex;
-      const tabType = tab.dataset.tab;
-      
-      // Update active tab button
-      tabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-
-      // Render assets for the selected tab
-      renderAssetsList(currentWallet, tabType);
-    });
-  });
-}
-
-function renderAssetsList(walletIndex, tabType) {
-  const wallet = wallets[walletIndex];
-  const assetsPanel = document.querySelector('.assets-panel');
-  const assetGrid = assetsPanel.querySelector(`.assets-grid.${tabType}`);
-
-  // Clear existing assets
-  assetGrid.innerHTML = '';
-
-  // Load assets for the selected tab
-  loadAssetsInBatches(wallet).then(assets => {
-    const filteredAssets = assets.filter(asset => {
-      if (tabType === 'nft') return isNFT(asset);
-      return !isNFT(asset);
-    });
-
-    // Append assets to grid
-    appendAssetsToGrid(filteredAssets, assetGrid, tabType);
+    card.addEventListener('dragover', handleDragOver);
+    card.addEventListener('dragenter', handleDragEnter);
+    card.addEventListener('dragleave', handleDragLeave);
+    card.addEventListener('drop', handleDrop);
   });
 }
 
@@ -1906,7 +1433,7 @@ function pollPaymentStatus(paymentId, modal) {
 
     if (verified) {
       if (used) {
-        showError('This payment has already been used to add slots.');
+        showError('This payment has already been used.');
         modal.remove();
         return true;
       }
@@ -1919,10 +1446,10 @@ function pollPaymentStatus(paymentId, modal) {
       }
       
       const { availableSlots } = await chrome.storage.local.get('availableSlots');
-      await chrome.storage.local.set({ 
+      await chrome.storage.local.set({
         availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
       });
-      
+
       showSuccess('Payment verified! Your slots have been added.');
       
       // Close modal after 2 seconds
@@ -1951,4 +1478,144 @@ function pollPaymentStatus(paymentId, modal) {
   };
   
   checkStatus();
+}
+
+// Drag and drop functionality
+let draggedItem = null;
+
+function handleDragStart(e) {
+  draggedItem = this;
+  this.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', this.getAttribute('data-index'));
+}
+
+function handleDragEnd(e) {
+  this.classList.remove('dragging');
+  document.querySelectorAll('.wallet-item').forEach(item => {
+    item.classList.remove('drag-over');
+  });
+  draggedItem = null;
+}
+
+function handleDragOver(e) {
+  if (e.preventDefault) {
+    e.preventDefault();
+  }
+  e.dataTransfer.dropEffect = 'move';
+  return false;
+}
+
+function handleDragEnter(e) {
+  this.classList.add('drag-over');
+}
+
+function handleDragLeave(e) {
+  this.classList.remove('drag-over');
+}
+
+function handleDrop(e) {
+  e.stopPropagation();
+  e.preventDefault();
+  
+  if (draggedItem === this) return;
+  
+  this.classList.remove('drag-over');
+  
+  const fromIndex = parseInt(draggedItem.getAttribute('data-index'));
+  const toIndex = parseInt(this.getAttribute('data-index'));
+  
+  if (isNaN(fromIndex) || isNaN(toIndex)) return;
+  
+  // Reorder wallets array
+  const [movedWallet] = wallets.splice(fromIndex, 1);
+  wallets.splice(toIndex, 0, movedWallet);
+  
+  // Save the new order
+  saveWallets();
+  
+  // Re-render wallets
+  renderWallets();
+}
+
+// Wallet management functions
+async function deleteWallet(index) {
+  try {
+    const walletToDelete = wallets[index];
+    if (!walletToDelete) {
+      throw new Error('Wallet not found');
+    }
+
+    // Remove from wallets array
+    wallets.splice(index, 1);
+
+    // Get current wallet index from storage
+    const data = await chrome.storage.sync.get(['wallet_index']);
+    const walletIndex = data.wallet_index || [];
+
+    // Remove wallet from index
+    const updatedIndex = walletIndex.filter(addr => addr !== walletToDelete.address);
+
+    // Remove wallet data
+    await chrome.storage.sync.remove(`wallet_${walletToDelete.address}`);
+
+    // Save updated index
+    await chrome.storage.sync.set({ wallet_index: updatedIndex });
+
+    // Re-render wallets
+    renderWallets();
+    showSuccess('Wallet deleted successfully');
+  } catch (error) {
+    console.error('Error deleting wallet:', error);
+    showError('Failed to delete wallet: ' + error.message);
+  }
+}
+
+// Setup event listeners
+function setupEventListeners() {
+  // Add refresh button listeners
+  document.querySelectorAll('.refresh-btn').forEach(button => {
+    button.addEventListener('click', async () => {
+      const index = parseInt(button.closest('.wallet-item').dataset.index);
+      if (!isNaN(index)) {
+        await refreshWallet(index);
+      }
+    });
+  });
+
+  // Add wallet name click listeners for copying address
+  document.querySelectorAll('.wallet-text').forEach(element => {
+    element.addEventListener('click', async () => {
+      const walletItem = element.closest('.wallet-item');
+      const address = walletItem.dataset.address;
+      if (address) {
+        await copyToClipboard(address);
+        const walletName = element.querySelector('.wallet-name');
+        const originalText = walletName.innerText;
+        walletName.innerText = 'Copied!';
+        walletName.style.color = '#00b894';
+        setTimeout(() => {
+          walletName.innerText = originalText;
+          walletName.style.color = '';
+        }, 1000);
+      }
+    });
+  });
+
+  // Add navigation button listeners
+  document.querySelectorAll('.wallet-nav-button').forEach(button => {
+    button.addEventListener('click', () => {
+      const walletItem = button.closest('.wallet-item');
+      const sectionName = button.dataset.section;
+      
+      // Update active button
+      walletItem.querySelectorAll('.wallet-nav-button').forEach(b => b.classList.remove('active'));
+      button.classList.add('active');
+      
+      // Update active section
+      walletItem.querySelectorAll('.wallet-section').forEach(section => {
+        section.classList.toggle('active', section.dataset.section === sectionName);
+      });
+    });
+  });
 }

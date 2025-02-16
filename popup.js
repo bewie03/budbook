@@ -333,6 +333,12 @@ async function addWallet() {
     nameInput.value = '';
     walletTypeSelect.value = 'None';
     
+    // Notify all fullview tabs to reload
+    const tabs = await chrome.tabs.query({url: chrome.runtime.getURL('fullview.html')});
+    tabs.forEach(tab => {
+      chrome.tabs.sendMessage(tab.id, { type: 'RELOAD_WALLETS' });
+    });
+
     // Show success message
     showMessage('Wallet added successfully!', 'success');
     updateUI();
