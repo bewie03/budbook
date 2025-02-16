@@ -7,7 +7,6 @@ const rateLimit = require('express-rate-limit');
 const NodeCache = require('node-cache');
 const fs = require('fs').promises;
 const crypto = require('crypto');
-const Redis = require('ioredis');
 
 dotenv.config();
 
@@ -23,271 +22,20 @@ const PAYMENT_ADDRESS = process.env.PAYMENT_ADDRESS;
 const REQUIRED_PAYMENT = 2000000; // 2 ADA in lovelace
 const BLOCKFROST_WEBHOOK_ID = process.env.BLOCKFROST_WEBHOOK_ID;
 const BLOCKFROST_WEBHOOK_TOKEN = process.env.BLOCKFROST_WEBHOOK_TOKEN;
+const BONE_POLICY_ID = process.env.BONE_POLICY_ID;
+const BONE_ASSET_NAME = process.env.BONE_ASSET_NAME;
+const REQUIRED_BONE_PAYMENT = parseInt(process.env.REQUIRED_BONE_PAYMENT || 1);
 
-// Initialize Redis client
-const redisUrl = (process.env.REDIS_URL || process.env.REDISCLOUD_URL || '').replace('rediss://', 'redis://');
-console.log('Connecting to Redis URL (without sensitive info):', redisUrl.replace(/\/\/.*@/, '//<credentials>@'));
+// Initialize cache with 1 hour TTL
+const cache = new NodeCache({ stdTTL: 3600 });
 
-const redis = new Redis(redisUrl, {
-  retryStrategy(times) {
-    const delay = Math.min(times * 50, 2000);
-    return delay;
-  },
-  maxRetriesPerRequest: 3,
-  enableOfflineQueue: true,
-  connectTimeout: 10000,
-  disconnectTimeout: 2000
-});
-
-redis.on('error', err => {
-  console.error('Redis Client Error:', err);
-  console.error('Full error:', JSON.stringify(err, null, 2));
-});
-
-redis.on('connect', () => {
-  console.log('Connected to Redis Cloud');
-});
-
-redis.on('ready', () => {
-  console.log('Redis client is ready');
-});
-
-redis.on('reconnecting', () => {
-  console.log('Redis client is reconnecting...');
-});
-
-// Test Redis connection
-(async () => {
-  try {
-    await redis.set('test', 'working');
-    const testResult = await redis.get('test');
-    console.log('Redis test result:', testResult);
-  } catch (error) {
-    console.error('Failed to test Redis:', error);
-  }
-})();
-
-// Helper functions for Redis
-async function getFromCache(key) {
-  try {
-    const value = await redis.get(key);
-    return value ? JSON.parse(value) : null;
-  } catch (error) {
-    console.error('Error getting from cache:', error);
-    return null;
-  }
+// Helper functions for Cache
+function getFromCache(key) {
+    return cache.get(key);
 }
 
-async function setInCache(key, value, expirySeconds = null) {
-  try {
-    if (expirySeconds) {
-      await redis.setex(key, expirySeconds, JSON.stringify(value));
-    } else {
-      await redis.set(key, JSON.stringify(value));
-    }
-    return true;
-  } catch (error) {
-    console.error('Error setting cache:', error);
-    return false;
-  }
-}
-
-function isValidUrl(url) {
-    if (!url || typeof url !== 'string') return null;
-    
-    // Remove whitespace
-    url = url.trim();
-    
-    // Handle IPFS URLs
-    if (url.startsWith('ipfs://')) {
-        const ipfsHash = url.slice(7).replace(/^\/+|\/+$/g, '');
-        return `https://ipfs.io/ipfs/${ipfsHash}`;
-    }
-    
-    // Convert HTTP to HTTPS
-    if (url.startsWith('http://')) {
-        url = `https://${url.slice(7)}`;
-    }
-    
-    // Ensure HTTPS
-    if (!url.startsWith('https://')) return null;
-    
-    try {
-        const parsed = new URL(url);
-        if (parsed.protocol && parsed.host) return url;
-    } catch {
-        return null;
-    }
-    
-    return null;
-}
-
-async function getAssetInfo(assetId) {
-    try {
-        // Check cache first
-        const cachedData = await redis.get(`asset:${assetId}`);
-        if (cachedData) {
-            return JSON.parse(cachedData);
-        }
-
-        // Fetch both basic asset data and metadata from Blockfrost
-        const [assetData, assetMetadata] = await Promise.all([
-            fetchBlockfrost(`/assets/${assetId}`, 'fetch asset data'),
-            fetchBlockfrost(`/assets/${assetId}/metadata`, 'fetch asset metadata')
-        ]);
-        
-        // Process asset metadata
-        const onchainMetadata = assetData.onchain_metadata || {};
-        const metadata = assetMetadata || {};
-        
-        // Determine if NFT based on quantity
-        const isNft = assetData.quantity === '1';
-        
-        // Get decimals (tokens only)
-        let decimals = 0;
-        if (!isNft) {
-            try {
-                decimals = parseInt(metadata.decimals || onchainMetadata.decimals) || 0;
-                // Cap decimals at 8 to prevent issues
-                decimals = Math.min(decimals, 8);
-            } catch {
-                decimals = 0;
-            }
-        }
-        
-        // Get asset name from metadata or onchain_metadata
-        let name = null;
-        if (isNft) {
-            // For NFTs, try these fields in order
-            name = onchainMetadata.name || 
-                   onchainMetadata.display_name ||
-                   assetData.display_name ||
-                   metadata.name ||
-                   assetData.asset_name;
-        } else {
-            // For tokens, try these fields in order
-            name = metadata.name ||
-                   metadata.display_name ||
-                   assetData.display_name ||
-                   onchainMetadata.name ||
-                   onchainMetadata.display_name ||
-                   assetData.asset_name;
-        }
-
-        // Get ticker if available
-        const ticker = metadata.ticker || onchainMetadata.ticker || assetData.ticker;
-
-        // If no name found, try to decode from hex
-        if (!name && assetId) {
-            try {
-                // Split by '.' and take the last part
-                const hexName = assetId.split('.').pop();
-                // Check if it's a valid hex string
-                if (hexName && /^[0-9a-fA-F]+$/.test(hexName)) {
-                    const decoded = Buffer.from(hexName, 'hex').toString('utf8');
-                    // Only use if all characters are printable ASCII
-                    if (decoded && /^[\x20-\x7E]*$/.test(decoded)) {
-                        name = decoded;
-                    }
-                }
-            } catch (e) {
-                console.error('Error decoding hex name:', e);
-            }
-        }
-
-        // Fallback to asset ID if still no name
-        if (!name) {
-            name = assetId.slice(-8);
-        }
-
-        // Log what we found
-        console.log('Asset data for', assetId, {
-            name,
-            ticker,
-            metadata,
-            onchainMetadata,
-            assetData
-        });
-
-        // Get image URL from various sources with priority
-        let imageUrl = null;
-        const validUrls = [];
-        
-        // For tokens, check metadata fields
-        if (metadata) {
-            const tokenImageFields = ['logo', 'icon', 'image'];
-            for (const field of tokenImageFields) {
-                if (metadata[field]) {
-                    const url = isValidUrl(metadata[field]);
-                    if (url) {
-                        validUrls.push(['metadata', field, url]);
-                    }
-                }
-            }
-        }
-        
-        // For NFTs, check onchain metadata
-        if (onchainMetadata) {
-            const nftImageFields = ['image', 'mediaUrl', 'thumbnailUrl'];
-            for (const field of nftImageFields) {
-                if (onchainMetadata[field]) {
-                    const url = isValidUrl(onchainMetadata[field]);
-                    if (url) {
-                        validUrls.push(['onchain', field, url]);
-                    }
-                }
-            }
-        }
-        
-        // Check root level info
-        const rootImageFields = ['logo', 'icon', 'image'];
-        for (const field of rootImageFields) {
-            if (assetData[field]) {
-                const url = isValidUrl(assetData[field]);
-                if (url) {
-                    validUrls.push(['root', field, url]);
-                }
-            }
-        }
-        
-        // Priority order matching the working code
-        const priorityOrder = {
-            'onchain.image': 1,
-            'metadata.image': 2,
-            'onchain.mediaUrl': 3,
-            'metadata.logo': 4,
-            'metadata.icon': 5,
-            'root.image': 6,
-            'root.logo': 7,
-            'root.icon': 8
-        };
-        
-        // Sort by priority and take the highest priority URL
-        if (validUrls.length > 0) {
-            validUrls.sort((a, b) => {
-                const priorityA = priorityOrder[`${a[0]}.${a[1]}`] || 999;
-                const priorityB = priorityOrder[`${b[0]}.${b[1]}`] || 999;
-                return priorityA - priorityB;
-            });
-            imageUrl = validUrls[0][2];
-        }
-        
-        const assetInfo = {
-            unit: assetId,
-            name: name || assetId.slice(-8),  // Ensure name is never null
-            decimals,
-            ticker,
-            image: imageUrl,  // Can be null if no valid URL found
-            is_nft: isNft  // Add NFT flag
-        };
-
-        // Cache it
-        await redis.set(`asset:${assetId}`, JSON.stringify(assetInfo));
-        return assetInfo;
-    } catch (error) {
-        console.error(`Error getting asset info for ${assetId}:`, error);
-        return null;
-    }
+function setInCache(key, value, ttl = 3600) {
+    return cache.set(key, value, ttl);
 }
 
 // Rate limiting
@@ -572,6 +320,79 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
   }
 });
 
+// Payment verification function
+async function verifyPayment(txHash, installId) {
+    try {
+        // Get transaction details
+        const txData = await fetchBlockfrost(`/txs/${txHash}/utxos`, 'fetch transaction UTXOs');
+        if (!txData || !txData.outputs) {
+            console.log('No transaction data found');
+            return false;
+        }
+
+        // Find output to our payment address
+        const paymentOutput = txData.outputs.find(output => 
+            output.address === PAYMENT_ADDRESS
+        );
+
+        if (!paymentOutput) {
+            console.log('No payment to our address found');
+            return false;
+        }
+
+        // Check for BONE token payment
+        const boneAsset = paymentOutput.amount.find(asset => 
+            asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
+        );
+
+        if (!boneAsset) {
+            console.log('No BONE token payment found');
+            return false;
+        }
+
+        const boneAmount = parseInt(boneAsset.quantity);
+        console.log('BONE payment received:', boneAmount, 'BONE');
+
+        if (boneAmount < REQUIRED_BONE_PAYMENT) {
+            console.log('Insufficient BONE payment');
+            return false;
+        }
+
+        // Get all payment keys from cache
+        const keys = await cache.keys('payment:*');
+        console.log('Found payment keys:', keys);
+        
+        // Check each payment for matching tx hash
+        for (const key of keys) {
+            const payment = await getFromCache(key);
+            if (payment && payment.txHash === txHash) {
+                console.log('Payment already processed');
+                return false;
+            }
+        }
+
+        // Create new payment record
+        const paymentId = crypto.randomBytes(16).toString('hex');
+        const payment = {
+            id: paymentId,
+            txHash,
+            installId,
+            amount: boneAmount,
+            timestamp: Date.now(),
+            used: false
+        };
+
+        // Store payment
+        await setInCache(`payment:${paymentId}`, payment, 24 * 60 * 60); // 24 hour TTL
+        await setInCache(`install_payment:${installId}`, paymentId, 24 * 60 * 60);
+
+        return true;
+    } catch (error) {
+        console.error('Error verifying payment:', error);
+        return false;
+    }
+}
+
 // Payment verification endpoint
 app.get('/api/verify-payment/:paymentId', async (req, res) => {
   try {
@@ -590,11 +411,43 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
       payment.used = true;
       await setInCache(`payment:${paymentId}`, payment);
       // Remove the installation ID payment reference
-      await redis.del(`install_payment:${payment.installId}`);
+      await cache.del(`install_payment:${payment.installId}`);
       return res.json({ verified: true, used: false });
     }
 
-    // If not verified, just return the current status
+    // If not verified, check blockchain
+    try {
+      const txs = await fetchBlockfrost(`/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`);
+      console.log('Recent transactions:', JSON.stringify(txs, null, 2));
+
+      // Check last 10 transactions
+      for (const tx of txs.slice(0, 10)) {
+        const txDetails = await fetchBlockfrost(`/txs/${tx.tx_hash}/utxos`);
+        console.log('Transaction details:', JSON.stringify(txDetails, null, 2));
+
+        // Find output to our address
+        const output = txDetails.outputs.find(o => 
+          o.address === PAYMENT_ADDRESS && 
+          o.amount.some(a => a.unit === 'lovelace')
+        );
+
+        if (output) {
+          const amountAda = parseInt(output.amount.find(a => a.unit === 'lovelace').quantity) / 1000000;
+          console.log('Found payment:', amountAda, 'ADA');
+
+          if (amountAda >= parseFloat(payment.amount)) {
+            payment.verified = true;
+            await setInCache(`payment:${paymentId}`, payment);
+            console.log('Payment verified through blockchain check');
+            return res.json({ verified: true, used: false });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking blockchain:', error);
+    }
+
+    // Not verified
     return res.json({ verified: false });
 
   } catch (error) {
@@ -687,47 +540,46 @@ app.post('/webhook', express.json(), async (req, res) => {
       return res.status(400).json({ error: 'Invalid payload' });
     }
 
-    // Find the output to our payment address
+    // Find the output to our payment address with BONE tokens
     const paymentOutput = tx.outputs.find(output => 
       output.address === PAYMENT_ADDRESS && 
       output.amount && 
       output.amount.length > 0 &&
-      output.amount[0].unit === 'lovelace'
+      output.amount.some(asset => asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)
     );
 
     if (!paymentOutput) {
-      console.error('No valid payment to verification address found');
+      console.error('No valid BONE payment to verification address found');
       console.log('Available outputs:', JSON.stringify(tx.outputs, null, 2));
       return res.status(400).json({ error: 'No relevant payment found' });
     }
 
-    // Calculate amount in ADA
-    const amountAda = parseInt(paymentOutput.amount[0].quantity) / 1000000;
-    console.log('Payment received:', amountAda, 'ADA');
+    // Get BONE token amount
+    const boneAsset = paymentOutput.amount.find(asset => 
+      asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
+    );
+    const boneAmount = parseInt(boneAsset.quantity);
+    console.log('BONE payment received:', boneAmount, 'BONE');
 
-    // Get all payment keys from Redis
-    const keys = await redis.keys('payment:*');
+    // Get all payment keys from cache
+    const keys = await cache.keys('payment:*');
     console.log('Found payment keys:', keys);
     
-    // Check each payment for matching amount
+    // Check each payment for matching transaction
+    let verifiedPayment = false;
     for (const key of keys) {
       const payment = await getFromCache(key);
       console.log('Checking payment:', key, payment);
       
-      if (payment) {
-        const requestedAmount = parseFloat(payment.amount);
-        console.log('Comparing amounts:', {
-          received: amountAda,
-          requested: requestedAmount,
-          difference: amountAda - requestedAmount
-        });
-
-        // Verify if received amount is at least the requested amount
-        if (amountAda >= requestedAmount) {
+      if (payment && !payment.verified) {
+        // Verify if received amount is at least 100 BONE
+        if (boneAmount >= REQUIRED_BONE_PAYMENT) {
           payment.verified = true;
+          payment.txHash = tx.hash;
           await setInCache(key, payment);
           const paymentId = key.split(':')[1];
           console.log('Payment verified for ID:', paymentId);
+          verifiedPayment = true;
           
           // Notify all clients watching this payment
           if (global.clients) {
@@ -747,6 +599,10 @@ app.post('/webhook', express.json(), async (req, res) => {
       }
     }
 
+    if (!verifiedPayment) {
+      console.log('No pending payment requests found for this transaction');
+    }
+
     res.status(200).json({ success: true });
   } catch (error) {
     console.error('Error processing webhook:', error);
@@ -761,7 +617,6 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
     console.log('Manual verification request for payment:', paymentId);
     
     const payment = await getFromCache(`payment:${paymentId}`);
-    console.log('Payment details:', payment);
 
     if (!payment) {
       console.log('Payment not found or expired');
@@ -777,7 +632,7 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
       payment.used = true;
       await setInCache(`payment:${paymentId}`, payment);
       // Remove the installation ID payment reference
-      await redis.del(`install_payment:${payment.installId}`);
+      await cache.del(`install_payment:${payment.installId}`);
       return res.json({ verified: true, used: false });
     }
 
@@ -865,13 +720,13 @@ app.get('/api/debug/recent-transactions', async (req, res) => {
 // Add endpoint to view cache
 app.get('/api/cache', async (req, res) => {
   try {
-    // Get all keys from Redis
-    const keys = await redis.keys('*');
+    // Get all keys from cache
+    const keys = await cache.keys('*');
     const cacheData = {};
 
     // Get data for each key
     for (const key of keys) {
-      const value = await redis.get(key);
+      const value = await getFromCache(key);
       try {
         const parsed = JSON.parse(value);
         // Filter out large data fields
@@ -926,11 +781,11 @@ app.get('/api/cache', async (req, res) => {
   }
 });
 
-// Clear Redis cache
+// Clear cache
 app.post('/api/clear-cache', async (req, res) => {
   try {
-    await redis.flushall();
-    console.log('Redis cache cleared');
+    await cache.flushAll();
+    console.log('Cache cleared');
     res.json({ message: 'Cache cleared successfully' });
   } catch (error) {
     console.error('Error clearing cache:', error);
