@@ -1,11 +1,4 @@
-// Storage keys
-const STORAGE_KEYS = {
-  WALLETS: 'wallets',
-  WALLET_DATA: 'wallet_data_',
-  WALLET_ICON: 'wallet_icon_',
-  USER_SLOTS: 'user_slots',
-  USER_PREFERENCES: 'user_preferences'
-};
+import { STORAGE_KEYS } from './constants.js';
 
 // Storage management
 class StorageManager {
