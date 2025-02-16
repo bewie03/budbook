@@ -190,7 +190,15 @@ app.get('/api/wallet/:address', async (req, res) => {
         // Sort assets by quantity (value) before processing
         const sortedAmounts = addressData.amount
             .filter(a => a.unit !== 'lovelace')
-            .sort((a, b) => BigInt(b.quantity) - BigInt(a.quantity));
+            .sort((a, b) => {
+                // Convert to BigInt for comparison
+                const aQuantity = BigInt(a.quantity);
+                const bQuantity = BigInt(b.quantity);
+                // Return -1, 0, or 1 for sorting
+                if (aQuantity < bQuantity) return 1;
+                if (aQuantity > bQuantity) return -1;
+                return 0;
+            });
         
         // Only process top 20 assets initially
         const assetsToProcess = sortedAmounts.slice(0, 20);
