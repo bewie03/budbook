@@ -154,7 +154,9 @@ async function loadWallets() {
         });
 
         // Fetch fresh data
+        console.log('Fetching fresh data for wallet:', address);
         const walletData = await fetchWalletData(address);
+        console.log('Received wallet data:', walletData);
 
         // Merge stored metadata with fresh data, ensuring walletType is preserved
         wallets.push({
@@ -183,6 +185,7 @@ async function loadWallets() {
       }
     }
 
+    console.log('Loaded wallets:', wallets);
     renderWallets();
   } catch (error) {
     console.error('Error loading wallets:', error);
@@ -242,6 +245,16 @@ async function fetchWalletData(address) {
         }
       }
     });
+
+    // Get staking info if stake_address is available
+    if (data.stake_address) {
+      try {
+        data.stakingInfo = await fetchStakingInfo(data.stake_address);
+      } catch (error) {
+        console.error('Error fetching staking info:', error);
+        data.stakingInfo = { error: 'Failed to load staking info', stake_address: data.stake_address };
+      }
+    }
 
     // Cache the results
     await chrome.storage.local.set({
@@ -642,41 +655,16 @@ async function fetchStakingInfo(stakeAddress) {
       }
     });
     
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('Error fetching staking info:', {
-        status: response.status,
-        error: errorData
-      });
-      throw new Error(`Failed to fetch staking info: ${response.status}`);
-    }
+    if (!response.ok) throw new Error('Failed to fetch staking info');
     
     const data = await response.json();
     console.log('Staking data received:', data);
     
-    // Get pool ticker if staked
-    let ticker = 'Unstaked';
-    if (data.pool_id) {
-      try {
-        const poolResponse = await fetch(`${API_BASE_URL}/api/pools/${data.pool_id}`);
-        if (!poolResponse.ok) {
-          throw new Error(`Pool info request failed: ${poolResponse.status}`);
-        }
-        const poolData = await poolResponse.json();
-        ticker = poolData?.metadata?.ticker || poolData?.pool_id?.substring(0,8) || 'Unknown Pool';
-      } catch (error) {
-        console.error('Error fetching pool info:', error);
-        ticker = data.pool_id ? `Pool ${data.pool_id.substring(0,8)}...` : 'Unknown Pool';
-      }
-    }
-
     // Get total rewards
     let totalRewards = '0';
     try {
       const rewardsResponse = await fetch(`${API_BASE_URL}/api/accounts/${stakeAddress}/rewards`);
-      if (!rewardsResponse.ok) {
-        throw new Error(`Rewards request failed: ${rewardsResponse.status}`);
-      }
+      if (!rewardsResponse.ok) throw new Error('Failed to fetch rewards');
       const rewards = await rewardsResponse.json();
       totalRewards = rewards.reduce((sum, reward) => {
         return sum + parseInt(reward.amount || '0');
@@ -685,9 +673,15 @@ async function fetchStakingInfo(stakeAddress) {
       console.error('Error fetching rewards:', error);
       totalRewards = 'Error';
     }
+
+    // Get ticker from pool info
+    let ticker = 'Unstaked';
+    if (data.pool_id && data.pool_info?.metadata) {
+      ticker = data.pool_info.metadata.ticker || data.pool_info.metadata.name || `Pool ${data.pool_id.substring(0,8)}...`;
+    }
     
     return {
-      ticker: ticker,
+      ticker,
       rewards: totalRewards,
       stake_address: stakeAddress,
       active: !!data.pool_id,
@@ -703,6 +697,102 @@ async function fetchStakingInfo(stakeAddress) {
       error: error.message
     };
   }
+}
+
+function createStakingPanel(wallet) {
+  console.log('Creating staking panel with wallet:', wallet);
+  const panel = document.createElement('div');
+  panel.className = 'staking-panel';
+
+  if (!wallet.stakingInfo) {
+    console.log('No staking info available');
+    panel.innerHTML = `
+      <div class="staking-info">
+        <p class="stake-status">Loading staking info...</p>
+      </div>
+    `;
+    return panel;
+  }
+
+  console.log('Staking info available:', wallet.stakingInfo);
+
+  // Handle error case
+  if (wallet.stakingInfo.error) {
+    panel.innerHTML = `
+      <div class="staking-info">
+        <p class="stake-status error-text">Error: ${wallet.stakingInfo.error}</p>
+        ${wallet.stakingInfo.stake_address ? `
+          <div class="stake-address clickable" data-address="${wallet.stakingInfo.stake_address}">
+            ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
+          </div>
+        ` : ''}
+      </div>
+    `;
+    return panel;
+  }
+
+  // Handle unstaked case
+  if (!wallet.stakingInfo.active) {
+    panel.innerHTML = `
+      <div class="staking-info">
+        <p class="stake-status">Unstaked</p>
+        ${wallet.stakingInfo.stake_address ? `
+          <div class="stake-address clickable" data-address="${wallet.stakingInfo.stake_address}">
+            ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
+          </div>
+        ` : ''}
+      </div>
+    `;
+
+    if (wallet.stakingInfo.stake_address) {
+      const addressDiv = panel.querySelector('.stake-address');
+      addressDiv.addEventListener('click', async function() {
+        await copyToClipboard(this.dataset.address);
+        const originalText = this.innerText;
+        this.innerText = 'Copied!';
+        setTimeout(() => {
+          this.innerText = originalText;
+        }, 1000);
+      });
+    }
+
+    return panel;
+  }
+
+  // Handle staked case
+  panel.innerHTML = `
+    <div class="staking-info">
+      <div class="stake-stats">
+        <div class="stat-item">
+          <span class="label">Pool:</span>
+          <span class="pool-ticker">${wallet.stakingInfo.ticker || 'Unknown Pool'}</span>
+        </div>
+        <div class="stat-item">
+          <span class="label">Rewards:</span>
+          <span class="rewards-value">${wallet.stakingInfo.rewards === 'Error' ? 'Error loading' : formatBalance(wallet.stakingInfo.rewards || '0')}</span>
+        </div>
+      </div>
+      ${wallet.stakingInfo.stake_address ? `
+        <div class="stake-address clickable" data-address="${wallet.stakingInfo.stake_address}">
+          ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  if (wallet.stakingInfo.stake_address) {
+    const addressDiv = panel.querySelector('.stake-address');
+    addressDiv.addEventListener('click', async function() {
+      await copyToClipboard(this.dataset.address);
+      const originalText = this.innerText;
+      this.innerText = 'Copied!';
+      setTimeout(() => {
+        this.innerText = originalText;
+      }, 1000);
+    });
+  }
+
+  return panel;
 }
 
 function isValidUrl(url) {
@@ -849,7 +939,12 @@ async function refreshWallet(index) {
     while (retries > 0) {
       try {
         const data = await fetchWalletData(wallet.address);
-        Object.assign(wallet, data);
+        // Preserve metadata while updating with new data
+        Object.assign(wallet, {
+          ...data,
+          name: wallet.name,
+          walletType: wallet.walletType
+        });
         await saveWallets();
         renderWallets();
         return;
@@ -1568,96 +1663,4 @@ function renderAssetsList(walletIndex, tabType) {
     // Append assets to grid
     appendAssetsToGrid(filteredAssets, assetGrid, tabType);
   });
-}
-
-function createStakingPanel(wallet) {
-  const panel = document.createElement('div');
-  panel.className = 'staking-panel';
-
-  if (!wallet.stakingInfo) {
-    panel.innerHTML = `
-      <div class="staking-info">
-        <p class="stake-status">Loading staking info...</p>
-      </div>
-    `;
-    return panel;
-  }
-
-  // Handle error case
-  if (wallet.stakingInfo.error) {
-    panel.innerHTML = `
-      <div class="staking-info">
-        <p class="stake-status error-text">Error: ${wallet.stakingInfo.error}</p>
-        ${wallet.stakingInfo.stake_address ? `
-          <div class="stake-address clickable" data-address="${wallet.stakingInfo.stake_address}">
-            ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
-          </div>
-        ` : ''}
-      </div>
-    `;
-    return panel;
-  }
-
-  // Handle unstaked case
-  if (!wallet.stakingInfo.active) {
-    panel.innerHTML = `
-      <div class="staking-info">
-        <p class="stake-status">Unstaked</p>
-        ${wallet.stakingInfo.stake_address ? `
-          <div class="stake-address clickable" data-address="${wallet.stakingInfo.stake_address}">
-            ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
-          </div>
-        ` : ''}
-      </div>
-    `;
-
-    if (wallet.stakingInfo.stake_address) {
-      const addressDiv = panel.querySelector('.stake-address');
-      addressDiv.addEventListener('click', async function() {
-        await copyToClipboard(this.dataset.address);
-        const originalText = this.innerText;
-        this.innerText = 'Copied!';
-        setTimeout(() => {
-          this.innerText = originalText;
-        }, 1000);
-      });
-    }
-
-    return panel;
-  }
-
-  // Handle staked case
-  panel.innerHTML = `
-    <div class="staking-info">
-      <div class="stake-stats">
-        <div class="stat-item">
-          <span class="label">Pool:</span>
-          <span class="pool-ticker">${wallet.stakingInfo.ticker || 'Unknown Pool'}</span>
-        </div>
-        <div class="stat-item">
-          <span class="label">Rewards:</span>
-          <span class="rewards-value">${wallet.stakingInfo.rewards === 'Error' ? 'Error loading' : formatBalance(wallet.stakingInfo.rewards || '0')}</span>
-        </div>
-      </div>
-      ${wallet.stakingInfo.stake_address ? `
-        <div class="stake-address clickable" data-address="${wallet.stakingInfo.stake_address}">
-          ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
-        </div>
-      ` : ''}
-    </div>
-  `;
-
-  if (wallet.stakingInfo.stake_address) {
-    const addressDiv = panel.querySelector('.stake-address');
-    addressDiv.addEventListener('click', async function() {
-      await copyToClipboard(this.dataset.address);
-      const originalText = this.innerText;
-      this.innerText = 'Copied!';
-      setTimeout(() => {
-        this.innerText = originalText;
-      }, 1000);
-    });
-  }
-
-  return panel;
 }

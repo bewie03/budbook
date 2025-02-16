@@ -283,6 +283,7 @@ app.get('/api/wallet/:address', async (req, res) => {
             assets: assets
         };
 
+        console.log('Stake address:', response.stake_address);
         console.log('Sending response with assets count:', assets.length);
         return res.json(response);
 
@@ -804,34 +805,48 @@ app.post('/api/clear-cache', async (req, res) => {
 
 // Get account info
 app.get('/api/accounts/:stake_address', async (req, res) => {
-  try {
-    const { stake_address } = req.params;
-    console.log('Fetching account info for stake address:', stake_address);
+    try {
+        const { stake_address } = req.params;
+        console.log('Fetching account info for:', stake_address);
 
-    // Check cache first
-    const cacheKey = `account_${stake_address}`;
-    const cachedData = await getFromCache(cacheKey);
-    if (cachedData) {
-      console.log('Returning cached account data');
-      return res.json(cachedData);
-    }
+        // Get account info
+        const accountInfo = await fetchBlockfrost(`/accounts/${stake_address}`, 'fetch account info');
+        console.log('Account info:', accountInfo);
 
-    const accountData = await fetchBlockfrost(`/accounts/${stake_address}`, 'Failed to fetch account data');
-    
-    // If account is delegated, fetch pool info
-    if (accountData.pool_id) {
-      const poolData = await fetchBlockfrost(`/pools/${accountData.pool_id}`, 'Failed to fetch pool data');
-      accountData.pool_info = poolData;
+        if (accountInfo.pool_id) {
+            try {
+                // Get pool metadata
+                const poolMetadata = await fetchBlockfrost(`/pools/${accountInfo.pool_id}/metadata`, 'fetch pool metadata');
+                console.log('Pool metadata received:', poolMetadata);
+                
+                accountInfo.pool_info = {
+                    id: accountInfo.pool_id,
+                    metadata: {
+                        name: poolMetadata.name,
+                        ticker: poolMetadata.ticker,
+                        description: poolMetadata.description,
+                        homepage: poolMetadata.homepage
+                    }
+                };
+            } catch (poolError) {
+                console.error('Error fetching pool metadata:', poolError);
+                // Fallback to just pool ID if metadata fetch fails
+                accountInfo.pool_info = {
+                    id: accountInfo.pool_id,
+                    metadata: {
+                        name: `Pool ${accountInfo.pool_id.substring(0,8)}...`,
+                        ticker: `Pool ${accountInfo.pool_id.substring(0,8)}...`
+                    }
+                };
+            }
+        }
+
+        console.log('Sending account info with pool info:', accountInfo.pool_info);
+        res.json(accountInfo);
+    } catch (error) {
+        console.error('Error in /api/accounts/:stake_address:', error);
+        res.status(500).json({ error: 'Failed to fetch account info' });
     }
-    
-    // Cache the data for 5 minutes
-    await setInCache(cacheKey, accountData, 300);
-    
-    res.json(accountData);
-  } catch (error) {
-    console.error('Error in /api/accounts/:stake_address:', error);
-    res.status(500).json({ error: 'Failed to fetch account data' });
-  }
 });
 
 // Get account rewards
