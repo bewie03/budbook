@@ -113,6 +113,50 @@
       background: rgba(52, 152, 219, 0.1);
     }
 
+    .secondary-button {
+      background: var(--background-light);
+      border: 1px solid var(--border-color);
+      padding: 8px 16px;
+      font-size: 13px;
+    }
+
+    .secondary-button:hover {
+      background: var(--background-dark);
+      border-color: var(--primary-blue);
+    }
+
+    #selectedIcon {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--background-light);
+      padding: 4px;
+      border-radius: 4px;
+      width: fit-content;
+    }
+
+    .icon-button {
+      background: none;
+      border: none;
+      color: var(--text-light);
+      padding: 4px 8px;
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .icon-button:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+    }
+
+    #iconPreview {
+      border-radius: 4px;
+      background: var(--background-dark);
+    }
+
     @keyframes slideIn {
       from {
         transform: translateY(-10px);
@@ -215,8 +259,10 @@
 
     <div class="form-group">
       <label for="walletType">Wallet Type</label>
-      <select id="walletType">
+      <select id="walletType" required>
         <option value="None">None</option>
+        <option value="Default">Default</option>
+        <option value="Pool.pm">Pool.pm</option>
         <option value="Nami">Nami</option>
         <option value="Eternal">Eternal</option>
         <option value="Adalite">Adalite</option>
@@ -224,7 +270,18 @@
         <option value="Daedalus">Daedalus</option>
         <option value="Gero">Gero</option>
         <option value="Lace">Lace</option>
+        <option value="Custom">Custom Icon</option>
       </select>
+      <div id="customIconUpload" style="display: none; margin-top: 8px;">
+        <input type="file" id="iconFile" accept="image/*" style="display: none;">
+        <button type="button" id="uploadButton" class="secondary-button">
+          Choose Icon
+        </button>
+        <div id="selectedIcon" style="margin-top: 8px; display: none;">
+          <img id="iconPreview" style="width: 32px; height: 32px; object-fit: contain;">
+          <button type="button" id="removeIcon" class="icon-button">×</button>
+        </div>
+      </div>
     </div>
 
     <div id="messageContainer"></div>

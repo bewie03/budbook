@@ -12,13 +12,16 @@ const BONE_ASSET_NAME = ''; // Add your BONE token asset name here
 // Available wallet logos
 const WALLET_LOGOS = {
   'None': '',
+  'Default': 'icons/default.png',
+  'Pool.pm': 'icons/pool.pm.png',
   'Nami': 'icons/nami.png',
   'Eternal': 'icons/eternal.png',
   'Adalite': 'icons/adalite.png',
   'Vesper': 'icons/vesper.png',
   'Daedalus': 'icons/daedalus.png',
   'Gero': 'icons/gero.png',
-  'Lace': 'icons/lace.png'
+  'Lace': 'icons/lace.png',
+  'Custom': ''
 };
 
 // Global state
@@ -26,6 +29,7 @@ let wallets = [];
 let unlockedSlots = 0;
 let currentPaymentId = null;
 let eventSource = null;
+let customIconData = null;
 
 // API Functions
 async function fetchWalletData(address) {
@@ -351,6 +355,12 @@ async function addWallet() {
       });
     }
 
+    // Save custom icon if present
+    if (walletType === 'Custom' && customIconData) {
+      await chrome.storage.local.set({
+        [`wallet_icon_${address}`]: customIconData
+      });
+    }
   } catch (error) {
     // Remove temporary wallet if it exists
     const walletIndex = wallets.findIndex(w => w.address === address);
@@ -664,14 +674,137 @@ function setupEventListeners() {
       showError('A wallet with this name already exists', 'error');
     }
   });
+
+  setupCustomIconUpload();
 }
 
-// Helper to sort assets by ADA value
-function sortAssetsByValue(assets) {
-  return assets.sort((a, b) => {
-    const aQuantity = BigInt(a.quantity || '0');
-    const bQuantity = BigInt(b.quantity || '0');
-    return bQuantity > aQuantity ? 1 : -1;
+// Image optimization settings
+const MAX_ICON_SIZE = 32; // pixels
+const MAX_FILE_SIZE = 32 * 1024; // 32KB
+const JPEG_QUALITY = 0.8;
+
+async function optimizeImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        // Create canvas for resizing
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        // Calculate new dimensions while maintaining aspect ratio
+        if (width > height) {
+          if (width > MAX_ICON_SIZE) {
+            height = Math.round(height * MAX_ICON_SIZE / width);
+            width = MAX_ICON_SIZE;
+          }
+        } else {
+          if (height > MAX_ICON_SIZE) {
+            width = Math.round(width * MAX_ICON_SIZE / height);
+            height = MAX_ICON_SIZE;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        // Draw resized image
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Convert to WebP if supported, otherwise JPEG
+        let mimeType = 'image/webp';
+        let quality = JPEG_QUALITY;
+
+        // Fallback to JPEG if WebP not supported
+        if (!canvas.toDataURL('image/webp').startsWith('data:image/webp')) {
+          mimeType = 'image/jpeg';
+        }
+
+        // Get optimized base64
+        const optimizedBase64 = canvas.toDataURL(mimeType, quality);
+        
+        // Check final size
+        const size = Math.round((optimizedBase64.length - 22) * 0.75);
+        if (size > MAX_FILE_SIZE) {
+          reject(new Error('Image still too large after optimization'));
+          return;
+        }
+
+        resolve(optimizedBase64);
+      };
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function setupCustomIconUpload() {
+  const walletType = document.getElementById('walletType');
+  const customIconUpload = document.getElementById('customIconUpload');
+  const iconFile = document.getElementById('iconFile');
+  const uploadButton = document.getElementById('uploadButton');
+  const selectedIcon = document.getElementById('selectedIcon');
+  const iconPreview = document.getElementById('iconPreview');
+  const removeIcon = document.getElementById('removeIcon');
+
+  walletType.addEventListener('change', (e) => {
+    customIconUpload.style.display = e.target.value === 'Custom' ? 'block' : 'none';
+    if (e.target.value !== 'Custom') {
+      customIconData = null;
+      selectedIcon.style.display = 'none';
+    }
+  });
+
+  uploadButton.addEventListener('click', () => {
+    iconFile.click();
+  });
+
+  iconFile.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      showError('Please select an image file');
+      return;
+    }
+
+    try {
+      // Show loading state
+      uploadButton.disabled = true;
+      uploadButton.textContent = 'Optimizing...';
+
+      // Optimize image
+      customIconData = await optimizeImage(file);
+      
+      // Update preview
+      iconPreview.src = customIconData;
+      selectedIcon.style.display = 'flex';
+
+      // Show success message with size info
+      const size = Math.round((customIconData.length - 22) * 0.75 / 1024);
+      showSuccess(`Image optimized (${size}KB)`);
+    } catch (error) {
+      console.error('Error processing image:', error);
+      showError(error.message || 'Failed to process image');
+      customIconData = null;
+    } finally {
+      // Reset upload button
+      uploadButton.disabled = false;
+      uploadButton.textContent = 'Choose Icon';
+    }
+  });
+
+  removeIcon.addEventListener('click', () => {
+    customIconData = null;
+    iconFile.value = '';
+    selectedIcon.style.display = 'none';
   });
 }
 
@@ -731,4 +864,12 @@ function setLoading(element, isLoading) {
     element.classList.remove('loading');
     element.disabled = false;
   }
+}
+
+async function getWalletLogo(walletType, address) {
+  if (walletType === 'Custom') {
+    const data = await chrome.storage.local.get(`wallet_icon_${address}`);
+    return data[`wallet_icon_${address}`] || WALLET_LOGOS['None'];
+  }
+  return WALLET_LOGOS[walletType] || WALLET_LOGOS['None'];
 }

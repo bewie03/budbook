@@ -7,17 +7,6 @@ const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 const BONE_POLICY_ID = ''; // Add your BONE token policy ID here
 const BONE_ASSET_NAME = ''; // Add your BONE token asset name here
 
-const WALLET_LOGOS = {
-  'None': '',
-  'Nami': 'icons/nami.png',
-  'Eternal': 'icons/eternal.png',
-  'Adalite': 'icons/adalite.png',
-  'Vesper': 'icons/vesper.png',
-  'Daedalus': 'icons/daedalus.png',
-  'Gero': 'icons/gero.png',
-  'Lace': 'icons/lace.png'
-};
-
 const CURRENCIES = {
   'ADA': { symbol: '₳', rate: 1 },
   'USD': { symbol: '$', rate: 0 },
@@ -26,6 +15,21 @@ const CURRENCIES = {
 };
 
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache duration
+
+// Available wallet logos
+const WALLET_LOGOS = {
+  'None': '',
+  'Default': 'icons/default.png',
+  'Pool.pm': 'icons/pool.pm.png',
+  'Nami': 'icons/nami.png',
+  'Eternal': 'icons/eternal.png',
+  'Adalite': 'icons/adalite.png',
+  'Vesper': 'icons/vesper.png',
+  'Daedalus': 'icons/daedalus.png',
+  'Gero': 'icons/gero.png',
+  'Lace': 'icons/lace.png',
+  'Custom': ''
+};
 
 let wallets = [];
 let unlockedSlots = 0;
@@ -168,12 +172,20 @@ async function loadWallets() {
         const walletData = await fetchWalletData(address);
         console.log('Received wallet data:', walletData);
 
-        // Merge stored metadata with fresh data, ensuring walletType is preserved
+        // Only store essential data in memory
         wallets.push({
-          ...walletData,
+          address,
           name: storedData.name || 'Unnamed Wallet',
           walletType: storedData.walletType || 'None',
-          address
+          balance: walletData.balance || 0,
+          assets: (walletData.assets || []).map(asset => ({
+            unit: asset.unit,
+            name: asset.name,
+            fingerprint: asset.fingerprint,
+            quantity: asset.quantity,
+            decimals: asset.decimals,
+            isNFT: isNFT(asset)
+          }))
         });
       } catch (error) {
         console.error(`Error loading wallet ${address}:`, error);
@@ -196,7 +208,8 @@ async function loadWallets() {
     }
 
     console.log('Loaded wallets:', wallets);
-    renderWallets();
+    await renderWallets();
+    await updateStorageUsage();
   } catch (error) {
     console.error('Error loading wallets:', error);
     showError('Failed to load wallets');
@@ -205,34 +218,36 @@ async function loadWallets() {
 
 async function saveWallets() {
   try {
-    // Create a wallet index (just addresses)
+    // Save wallet index (list of addresses)
     const walletIndex = wallets.map(w => w.address);
-    
-    // Save wallet index
     await chrome.storage.sync.set({ wallet_index: walletIndex });
-    
-    // Save individual wallet metadata
+
+    // Save only essential metadata for each wallet
     const savePromises = wallets.map(wallet => {
       const metadata = {
         name: wallet.name,
         walletType: wallet.walletType,
-        address: wallet.address
+        address: wallet.address,
+        lastUpdated: Date.now()
       };
       return chrome.storage.sync.set({ [`wallet_${wallet.address}`]: metadata });
     });
-    
+
     await Promise.all(savePromises);
-    
-    // Save unlocked slots
-    await chrome.storage.sync.set({ unlockedSlots });
+    await updateStorageUsage();
+    return true;
   } catch (error) {
     console.error('Error saving wallets:', error);
-    showError('Failed to save wallet data');
+    showError('Failed to save wallets');
+    return false;
   }
 }
 
 async function fetchWalletData(address) {
   try {
+    // Clean up old cache entries first
+    await cleanupCache();
+
     // Check cache first
     const cacheKey = `wallet_data_${address}`;
     const cachedData = await chrome.storage.local.get(cacheKey);
@@ -266,10 +281,38 @@ async function fetchWalletData(address) {
       }
     }
 
-    // Cache the results
+    // Cache only essential data
+    const essentialData = {
+      address: data.address,
+      balance: data.balance,
+      stake_address: data.stake_address,
+      assets: data.assets.map(asset => ({
+        unit: asset.unit,
+        name: asset.name,
+        fingerprint: asset.fingerprint,
+        quantity: asset.quantity,
+        decimals: asset.decimals,
+        isNFT: isNFT(asset),
+        // Preserve image URLs and essential metadata
+        metadata: {
+          image: asset.metadata?.image,
+          name: asset.metadata?.name,
+          description: asset.metadata?.description
+        },
+        onchainMetadata: {
+          image: asset.onchainMetadata?.image,
+          name: asset.onchainMetadata?.name,
+          description: asset.onchainMetadata?.description,
+          type: asset.onchainMetadata?.type
+        }
+      })),
+      stakingInfo: data.stakingInfo
+    };
+
+    // Store in local storage (not sync storage)
     await chrome.storage.local.set({
       [cacheKey]: {
-        data,
+        data: essentialData,
         timestamp: Date.now()
       }
     });
@@ -278,6 +321,27 @@ async function fetchWalletData(address) {
   } catch (error) {
     console.error('Error in fetchWalletData:', error);
     throw error;
+  }
+}
+
+async function cleanupCache() {
+  try {
+    const data = await chrome.storage.local.get(null);
+    const now = Date.now();
+    const keysToRemove = [];
+
+    for (const [key, value] of Object.entries(data)) {
+      if (key.startsWith('wallet_data_') && now - value.timestamp > CACHE_DURATION) {
+        keysToRemove.push(key);
+      }
+    }
+
+    if (keysToRemove.length > 0) {
+      await chrome.storage.local.remove(keysToRemove);
+      console.log('Cleaned up cache entries:', keysToRemove);
+    }
+  } catch (error) {
+    console.error('Error cleaning up cache:', error);
   }
 }
 
@@ -435,7 +499,7 @@ async function copyToClipboard(text) {
   }
 }
 
-function renderWallets() {
+async function renderWallets() {
   const walletList = document.getElementById('walletList');
 
   if (!walletList) {
@@ -451,19 +515,20 @@ function renderWallets() {
     walletList.innerHTML = '';
 
     // Create wallet boxes
-    wallets.forEach((wallet, index) => {
-      if (!wallet) return; // Skip if wallet is undefined
+    for (let i = 0; i < wallets.length; i++) {
+      const wallet = wallets[i];
+      if (!wallet) continue; // Skip if wallet is undefined
       
-      const walletBox = createWalletBox(wallet, index);
+      const walletBox = await createWalletBox(wallet, i);
       walletList.appendChild(walletBox);
-    });
+    }
   }
 
   // Update slot count after rendering wallets
   updateSlotCount();
 }
 
-function createWalletBox(wallet, index) {
+async function createWalletBox(wallet, index) {
   const box = document.createElement('div');
   box.className = 'wallet-item';
   box.setAttribute('draggable', 'true');
@@ -482,16 +547,27 @@ function createWalletBox(wallet, index) {
   header.className = 'wallet-header';
   
   // Get wallet icon based on type
-  const iconPath = WALLET_LOGOS[wallet.walletType] || WALLET_LOGOS['None'];
-  
+  let walletType = wallet.walletType || 'None';
+  if (wallet.address.startsWith('$')) {
+    walletType = 'Vesper';
+  }
+
+  // Get icon path or custom icon data
+  let iconSrc = '';
+  if (walletType === 'Custom') {
+    const data = await chrome.storage.local.get(`wallet_icon_${wallet.address}`);
+    iconSrc = data[`wallet_icon_${wallet.address}`] || WALLET_LOGOS['None'];
+  } else {
+    iconSrc = WALLET_LOGOS[walletType] || WALLET_LOGOS['None'];
+  }
+
   header.innerHTML = `
     <div class="wallet-info">
-      ${iconPath ? `
-        <img src="${iconPath}" alt="${wallet.walletType}" class="wallet-icon">
+      ${iconSrc ? `
+        <img src="${iconSrc}" alt="${walletType}" class="wallet-icon">
       ` : ''}
       <div class="wallet-text" role="button" title="Click to copy address">
         <div class="wallet-name">${wallet.name || 'Unnamed Wallet'}</div>
-        <div class="wallet-type">${wallet.walletType || 'None'}</div>
         <div class="wallet-address">${truncateAddress(wallet.address || '')}</div>
       </div>
     </div>
@@ -552,6 +628,31 @@ function createWalletBox(wallet, index) {
   const nftCount = wallet.assets.filter(asset => isNFT(asset)).length;
   const tokenCount = wallet.assets.filter(asset => !isNFT(asset)).length;
 
+  // Create filter section
+  const filterSection = document.createElement('div');
+  filterSection.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    padding: 0 15px;
+  `;
+
+  // Create count display
+  const countDisplay = document.createElement('div');
+  countDisplay.style.cssText = `
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    font-size: 13px;
+    padding: 4px 12px;
+    border-radius: 12px;
+    min-width: 40px;
+    text-align: center;
+    margin-top: -8px;
+  `;
+  countDisplay.textContent = wallet.assets.length;
+
   // Create filter buttons container
   const filterContainer = document.createElement('div');
   filterContainer.className = 'asset-filters';
@@ -559,22 +660,25 @@ function createWalletBox(wallet, index) {
     display: flex;
     justify-content: center;
     gap: 6px;
-    margin: 15px 0;
-    padding: 0 15px;
+    margin-bottom: -8px;
   `;
 
-  // Create filter buttons with action button styling
-  const createFilterButton = (label, count, filter, isActive = false) => {
+  // Create filter buttons
+  const createFilterButton = (label, filter, isActive = false) => {
     const button = document.createElement('button');
     button.className = `action-button${isActive ? ' active' : ''}`;
     button.setAttribute('data-filter', filter);
-    button.innerHTML = `${label} (${count})`;
+    button.textContent = label;
+    button.style.cssText = `
+      min-width: 80px;
+      padding: 6px 16px;
+    `;
     return button;
   };
 
-  const allButton = createFilterButton('All', wallet.assets.length, 'all', true);
-  const nftButton = createFilterButton('NFTs', nftCount, 'nfts');
-  const tokenButton = createFilterButton('Tokens', tokenCount, 'tokens');
+  const allButton = createFilterButton('All', 'all', true);
+  const nftButton = createFilterButton('NFTs', 'nfts');
+  const tokenButton = createFilterButton('Tokens', 'tokens');
 
   filterContainer.appendChild(allButton);
   filterContainer.appendChild(nftButton);
@@ -584,28 +688,18 @@ function createWalletBox(wallet, index) {
   [allButton, nftButton, tokenButton].forEach(btn => {
     btn.addEventListener('click', () => {
       // Update button styles
-      [allButton, nftButton, tokenButton].forEach(b => {
-        b.classList.remove('active');
-      });
+      [allButton, nftButton, tokenButton].forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
       
-      const filter = btn.dataset.filter;
-      const assetItems = assetsSection.querySelectorAll('.asset-thumbnail');
-      
-      assetItems.forEach(item => {
-        if (filter === 'all') {
-          item.style.display = '';
-        } else if (filter === 'nfts') {
-          item.style.display = item.classList.contains('nft') ? '' : 'none';
-        } else if (filter === 'tokens') {
-          item.style.display = item.classList.contains('token') ? '' : 'none';
-        }
-      });
+      // Render assets for the selected tab
+      renderAssetsList(currentWallet, btn.dataset.filter);
     });
   });
 
-  // Add filter buttons to assets section
-  assetsSection.appendChild(filterContainer);
+  // Add filter components to assets section
+  filterSection.appendChild(countDisplay);
+  filterSection.appendChild(filterContainer);
+  assetsSection.appendChild(filterSection);
 
   // Create and add assets grid
   const assetsGrid = document.createElement('div');
@@ -614,7 +708,7 @@ function createWalletBox(wallet, index) {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 15px;
-    padding: 15px;
+    padding: 15px 15px 0;
   `;
 
   // Add assets to grid
@@ -625,22 +719,15 @@ function createWalletBox(wallet, index) {
     assetThumbnail.innerHTML = imageUrl ? `
       <img src="${imageUrl}" alt="${asset.name || asset.unit}">
     ` : `
-      <span>${getFirstLetter(asset.name || asset.unit)}</span>
+      <span style="background-color: ${getRandomColor(asset.name)}">${getFirstLetter(asset.name || asset.unit)}</span>
     `;
     assetsGrid.appendChild(assetThumbnail);
   });
 
   assetsSection.appendChild(assetsGrid);
 
-  // Staking section
-  const stakingSection = document.createElement('div');
-  stakingSection.className = 'wallet-section';
-  stakingSection.setAttribute('data-section', 'staking');
-  stakingSection.appendChild(createStakingPanel(wallet));
-
   contentContainer.appendChild(generalSection);
   contentContainer.appendChild(assetsSection);
-  contentContainer.appendChild(stakingSection);
   
   // Create bottom navigation
   const nav = document.createElement('div');
@@ -740,102 +827,6 @@ async function fetchStakingInfo(stakeAddress) {
   }
 }
 
-function createStakingPanel(wallet) {
-  console.log('Creating staking panel with wallet:', wallet);
-  const panel = document.createElement('div');
-  panel.className = 'staking-panel';
-
-  if (!wallet.stakingInfo) {
-    console.log('No staking info available');
-    panel.innerHTML = `
-      <div class="staking-info">
-        <p class="stake-status">Loading staking info...</p>
-      </div>
-    `;
-    return panel;
-  }
-
-  console.log('Staking info available:', wallet.stakingInfo);
-
-  // Handle error case
-  if (wallet.stakingInfo.error) {
-    panel.innerHTML = `
-      <div class="staking-info">
-        <p class="stake-status error-text">Error: ${wallet.stakingInfo.error}</p>
-        ${wallet.stakingInfo.stake_address ? `
-          <div class="stake-address clickable" data-address="${wallet.stakingInfo.stake_address}">
-            ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
-          </div>
-        ` : ''}
-      </div>
-    `;
-    return panel;
-  }
-
-  // Handle unstaked case
-  if (!wallet.stakingInfo.active) {
-    panel.innerHTML = `
-      <div class="staking-info">
-        <p class="stake-status">Unstaked</p>
-        ${wallet.stakingInfo.stake_address ? `
-          <div class="stake-address clickable" data-address="${wallet.stakingInfo.stake_address}">
-            ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
-          </div>
-        ` : ''}
-      </div>
-    `;
-
-    if (wallet.stakingInfo.stake_address) {
-      const addressDiv = panel.querySelector('.stake-address');
-      addressDiv.addEventListener('click', async function() {
-        await copyToClipboard(this.dataset.address);
-        const originalText = this.innerText;
-        this.innerText = 'Copied!';
-        setTimeout(() => {
-          this.innerText = originalText;
-        }, 1000);
-      });
-    }
-
-    return panel;
-  }
-
-  // Handle staked case
-  panel.innerHTML = `
-    <div class="staking-info">
-      <div class="stake-stats">
-        <div class="stat-item">
-          <span class="label">Pool:</span>
-          <span class="pool-ticker">${wallet.stakingInfo.ticker || 'Unknown Pool'}</span>
-        </div>
-        <div class="stat-item">
-          <span class="label">Rewards:</span>
-          <span class="rewards-value">${wallet.stakingInfo.rewards === 'Error' ? 'Error loading' : formatBalance(wallet.stakingInfo.rewards || '0')}</span>
-        </div>
-      </div>
-      ${wallet.stakingInfo.stake_address ? `
-        <div class="stake-address clickable" data-address="${wallet.stakingInfo.stake_address}">
-          ${truncateAddress(wallet.stakingInfo.stake_address, 8, 8)}
-        </div>
-      ` : ''}
-    </div>
-  `;
-
-  if (wallet.stakingInfo.stake_address) {
-    const addressDiv = panel.querySelector('.stake-address');
-    addressDiv.addEventListener('click', async function() {
-      await copyToClipboard(this.dataset.address);
-      const originalText = this.innerText;
-      this.innerText = 'Copied!';
-      setTimeout(() => {
-        this.innerText = originalText;
-      }, 1000);
-    });
-  }
-
-  return panel;
-}
-
 function isValidUrl(url) {
   try {
     new URL(url);
@@ -850,13 +841,25 @@ function getFirstLetter(name) {
 }
 
 function getRandomColor(text) {
+  // Color palette for asset letters - more muted colors
+  const COLORS = [
+    '#2c3e50', // Dark Blue
+    '#27ae60', // Muted Green
+    '#c0392b', // Dark Red
+    '#d35400', // Dark Orange
+    '#8e44ad', // Dark Purple
+    '#16a085', // Dark Teal
+    '#7f8c8d', // Gray
+    '#2980b9', // Muted Blue
+  ];
+  
   // Generate a consistent color based on text
   let hash = 0;
   for (let i = 0; i <text.length; i++) {
     hash = text.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const hue = hash % 360;
-  return `hsl(${hue}, 70%, 60%)`; // Consistent but random-looking color
+  const hue = hash % COLORS.length;
+  return COLORS[hue]; // Consistent but random-looking color
 }
 
 function setupAssetsPanelListeners() {
@@ -905,7 +908,7 @@ async function addWallet() {
 
     const address = addressInput.value.trim();
     const name = nameInput.value.trim() || 'Unnamed Wallet';
-    const walletType = typeSelect.value;
+    const walletType = address.startsWith('$') ? 'Vesper' : 'None';
 
     if (!address) {
       showError('Please enter a wallet address');
@@ -918,7 +921,7 @@ async function addWallet() {
       return;
     }
 
-    // Create new wallet with metadata
+    // Create new wallet object
     const newWallet = {
       address,
       name,
@@ -939,7 +942,7 @@ async function addWallet() {
     typeSelect.value = 'None';
 
     // Refresh UI
-    renderWallets();
+    await renderWallets();
     
     // Start loading wallet data
     refreshWallet(wallets.length - 1);
@@ -951,8 +954,9 @@ async function addWallet() {
   }
 }
 
-function updateUI() {
-  renderWallets();
+async function updateUI() {
+  await renderWallets();
+  await updateStorageUsage();
   setupEventListeners();
 }
 
@@ -1012,17 +1016,16 @@ async function refreshWallet(index) {
         // Preserve metadata while updating with new data
         Object.assign(wallet, {
           ...data,
-          name: wallet.name,
-          walletType: wallet.walletType
+          name: wallet.name
         });
         
         await saveWallets();
-        renderWallets();
+        await renderWallets();
         return;
-      } catch (e) {
-        error = e;
+      } catch (error) {
+        error = error;
         retries--;
-        if (retries > 0 && e.message.includes('Too many requests')) {
+        if (retries > 0 && error.message.includes('Too many requests')) {
           await wait(1000 * (3 - retries)); // Exponential backoff
         }
       }
@@ -1062,8 +1065,8 @@ async function rateLimitRequest() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'RELOAD_WALLETS') {
     console.log('Reloading wallets due to update');
-    loadWallets().then(() => {
-      updateUI();
+    loadWallets().then(async () => {
+      await updateUI();
     });
   }
   else if (message.action === 'walletLoading') {
@@ -1078,9 +1081,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       
       walletBox.innerHTML = `
         <div class="wallet-header">
-          <h3>${wallet.name}</h3>
-          <div class="wallet-type">
-            ${wallet.walletType !== 'None' ? `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}">` : ''}
+          <div class="wallet-info">
+            ${WALLET_LOGOS[wallet.walletType] ? `
+              <img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-icon">
+            ` : ''}
+            <div class="wallet-text">
+              <div class="wallet-name">${wallet.name}</div>
+              <div class="wallet-address">${truncateAddress(wallet.address)}</div>
+            </div>
           </div>
         </div>
         <p>Fetching wallet data...</p>
@@ -1094,13 +1102,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const wallet = message.wallet;
     const walletBox = document.getElementById(`wallet-${wallet.address}`);
     if (walletBox) {
-      const newWalletBox = createWalletBox(wallet, wallets.findIndex(w => w.address === wallet.address));
-      walletBox.replaceWith(newWalletBox);
+      createWalletBox(wallet, wallets.findIndex(w => w.address === wallet.address))
+        .then(newWalletBox => {
+          walletBox.replaceWith(newWalletBox);
+        });
     }
   }
   else if (message.action === 'refresh') {
-    loadWallets().then(() => {
-      updateUI();
+    loadWallets().then(async () => {
+      await updateUI();
     });
   }
 });
@@ -1471,28 +1481,24 @@ async function deleteWallet(index) {
       throw new Error('Wallet not found');
     }
 
-    // Remove from wallets array
+    // Remove custom icon if exists
+    if (walletToDelete.walletType === 'Custom') {
+      await chrome.storage.local.remove(`wallet_icon_${walletToDelete.address}`);
+    }
+
+    // Remove from array
     wallets.splice(index, 1);
-
-    // Get current wallet index from storage
-    const data = await chrome.storage.sync.get(['wallet_index']);
-    const walletIndex = data.wallet_index || [];
-
-    // Remove wallet from index
-    const updatedIndex = walletIndex.filter(addr => addr !== walletToDelete.address);
-
-    // Remove wallet data
-    await chrome.storage.sync.remove(`wallet_${walletToDelete.address}`);
-
-    // Save updated index
-    await chrome.storage.sync.set({ wallet_index: updatedIndex });
-
-    // Re-render wallets
-    renderWallets();
+    
+    // Save changes
+    await saveWallets();
+    
+    // Re-render UI
+    await renderWallets();
+    
     showSuccess('Wallet deleted successfully');
   } catch (error) {
     console.error('Error deleting wallet:', error);
-    showError('Failed to delete wallet: ' + error.message);
+    showError('Failed to delete wallet');
   }
 }
 
@@ -1515,13 +1521,13 @@ function setupEventListeners() {
       const address = walletItem.dataset.address;
       if (address) {
         await copyToClipboard(address);
-        const walletName = element.querySelector('.wallet-name');
-        const originalText = walletName.innerText;
-        walletName.innerText = 'Copied!';
-        walletName.style.color = '#00b894';
+        const walletType = element.querySelector('.wallet-type');
+        const originalText = walletType.innerText;
+        walletType.innerText = 'Copied!';
+        walletType.style.color = '#00b894';
         setTimeout(() => {
-          walletName.innerText = originalText;
-          walletName.style.color = '';
+          walletType.innerText = originalText;
+          walletType.style.color = '';
         }, 1000);
       }
     });
@@ -1539,8 +1545,41 @@ function setupEventListeners() {
       
       // Update active section
       walletItem.querySelectorAll('.wallet-section').forEach(section => {
-        section.classList.toggle('active', section.dataset.section === sectionName);
+        section.classList.toggle('active', section.getAttribute('data-section') === sectionName);
       });
     });
   });
+}
+
+async function updateStorageUsage() {
+  try {
+    // Get total bytes in use
+    const bytesInUse = await chrome.storage.sync.getBytesInUse();
+    
+    // Chrome sync storage limit is 5MB (5,242,880 bytes)
+    const STORAGE_LIMIT = 5 * 1024 * 1024;
+    
+    // Calculate percentage used
+    const percentageUsed = Math.round((bytesInUse / STORAGE_LIMIT) * 100);
+    
+    // Update UI
+    const storageUsedElement = document.getElementById('storageUsed');
+    const storageBarElement = document.getElementById('storageBar');
+    
+    if (storageUsedElement && storageBarElement) {
+      storageUsedElement.textContent = percentageUsed;
+      storageBarElement.style.width = `${percentageUsed}%`;
+      
+      // Update color based on usage
+      if (percentageUsed > 90) {
+        storageBarElement.style.backgroundColor = '#ff4444';
+      } else if (percentageUsed > 70) {
+        storageBarElement.style.backgroundColor = '#ffa500';
+      } else {
+        storageBarElement.style.backgroundColor = '#3498db';
+      }
+    }
+  } catch (error) {
+    console.error('Error updating storage usage:', error);
+  }
 }
