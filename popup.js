@@ -310,7 +310,12 @@ async function addWallet() {
     if (fullviewTabs.length > 0) {
       chrome.tabs.sendMessage(fullviewTabs[0].id, { 
         action: 'walletLoading',
-        wallet: tempWallet
+        wallet: {
+          name,
+          address,
+          walletType: walletType,
+          customIcon: walletType === 'Custom' ? customIconData : undefined
+        }
       });
     }
 
@@ -360,6 +365,7 @@ async function addWallet() {
       await chrome.storage.local.set({
         [`wallet_icon_${address}`]: customIconData
       });
+      wallets[walletIndex].customIcon = customIconData;
     }
   } catch (error) {
     // Remove temporary wallet if it exists

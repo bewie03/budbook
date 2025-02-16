@@ -185,7 +185,8 @@ async function loadWallets() {
             quantity: asset.quantity,
             decimals: asset.decimals,
             isNFT: isNFT(asset)
-          }))
+          })),
+          stakingInfo: walletData.stakingInfo
         });
       } catch (error) {
         console.error(`Error loading wallet ${address}:`, error);
@@ -245,84 +246,100 @@ async function saveWallets() {
 
 async function fetchWalletData(address) {
   try {
-    // Clean up old cache entries first
-    await cleanupCache();
-
     // Check cache first
     const cacheKey = `wallet_data_${address}`;
-    const cachedData = await chrome.storage.local.get(cacheKey);
-    const cached = cachedData[cacheKey];
-
-    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
-      console.log('Using cached data for:', address);
-      return cached.data;
+    const now = Date.now();
+    const cache = await chrome.storage.local.get(cacheKey);
+    
+    // If we have cached data and it's not expired, use it
+    if (cache[cacheKey] && now - cache[cacheKey].timestamp < CACHE_DURATION) {
+      console.log('Using cached data for', address);
+      return cache[cacheKey].data;
     }
 
-    console.log('Fetching data for address:', address);
-    const data = await requestQueue.add({
-      url: `${API_BASE_URL}/api/wallet/${address}?forceRefresh=true`,
-      options: {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'Origin': chrome.runtime.getURL('')
-        }
-      }
-    });
+    // If server is not running, return empty data
+    if (!isServerRunning) {
+      console.log('Server not running, returning empty data');
+      return {
+        balance: '0',
+        assets: [],
+        stakingInfo: null
+      };
+    }
 
-    // Get staking info if stake_address is available
+    console.log('Fetching fresh data for', address);
+    const response = await fetch(`${API_BASE_URL}/api/wallet/${address}`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+
+    // Get staking info
+    let stakingInfo = null;
     if (data.stake_address) {
       try {
-        data.stakingInfo = await fetchStakingInfo(data.stake_address);
+        const stakingResponse = await fetch(`${API_BASE_URL}/api/accounts/${data.stake_address}`);
+        if (stakingResponse.ok) {
+          stakingInfo = await stakingResponse.json();
+        }
       } catch (error) {
         console.error('Error fetching staking info:', error);
-        data.stakingInfo = { error: 'Failed to load staking info', stake_address: data.stake_address };
       }
     }
-
-    // Cache only essential data
-    const essentialData = {
-      address: data.address,
+    
+    const walletData = {
       balance: data.balance,
-      stake_address: data.stake_address,
       assets: data.assets.map(asset => ({
         unit: asset.unit,
         name: asset.name,
         fingerprint: asset.fingerprint,
         quantity: asset.quantity,
         decimals: asset.decimals,
-        isNFT: isNFT(asset),
-        // Preserve image URLs and essential metadata
-        metadata: {
-          image: asset.metadata?.image,
-          name: asset.metadata?.name,
-          description: asset.metadata?.description
-        },
-        onchainMetadata: {
-          image: asset.onchainMetadata?.image,
-          name: asset.onchainMetadata?.name,
-          description: asset.onchainMetadata?.description,
-          type: asset.onchainMetadata?.type
-        }
+        isNFT: isNFT(asset)
       })),
-      stakingInfo: data.stakingInfo
+      stakingInfo
     };
 
-    // Store in local storage (not sync storage)
+    // Cache the fresh data
     await chrome.storage.local.set({
       [cacheKey]: {
-        data: essentialData,
-        timestamp: Date.now()
+        data: walletData,
+        timestamp: now
       }
     });
 
-    return data;
+    return walletData;
+
   } catch (error) {
-    console.error('Error in fetchWalletData:', error);
-    throw error;
+    console.error('Error fetching wallet data:', error);
+    // Return empty data structure on error
+    return {
+      balance: '0',
+      assets: [],
+      stakingInfo: null,
+      error: error.message
+    };
   }
 }
+
+// Add server status check
+let isServerRunning = false;
+
+async function checkServerStatus() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/health`);
+    isServerRunning = response.ok;
+  } catch (error) {
+    isServerRunning = false;
+  }
+  return isServerRunning;
+}
+
+// Check server status periodically
+setInterval(checkServerStatus, 30000); // Every 30 seconds
+checkServerStatus(); // Initial check
 
 async function cleanupCache() {
   try {
@@ -726,8 +743,38 @@ async function createWalletBox(wallet, index) {
 
   assetsSection.appendChild(assetsGrid);
 
+  // Staking section
+  const stakingSection = document.createElement('div');
+  stakingSection.className = 'wallet-section';
+  stakingSection.setAttribute('data-section', 'staking');
+  
+  if (wallet.stakingInfo && wallet.stakingInfo.pool_info) {
+    const rewards = wallet.stakingInfo.withdrawable_amount || '0';
+    const formattedRewards = (parseInt(rewards) / 1000000).toFixed(2);
+    
+    stakingSection.innerHTML = `
+      <div class="staking-info">
+        <div class="staking-group">
+          <div class="staking-label">Pool</div>
+          <div class="staking-value">${wallet.stakingInfo.pool_info.metadata?.ticker || 'Unknown'}</div>
+        </div>
+        <div class="staking-group">
+          <div class="staking-label">Rewards</div>
+          <div class="staking-value">${formattedRewards} ₳</div>
+        </div>
+      </div>
+    `;
+  } else {
+    stakingSection.innerHTML = `
+      <div class="staking-info not-staking">
+        <div class="staking-message">Not delegated</div>
+      </div>
+    `;
+  }
+
   contentContainer.appendChild(generalSection);
   contentContainer.appendChild(assetsSection);
+  contentContainer.appendChild(stakingSection);
   
   // Create bottom navigation
   const nav = document.createElement('div');
@@ -1079,11 +1126,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       walletBox.className = 'wallet-box loading';
       walletBox.id = `wallet-${wallet.address}`;
       
+      // Get icon source - handle custom icons
+      let iconSrc = '';
+      if (wallet.walletType === 'Custom' && wallet.customIcon) {
+        iconSrc = wallet.customIcon;
+      } else {
+        iconSrc = WALLET_LOGOS[wallet.walletType] || '';
+      }
+      
       walletBox.innerHTML = `
         <div class="wallet-header">
           <div class="wallet-info">
-            ${WALLET_LOGOS[wallet.walletType] ? `
-              <img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-icon">
+            ${iconSrc ? `
+              <img src="${iconSrc}" alt="${wallet.walletType}" class="wallet-icon">
             ` : ''}
             <div class="wallet-text">
               <div class="wallet-name">${wallet.name}</div>
@@ -1316,18 +1371,11 @@ async function initiatePayment() {
   }
 }
 
-function formatBalance(balance) {
-  // Convert null/undefined to 0
-  const rawBalance = balance || 0;
-  
+function formatBalance(lovelace) {
+  if (!lovelace) return '0.00 ₳';
   // Convert from lovelace to ADA (1 ADA = 1,000,000 lovelace)
-  const adaValue = parseFloat(rawBalance) / 1000000;
-  
-  // Format with proper decimals
-  return `₳${adaValue.toLocaleString(undefined, { 
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6 
-  })}`;
+  const ada = parseInt(lovelace) / 1000000;
+  return `${ada.toFixed(2)} ₳`;
 }
 
 function formatTokenAmount(amount, decimals = 0) {

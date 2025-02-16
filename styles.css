@@ -2510,3 +2510,37 @@ button:disabled {
   padding: 2px 6px;
   border-radius: 10px;
 }
+
+.staking-info {
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  display: flex;
+  gap: 16px;
+}
+
+.staking-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.staking-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.staking-value {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.staking-info.not-staking {
+  justify-content: center;
+}
+
+.staking-message {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
