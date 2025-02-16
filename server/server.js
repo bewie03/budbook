@@ -222,24 +222,18 @@ app.get('/api/wallet/:address', async (req, res) => {
                 
                 // First check onchain_metadata
                 for (const field of possibleImageFields) {
-                    if (onchainMetadata[field]) {
-                        const url = isValidUrl(onchainMetadata[field]);
-                        if (url) {
-                            imageUrl = url;
-                            break;
-                        }
+                    if (onchainMetadata[field] && isValidUrl(onchainMetadata[field])) {
+                        imageUrl = onchainMetadata[field];
+                        break;
                     }
                 }
                 
                 // If no image found in onchain_metadata, check metadata
                 if (!imageUrl) {
                     for (const field of possibleImageFields) {
-                        if (metadata[field]) {
-                            const url = isValidUrl(metadata[field]);
-                            if (url) {
-                                imageUrl = url;
-                                break;
-                            }
+                        if (metadata[field] && isValidUrl(metadata[field])) {
+                            imageUrl = metadata[field];
+                            break;
                         }
                     }
                 }

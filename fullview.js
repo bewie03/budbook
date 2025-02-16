@@ -1429,11 +1429,31 @@ function appendAssetsToGrid(assets, container, type, observer) {
     const card = document.createElement('div');
     card.className = 'asset-card';
     
-    if (isNFTAsset && asset.metadata?.image) {
+    // Handle NFT/token images
+    const imageUrl = getAssetImage(asset);
+    if (imageUrl) {
       const img = document.createElement('img');
       img.className = 'asset-image';
-      img.dataset.src = convertIpfsUrl(asset.metadata.image);
+      img.dataset.src = imageUrl;
       img.src = 'icons/placeholder.png'; // Add a placeholder image
+      
+      // Handle image loading errors
+      img.onerror = function() {
+        // Try next IPFS gateway if it's an IPFS URL
+        if (this.src.includes('/ipfs/')) {
+          const currentGateway = IPFS_GATEWAYS.find(g => this.src.includes(g));
+          if (currentGateway) {
+            const hash = this.src.split(currentGateway)[1];
+            const nextGatewayIndex = (IPFS_GATEWAYS.indexOf(currentGateway) + 1) % IPFS_GATEWAYS.length;
+            this.src = `${IPFS_GATEWAYS[nextGatewayIndex]}${hash}`;
+            return;
+          }
+        }
+        // If all gateways fail or it's not an IPFS URL, show fallback
+        this.src = 'icons/image-error.png';
+        this.classList.add('image-error');
+      };
+      
       observer.observe(img);
       card.appendChild(img);
     }
@@ -1441,7 +1461,7 @@ function appendAssetsToGrid(assets, container, type, observer) {
     const info = document.createElement('div');
     info.className = 'asset-info';
     info.innerHTML = `
-      <div class="asset-name">${asset.metadata?.name || 'Unknown Asset'}</div>
+      <div class="asset-name">${asset.metadata?.name || asset.onchainMetadata?.name || 'Unknown Asset'}</div>
       <div class="asset-amount">${formatTokenAmount(asset.quantity, asset.decimals)}</div>
     `;
     
