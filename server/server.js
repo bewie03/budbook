@@ -149,6 +149,24 @@ function formatAmount(quantity, decimals) {
     }
 }
 
+// Helper function to validate URLs
+function isValidUrl(url) {
+  try {
+    if (!url || typeof url !== 'string') return false;
+    url = url.trim();
+    if (!url) return false;
+    
+    // Handle special cases for IPFS
+    if (url.startsWith('ipfs://')) return true;
+    if (url.includes('/ipfs/')) return true;
+    
+    const urlObj = new URL(url);
+    return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
+  } catch (error) {
+    return false;
+  }
+}
+
 // Get wallet info
 app.get('/api/wallet/:address', async (req, res) => {
     try {
@@ -289,15 +307,13 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
       return res.status(400).json({ error: 'Installation ID is required' });
     }
 
-    // Generate random ADA amount between 2-3
-    const amount = (2 + Math.random()).toFixed(2);
     const paymentId = crypto.randomUUID();
     
     // Store payment details with installation ID
     const payment = {
       paymentId,
       installId,
-      amount,
+      amount: REQUIRED_BONE_PAYMENT,
       timestamp: Date.now(),
       verified: false,
       used: false
@@ -311,7 +327,6 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
     
     res.json({
       paymentId,
-      amount,
       address: PAYMENT_ADDRESS
     });
   } catch (error) {
@@ -864,9 +879,12 @@ app.get('/api/accounts/:stakeAddress', async (req, res) => {
     // Get pool info if the account is delegating
     let poolInfo = null;
     if (accountInfo.pool_id) {
-      console.log('Fetching pool info for:', accountInfo.pool_id);
-      poolInfo = await fetchBlockfrost(`/pools/${accountInfo.pool_id}`, 'fetch pool info');
-      console.log('Pool info received:', poolInfo);
+      try {
+        poolInfo = await fetchBlockfrost(`/pools/${accountInfo.pool_id}`, 'fetch pool info');
+        console.log('Pool info received:', poolInfo);
+      } catch (poolError) {
+        console.error('Error fetching pool info:', poolError);
+      }
     }
 
     // Format response

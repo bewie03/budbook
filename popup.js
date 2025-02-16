@@ -1,6 +1,6 @@
 // Constants
-const MAX_FREE_SLOTS = 6;
-const SLOTS_PER_PAYMENT = 6;
+const MAX_FREE_SLOTS = 5;
+const SLOTS_PER_PAYMENT = 5;
 const MAX_TOTAL_SLOTS = 100;
 const BONE_PAYMENT_AMOUNT = 100;
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
@@ -23,7 +23,7 @@ const WALLET_LOGOS = {
 
 // Global state
 let wallets = [];
-let unlockedSlots = MAX_FREE_SLOTS;
+let unlockedSlots = 0;
 let currentPaymentId = null;
 let eventSource = null;
 
@@ -132,7 +132,13 @@ async function loadWallets() {
         }
         
         const walletIndex = data.wallet_index || [];
-        unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
+        // Initialize unlockedSlots to MAX_FREE_SLOTS if not set
+        if (!data.unlockedSlots) {
+          chrome.storage.sync.set({ unlockedSlots: MAX_FREE_SLOTS });
+          unlockedSlots = MAX_FREE_SLOTS;
+        } else {
+          unlockedSlots = data.unlockedSlots;
+        }
 
         // Load wallet metadata from sync storage
         const walletPromises = walletIndex.map(address => 
@@ -244,7 +250,7 @@ async function saveWallets() {
 async function addWallet() {
   const addressInput = document.getElementById('addressInput');
   const nameInput = document.getElementById('nameInput');
-  const walletTypeSelect = document.getElementById('walletType');
+  const walletTypeSelect = document.getElementById('walletTypeSelector');
   
   const address = addressInput?.value?.trim();
   const name = nameInput?.value?.trim();
@@ -495,7 +501,7 @@ function updateUI() {
     addWalletBtn.disabled = wallets.length >= unlockedSlots;
   }
 
-  const walletTypeSelect = document.getElementById('walletType');
+  const walletTypeSelect = document.getElementById('walletTypeSelector');
   if (walletTypeSelect) {
     walletTypeSelect.innerHTML = renderWalletSelector();
   }
@@ -577,11 +583,28 @@ async function handlePaymentSuccess() {
 }
 
 function setupEventListeners() {
+  // Populate wallet type selector
+  const walletTypeSelect = document.getElementById('walletTypeSelector');
+  if (walletTypeSelect) {
+    // Clear existing options
+    walletTypeSelect.innerHTML = '';
+    
+    // Add wallet types from WALLET_LOGOS
+    Object.keys(WALLET_LOGOS).forEach(type => {
+      const option = document.createElement('option');
+      option.value = type;
+      option.textContent = type;
+      walletTypeSelect.appendChild(option);
+    });
+  }
+
+  // Add wallet button
   const addWalletBtn = document.getElementById('addWallet');
   if (addWalletBtn) {
     addWalletBtn.addEventListener('click', addWallet);
   }
 
+  // Open fullview button
   const openFullviewBtn = document.getElementById('openFullview');
   if (openFullviewBtn) {
     openFullviewBtn.addEventListener('click', async () => {
@@ -601,73 +624,9 @@ function setupEventListeners() {
     });
   }
 
-  const unlockButton = document.getElementById('unlockButton');
-  if (unlockButton) {
-    unlockButton.addEventListener('click', async () => {
-      try {
-        // Request new payment
-        const paymentRequest = await requestPayment();
-        currentPaymentId = paymentRequest.paymentId;
-
-        const instructions = document.createElement('div');
-        instructions.innerHTML = `
-          <div class="modal">
-            <h3>Unlock More Slots</h3>
-            <p class="important">Send EXACTLY ${BONE_PAYMENT_AMOUNT} BONE tokens</p>
-            <p class="warning">The amount must be exact for verification!</p>
-            <p>Send to this address:</p>
-            <code>${paymentRequest.address}</code>
-            <div class="token-info">
-              <p>Token Information:</p>
-              <p class="asset-name">Asset Name: ${BONE_ASSET_NAME}</p>
-              <p class="policy-id">Policy ID: ${BONE_POLICY_ID}</p>
-            </div>
-            <p>You will receive ${SLOTS_PER_PAYMENT} additional wallet slots after payment confirmation.</p>
-            <button class="verify-payment">Check Payment Status</button>
-            <button class="close">Close</button>
-          </div>
-        `;
-        document.body.appendChild(instructions);
-
-        // Add event listeners for the new buttons
-        const verifyBtn = instructions.querySelector('.verify-payment');
-        const closeBtn = instructions.querySelector('.close');
-        
-        if (verifyBtn) {
-          verifyBtn.addEventListener('click', checkPaymentStatus);
-        }
-        
-        if (closeBtn) {
-          closeBtn.addEventListener('click', () => {
-            instructions.remove();
-            currentPaymentId = null;
-            if (eventSource) {
-              eventSource.close();
-              eventSource = null;
-            }
-          });
-        }
-      } catch (error) {
-        console.error('Error setting up payment:', error);
-        showError('Failed to generate payment request. Please try again.');
-      }
-    });
-  }
-
-  const deleteButtons = document.querySelectorAll('.delete-btn');
-  deleteButtons.forEach(button => {
-    const index = button.dataset.index;
-    if (index !== undefined) {
-      button.addEventListener('click', () => deleteWallet(parseInt(index)));
-    }
-  });
-
-  const refreshButtons = document.querySelectorAll('.refresh-btn');
-  refreshButtons.forEach(button => {
-    const index = button.dataset.index;
-    if (index !== undefined) {
-      button.addEventListener('click', () => refreshWallet(parseInt(index)));
-    }
+  // Initialize UI
+  loadWallets().then(() => {
+    updateUI();
   });
 }
 

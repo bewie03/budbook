@@ -122,19 +122,20 @@ html, body {
   transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
-.error.visible, .success.visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
 .error {
+  display: none;
   background-color: rgba(220, 53, 69, 0.95);
   color: #ffffff;
 }
 
 .success {
+  display: none;
   background-color: rgba(40, 167, 69, 0.95);
   color: #ffffff;
+}
+
+.error.visible, .success.visible {
+  display: block;
 }
 
 .wallet-grid {
@@ -1819,6 +1820,16 @@ body {
   margin: 0;
 }
 
+.error-text {
+  color: #dc3545;
+  font-size: 0.9em;
+}
+
+.stake-status.error-text {
+  margin: 0;
+  padding: 4px 0;
+}
+
 .wallet-box .wallet-header .wallet-icon {
   width: 24px;
   height: 24px;
@@ -1892,230 +1903,68 @@ select option {
   }
 }
 
-/* Payment Modal Styles */
-.payment-modal {
-  max-width: 400px;
-  padding: 20px;
-}
-
-.payment-modal .modal-header {
-  margin-bottom: 20px;
-  text-align: center;
-}
-
-.payment-modal h2 {
-  margin: 0 0 10px 0;
-  font-size: 1.5em;
-  color: #fff;
-}
-
-.payment-status {
-  font-size: 0.9em;
-  color: #aaa;
-  margin-top: 5px;
-}
-
-.payment-details {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  padding: 20px;
-  margin-bottom: 20px;
-}
-
-.amount-display {
-  margin-bottom: 20px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.amount-display .value {
-  font-size: 1.2em;
-  font-weight: bold;
-  color: #fff;
-}
-
-.address-container {
-  margin-bottom: 20px;
-}
-
-.address-box {
-  display: flex;
-  align-items: center;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 6px;
-  padding: 8px 12px;
-  margin-top: 5px;
-}
-
-.address {
-  flex: 1;
-  font-family: monospace;
-  color: #fff;
-  margin-right: 10px;
-}
-
-.copy-button {
-  background: none;
-  border: none;
-  color: #aaa;
-  cursor: pointer;
-  padding: 4px 8px;
-  transition: color 0.2s;
-}
-
-.copy-button:hover {
-  color: #fff;
-}
-
-.payment-note {
-  font-size: 0.85em;
-  color: #aaa;
-  text-align: center;
-}
-
-.verification-timer {
-  margin-top: 15px;
-}
-
-.timer-bar {
-  height: 4px;
-  background: #2196F3;
-  border-radius: 2px;
-  width: 0%;
-  transition: width 1s linear;
-}
-
-.timer-text {
-  font-size: 0.85em;
-  color: #aaa;
-  margin-top: 5px;
-  display: block;
-  text-align: center;
-}
-
-.button-container {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-top: 24px;
-}
-
-.modal-button {
-  padding: 8px 16px;
-  border-radius: 6px;
-  border: none;
-  font-size: 0.9em;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.modal-button.cancel {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-}
-
-.modal-button.verify {
-  background: #2196F3;
-  color: #fff;
-}
-
-.modal-button:hover {
-  opacity: 0.9;
-}
-
-.payment-status.success {
-  color: #4CAF50;
-}
-
-.payment-status.error {
-  color: #f44336;
-}
-
+/* Modal styles */
 .modal {
   position: fixed;
   top: 0;
   left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.7);
+  right: 0;
+  bottom: 0;
   display: flex;
-  justify-content: center;
   align-items: center;
-  z-index: 1000;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 9999;
+  backdrop-filter: blur(4px);
 }
 
 .modal-content {
-  background: var(--background-dark);
+  background: #1e1f23;
   border-radius: 12px;
   padding: 24px;
-  width: 90%;
-  max-width: 500px;
+  width: 360px;
+  max-width: 90vw;
+  color: #fff;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .modal-header {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   text-align: center;
 }
 
 .modal-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
   color: #fff;
-  font-size: 24px;
-  margin: 0 0 12px 0;
 }
 
-.slot-info {
-  display: flex;
-  justify-content: space-between;
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 14px;
-  margin-top: 8px;
-}
-
-.price-tag {
-  color: #4c6ef5;
-  font-weight: 500;
-}
-
-.payment-steps {
+.payment-details {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  margin: 24px 0;
+  text-align: center;
 }
 
-.step {
-  display: flex;
-  align-items: center;
-  gap: 16px;
+.payment-details p {
+  margin: 0;
+  color: #888;
+  font-size: 14px;
+}
+
+.amount-display {
+  font-size: 28px;
+  font-weight: 600;
   padding: 16px;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  text-align: center;
+  color: #fff;
 }
 
-.step-number {
-  width: 32px;
-  height: 32px;
-  background: #4c6ef5;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.step-text {
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 14px;
-  line-height: 1.4;
-}
-
-.button-container {
+.modal-buttons {
   display: flex;
   gap: 12px;
   margin-top: 24px;
@@ -2131,25 +1980,36 @@ select option {
   transition: all 0.2s;
 }
 
-.modal-button.cancel {
+.modal-button.secondary {
   background: rgba(255, 255, 255, 0.1);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
 }
 
-.modal-button.proceed {
-  background: linear-gradient(135deg, #6b8afd 0%, #4c6ef5 100%);
-  color: white;
-  border: none;
+.modal-button.primary {
+  background: #4c6ef5;
+  color: #fff;
 }
 
-.modal-button.cancel:hover {
-  background: rgba(255, 255, 255, 0.15);
+.modal-button:hover {
+  opacity: 0.9;
 }
 
-.modal-button.proceed:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(76, 110, 245, 0.3);
+/* Remove any potential white backgrounds */
+.modal *,
+.modal-content *,
+.modal-header *,
+.payment-details * {
+  background: transparent;
+}
+
+/* Ensure modal content has dark background */
+.modal > .modal-content {
+  background: #1e1f23;
+}
+
+/* Override any inline styles */
+.modal-content[style] {
+  background: #1e1f23 !important;
 }
 
 /* BONE Token Information Styles */
@@ -2296,4 +2156,242 @@ select option {
 
 .token-details .policy-id {
   color: #4c6ef5;
+}
+
+.payment-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 24px 0;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.step-number {
+  width: 32px;
+  height: 32px;
+  background: #4c6ef5;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.step-text {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.button-container {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.modal-button {
+  flex: 1;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.modal-button.cancel {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.modal-button.proceed {
+  background-color: linear-gradient(135deg, #6b8afd 0%, #4c6ef5 100%);
+  color: white;
+  border: none;
+}
+
+.modal-button.cancel:hover {
+  background-color: rgba(255, 255, 255, 0.15);
+}
+
+.modal-button.proceed:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(76, 110, 245, 0.3);
+}
+
+.modal-button.proceed:active {
+  transform: translateY(1px);
+  box-shadow: 0 2px 4px rgba(76, 110, 245, 0.2);
+}
+
+/* Loading states */
+.loading {
+  position: relative;
+  pointer-events: none;
+}
+
+.loading::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+}
+
+.loading::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+  border: 2px solid #4c6ef5;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  z-index: 1;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Disable rapid clicking */
+.modal-button:disabled,
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Asset Grid */
+.assets-panel {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.asset-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.asset-tab-btn {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: #888;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.asset-tab-btn.active {
+  background: rgba(76, 110, 245, 0.1);
+  color: #4c6ef5;
+}
+
+.assets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px;
+  padding: 16px;
+  overflow-y: auto;
+  max-height: 400px;
+  display: none;
+}
+
+.assets-grid.active {
+  display: grid;
+}
+
+.asset-card {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.asset-card:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-2px);
+}
+
+.asset-image {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.asset-image[src="icons/placeholder.png"] {
+  opacity: 0.5;
+}
+
+.asset-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.asset-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asset-amount {
+  font-size: 12px;
+  color: #888;
+}
+
+/* Scrollbar styles */
+.assets-grid::-webkit-scrollbar {
+  width: 8px;
+}
+
+.assets-grid::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+.assets-grid::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.assets-grid::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
