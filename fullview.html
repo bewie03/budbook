@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cardano Address Book</title>
   <link rel="stylesheet" href="styles.css">
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 </head>
 <body>
   <div id="root">
@@ -14,18 +14,21 @@
         <img src="icons/extensionlogo.png" alt="Logo" class="logo">
         Cardano Address Book
       </h1>
+      <div class="header-controls">
+        <span class="slot-count">Wallet Slots: <span id="slotCount">0</span></span>
+      </div>
     </header>
     
     <div id="walletList" class="wallet-grid"></div>
-    <div id="errorMsg" class="error" style="display: none;"></div>
-    <div id="successMsg" class="success" style="display: none;"></div>
+    <div id="errorMsg" class="error"></div>
+    <div id="successMsg" class="success"></div>
 
     <div class="buy-slots-container">
       <button class="buy-slots-button" id="buySlots">
         <i class="fas fa-plus-circle"></i>
         Buy More Wallet Slots
       </button>
-      <div class="slots-info">Get additional wallet slots to track more assets</div>
+      <div class="slots-info">Get additional wallet slots for 100 BONE tokens</div>
     </div>
   </div>
 

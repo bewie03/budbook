@@ -2,10 +2,12 @@
 const MAX_FREE_SLOTS = 6;
 const SLOTS_PER_PAYMENT = 6;
 const MAX_TOTAL_SLOTS = 100;
-const ADA_PAYMENT_AMOUNT = 2;
+const BONE_PAYMENT_AMOUNT = 100;
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 const MAX_STORED_ASSETS = 5; // Store only top 5 assets by value
 const ADA_LOVELACE = 1000000; // 1 ADA = 1,000,000 Lovelace
+const BONE_POLICY_ID = ''; // Add your BONE token policy ID here
+const BONE_ASSET_NAME = ''; // Add your BONE token asset name here
 
 // Available wallet logos
 const WALLET_LOGOS = {
@@ -23,6 +25,7 @@ const WALLET_LOGOS = {
 let wallets = [];
 let unlockedSlots = MAX_FREE_SLOTS;
 let currentPaymentId = null;
+let eventSource = null;
 
 // API Functions
 async function fetchWalletData(address) {
@@ -75,7 +78,7 @@ async function verifyPayment(paymentId) {
 
 async function requestPayment() {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/request-payment`, {
+    const response = await fetch(`${API_BASE_URL}/api/initiate-payment`, {
       method: 'POST',
       headers: {
         'Accept': 'application/json',
@@ -89,6 +92,27 @@ async function requestPayment() {
     }
 
     const data = await response.json();
+    
+    // Setup SSE for payment status updates
+    if (eventSource) {
+      eventSource.close();
+    }
+    
+    eventSource = new EventSource(`${API_BASE_URL}/api/payment-status/${data.paymentId}`);
+    
+    eventSource.onmessage = async (event) => {
+      const paymentStatus = JSON.parse(event.data);
+      if (paymentStatus.verified) {
+        eventSource.close();
+        await handlePaymentSuccess();
+      }
+    };
+    
+    eventSource.onerror = (error) => {
+      console.error('SSE Error:', error);
+      eventSource.close();
+    };
+    
     return data;
   } catch (error) {
     console.error('Error requesting payment:', error);
@@ -521,6 +545,37 @@ async function checkPaymentStatus() {
   }
 }
 
+async function handlePaymentSuccess() {
+  try {
+    // Update unlocked slots
+    unlockedSlots += SLOTS_PER_PAYMENT;
+    
+    // Save to storage
+    await chrome.storage.sync.set({ unlockedSlots });
+    
+    // Update UI
+    updateUI();
+    
+    showSuccess(`Payment verified! You now have ${SLOTS_PER_PAYMENT} more wallet slots available.`);
+    
+    // Close payment instructions if open
+    const instructions = document.querySelector('.modal');
+    if (instructions) {
+      instructions.remove();
+    }
+
+    // Reset payment ID and close SSE connection
+    currentPaymentId = null;
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+  } catch (error) {
+    console.error('Error handling payment success:', error);
+    showError('Error updating slots. Please contact support.');
+  }
+}
+
 function setupEventListeners() {
   const addWalletBtn = document.getElementById('addWallet');
   if (addWalletBtn) {
@@ -550,7 +605,7 @@ function setupEventListeners() {
   if (unlockButton) {
     unlockButton.addEventListener('click', async () => {
       try {
-        // Request new payment with random amount
+        // Request new payment
         const paymentRequest = await requestPayment();
         currentPaymentId = paymentRequest.paymentId;
 
@@ -558,9 +613,15 @@ function setupEventListeners() {
         instructions.innerHTML = `
           <div class="modal">
             <h3>Unlock More Slots</h3>
-            <p class="important">Send EXACTLY ${paymentRequest.amount} ₳</p>
+            <p class="important">Send EXACTLY ${BONE_PAYMENT_AMOUNT} BONE tokens</p>
             <p class="warning">The amount must be exact for verification!</p>
+            <p>Send to this address:</p>
             <code>${paymentRequest.address}</code>
+            <div class="token-info">
+              <p>Token Information:</p>
+              <p class="asset-name">Asset Name: ${BONE_ASSET_NAME}</p>
+              <p class="policy-id">Policy ID: ${BONE_POLICY_ID}</p>
+            </div>
             <p>You will receive ${SLOTS_PER_PAYMENT} additional wallet slots after payment confirmation.</p>
             <button class="verify-payment">Check Payment Status</button>
             <button class="close">Close</button>
@@ -579,7 +640,11 @@ function setupEventListeners() {
         if (closeBtn) {
           closeBtn.addEventListener('click', () => {
             instructions.remove();
-            currentPaymentId = null; // Reset payment ID when modal is closed
+            currentPaymentId = null;
+            if (eventSource) {
+              eventSource.close();
+              eventSource = null;
+            }
           });
         }
       } catch (error) {
@@ -614,6 +679,17 @@ function sortAssetsByValue(assets) {
     return bQuantity > aQuantity ? 1 : -1;
   });
 }
+
+// Cleanup function
+function cleanup() {
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+}
+
+// Add cleanup on window unload
+window.addEventListener('unload', cleanup);
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {

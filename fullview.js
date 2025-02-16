@@ -2,8 +2,10 @@
 const MAX_FREE_SLOTS = 5;
 const SLOTS_PER_PAYMENT = 5;
 const MAX_TOTAL_SLOTS = 100;
-const ADA_PAYMENT_AMOUNT = 2;
+const BONE_PAYMENT_AMOUNT = 100;
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
+const BONE_POLICY_ID = ''; // Add your BONE token policy ID here
+const BONE_ASSET_NAME = ''; // Add your BONE token asset name here
 
 const WALLET_LOGOS = {
   'None': '',
@@ -291,20 +293,21 @@ function renderWallets() {
   // Check if wallets exist and is an array
   if (!Array.isArray(wallets) || wallets.length === 0) {
     walletList.innerHTML = '<div class="no-wallets">No wallets added yet</div>';
-    return;
+  } else {
+    // Clear the existing wallets
+    walletList.innerHTML = '';
+
+    // Create wallet boxes
+    wallets.forEach((wallet, index) => {
+      if (!wallet) return; // Skip if wallet is undefined
+      
+      const walletBox = createWalletBox(wallet, index);
+      walletList.appendChild(walletBox);
+    });
   }
 
-  // Clear the existing wallets
-  walletList.innerHTML = '';
-
-  // Create wallet boxes
-  wallets.forEach((wallet, index) => {
-    if (!wallet) return; // Skip if wallet is undefined
-    
-    const walletBox = createWalletBox(wallet, index);
-    
-    walletList.appendChild(walletBox);
-  });
+  // Update slot count after rendering wallets
+  updateSlotCount();
 }
 
 function createWalletBox(wallet, index) {
@@ -865,7 +868,7 @@ document.getElementById('buySlots').addEventListener('click', async () => {
     modal.innerHTML = `
       <div class="modal-content">
         <h2>Buy More Slots</h2>
-        <p>Get ${SLOTS_PER_PAYMENT} additional wallet slots for ₳2</p>
+        <p>Get ${SLOTS_PER_PAYMENT} additional wallet slots for ${BONE_PAYMENT_AMOUNT} BONE tokens</p>
         <div class="button-container">
           <button class="modal-button cancel">Cancel</button>
           <button class="modal-button proceed">Proceed to Payment</button>
@@ -917,7 +920,7 @@ async function initiatePayment() {
     });
 
     if (!response.ok) throw new Error('Failed to initiate payment');
-    const { paymentId, amount, address } = await response.json();
+    const { paymentId, address } = await response.json();
     
     // Show payment details modal
     const modal = document.createElement('div');
@@ -932,7 +935,7 @@ async function initiatePayment() {
         <div class="payment-details">
           <div class="amount-display">
             <span class="label">Amount:</span>
-            <span class="value">₳${parseFloat(amount).toFixed(2)}</span>
+            <span class="value">${BONE_PAYMENT_AMOUNT} BONE</span>
           </div>
           
           <div class="address-container">
@@ -945,8 +948,16 @@ async function initiatePayment() {
             </div>
           </div>
           
+          <div class="token-info">
+            <p>Token Information:</p>
+            <div class="token-details">
+              <p class="asset-name">Asset Name: ${BONE_ASSET_NAME}</p>
+              <p class="policy-id">Policy ID: ${BONE_POLICY_ID}</p>
+            </div>
+          </div>
+          
           <div class="payment-note">
-            <p>Send exactly ₳${parseFloat(amount).toFixed(2)} to verify your payment</p>
+            <p>Send exactly ${BONE_PAYMENT_AMOUNT} BONE tokens to verify your payment</p>
             <p>Payment will be verified automatically (1-3 minutes)</p>
           </div>
         </div>
@@ -1419,14 +1430,17 @@ chrome.runtime.onMessage.addListener(async (message) => {
   }
 });
 
-// Initialize when the page loads
+// Initialize everything when the page loads
 document.addEventListener('DOMContentLoaded', async () => {
   try {
+    console.log('Initializing fullview page...');
     await loadWallets();
-    updateUI();
+    await setupEventListeners();
+    await setupAssetsPanelListeners();
+    console.log('Initialization complete');
   } catch (error) {
-    console.error('Error initializing:', error);
-    showError('Failed to initialize wallets. Please try again.');
+    console.error('Error initializing fullview:', error);
+    showError('Failed to initialize the page. Please refresh.');
   }
 });
 
@@ -1525,4 +1539,11 @@ async function pollPaymentStatus(paymentId, modal) {
   };
   
   checkStatus();
+}
+
+function updateSlotCount() {
+  const slotCountElement = document.getElementById('slotCount');
+  if (slotCountElement) {
+    slotCountElement.textContent = `${wallets.length}/${unlockedSlots}`;
+  }
 }

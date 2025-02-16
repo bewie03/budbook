@@ -13,7 +13,7 @@
     "https://ipfs.io/*"
   ],
   "content_security_policy": {
-    "extension_pages": "default-src 'self'; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com; img-src 'self' data: https://ipfs.io;"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com https://ipfs.io; style-src 'self' https://cdnjs.cloudflare.com; img-src 'self' data: https://ipfs.io;"
   },
   "action": {
     "default_popup": "popup.html",
@@ -32,7 +32,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["fullview.html", "icons/*"],
+      "resources": ["fullview.html", "fullview.js", "styles.css", "icons/*"],
       "matches": ["<all_urls>"]
     }
   ]
