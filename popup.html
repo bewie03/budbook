@@ -2,54 +2,235 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Add Wallet</title>
-  <link rel="stylesheet" href="styles.css">
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+  <title>BudBook</title>
+  <style>
+    :root {
+      --primary-blue: #3498db;
+      --primary-blue-hover: #2980b9;
+      --text-white: #ffffff;
+      --text-light: #e1e1e1;
+      --background-dark: #1a1a1a;
+      --background-light: #2a2a2a;
+      --border-color: #333;
+    }
+
+    body {
+      width: 320px;
+      padding: 16px;
+      margin: 0;
+      background: var(--background-dark);
+      color: var(--text-white);
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .header {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .header-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--text-white);
+    }
+
+    .slots {
+      font-size: 14px;
+      color: var(--text-light);
+      margin: 0;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .form-group label {
+      font-size: 14px;
+      color: var(--text-light);
+    }
+
+    input, select {
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+      background: var(--background-light);
+      color: var(--text-white);
+      font-size: 14px;
+      transition: all 0.2s ease;
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--primary-blue);
+      box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+    }
+
+    button {
+      padding: 12px;
+      border-radius: 6px;
+      border: none;
+      background: var(--primary-blue);
+      color: var(--text-white);
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    button:hover {
+      background: var(--primary-blue-hover);
+    }
+
+    button:disabled {
+      background: var(--border-color);
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+
+    button.secondary {
+      background: transparent;
+      border: 1px solid var(--primary-blue);
+      color: var(--primary-blue);
+    }
+
+    button.secondary:hover {
+      background: rgba(52, 152, 219, 0.1);
+    }
+
+    @keyframes slideIn {
+      from {
+        transform: translateY(-10px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    @keyframes slideOut {
+      from {
+        transform: translateY(0);
+        opacity: 1;
+      }
+      to {
+        transform: translateY(-10px);
+        opacity: 0;
+      }
+    }
+
+    @keyframes fadeIn {
+      0% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+
+    @keyframes fadeOut {
+      0% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    .message {
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      margin-top: 8px;
+      opacity: 1;
+      transition: opacity 0.5s ease;
+    }
+
+    .message.success {
+      background: rgba(46, 204, 113, 0.1);
+      border: 1px solid rgba(46, 204, 113, 0.3);
+      color: #2ecc71;
+    }
+
+    .message.error {
+      background: rgba(231, 76, 60, 0.1);
+      border: 1px solid rgba(231, 76, 60, 0.3);
+      color: #e74c3c;
+    }
+
+    .message.info {
+      background: rgba(52, 152, 219, 0.1);
+      border: 1px solid rgba(52, 152, 219, 0.3);
+      color: var(--primary-blue);
+    }
+
+    .loading {
+      position: relative;
+      pointer-events: none;
+    }
+
+    .loading::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+    }
+
+    #messageContainer {
+      min-height: 44px;
+    }
+  </style>
 </head>
 <body>
-  <div class="popup-container">
-    <div class="popup-header">
-      <div class="header-title">
-        <img src="icons/extensionlogo.png" alt="Logo" class="logo">
-        <span>Add New Wallet</span>
+  <div class="container">
+    <div class="header">
+      <div class="header-top">
+        <h1>BudBook</h1>
+        <p class="slots">Wallets: <span id="availableSlots">0 / 5</span></p>
       </div>
+      <button id="openFullView">Open Full View</button>
     </div>
 
-    <div class="popup-actions">
-      <button type="button" class="popup-button primary" id="openFullview">Open Address Book</button>
+    <div class="form-group">
+      <label for="addressInput">Cardano Wallet Address</label>
+      <input type="text" id="addressInput" placeholder="Enter your Cardano wallet address">
     </div>
 
-    <form class="popup-form">
-      <div class="form-group">
-        <label for="addressInput">Wallet Address</label>
-        <input type="text" id="addressInput" placeholder="Enter your Cardano wallet address" autocomplete="off">
-      </div>
-
-      <div class="form-group">
-        <label for="nameInput">Wallet Name</label>
-        <input type="text" id="nameInput" placeholder="Give your wallet a name" required autocomplete="off">
-      </div>
-
-      <div class="form-group">
-        <label for="walletTypeSelector">Wallet Type</label>
-        <select id="walletTypeSelector">
-          <option value="None">Select wallet type</option>
-        </select>
-      </div>
-
-      <div class="popup-actions">
-        <button type="button" class="popup-button primary action-button" id="addWallet">Add Wallet</button>
-      </div>
-    </form>
-
-    <div id="errorMsg" class="error" style="display: none;"></div>
-    <div id="successMsg" class="success" style="display: none;"></div>
-    
-    <div class="footer">
-      <p class="slots">Wallets: <span id="availableSlots">0 / 5</span></p>
+    <div class="form-group">
+      <label for="nameInput">Wallet Name</label>
+      <input type="text" id="nameInput" placeholder="Give your wallet a name">
     </div>
+
+    <div class="form-group">
+      <label for="walletType">Wallet Type</label>
+      <select id="walletType">
+        <option value="None">None</option>
+        <option value="Nami">Nami</option>
+        <option value="Eternal">Eternal</option>
+        <option value="Adalite">Adalite</option>
+        <option value="Vesper">Vesper</option>
+        <option value="Daedalus">Daedalus</option>
+        <option value="Gero">Gero</option>
+        <option value="Lace">Lace</option>
+      </select>
+    </div>
+
+    <div id="messageContainer"></div>
+
+    <button id="addWallet">Add Wallet</button>
   </div>
-  <script src="popup.js" type="module"></script>
+  <script src="popup.js"></script>
 </body>
 </html>

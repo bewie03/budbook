@@ -6,6 +6,44 @@
   <title>Cardano Address Book</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+  <style>
+    /* Add loading spinner styles */
+    .wallet-box.loading {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 200px;
+    }
+
+    .loading-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(52, 152, 219, 0.1);
+      border-radius: 50%;
+      border-top-color: #3498db;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .loading-container p {
+      color: #3498db;
+      font-size: 14px;
+      margin: 0;
+    }
+  </style>
 </head>
 <body>
   <div id="root">

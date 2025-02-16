@@ -125,52 +125,60 @@ async function loadWallets() {
   return new Promise((resolve, reject) => {
     try {
       // Load wallet index and slots from sync storage
-      chrome.storage.sync.get(['wallet_index', 'unlockedSlots'], async (data) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
-          return;
-        }
-        
-        const walletIndex = data.wallet_index || [];
-        // Initialize unlockedSlots to MAX_FREE_SLOTS if not set
-        if (!data.unlockedSlots) {
-          chrome.storage.sync.set({ unlockedSlots: MAX_FREE_SLOTS });
-          unlockedSlots = MAX_FREE_SLOTS;
-        } else {
-          unlockedSlots = data.unlockedSlots;
-        }
+      chrome.storage.sync.get(['wallet_index', 'unlockedSlots', 'slots_version'], async (data) => {
+        try {
+          const walletIndex = data.wallet_index || [];
+          wallets = [];
 
-        // Load wallet metadata from sync storage
-        const walletPromises = walletIndex.map(address => 
-          new Promise((resolve) => {
-            chrome.storage.sync.get(`wallet_${address}`, (result) => {
-              resolve(result[`wallet_${address}`]);
+          // Reset slots if version is old or not set
+          if (!data.slots_version || data.slots_version < 1) {
+            console.log('Resetting slots to new default of 5');
+            await chrome.storage.sync.set({ 
+              unlockedSlots: MAX_FREE_SLOTS,
+              slots_version: 1
             });
-          })
-        );
+            unlockedSlots = MAX_FREE_SLOTS;
+          } else if (!data.unlockedSlots) {
+            chrome.storage.sync.set({ unlockedSlots: MAX_FREE_SLOTS });
+            unlockedSlots = MAX_FREE_SLOTS;
+          } else {
+            unlockedSlots = data.unlockedSlots;
+          }
 
-        // Load assets from local storage
-        const assetPromises = walletIndex.map(address => 
-          new Promise((resolve) => {
-            chrome.storage.local.get(`assets_${address}`, (result) => {
-              resolve(result[`assets_${address}`]);
-            });
-          })
-        );
+          // Load wallet metadata from sync storage
+          const walletPromises = walletIndex.map(address => 
+            new Promise((resolve) => {
+              chrome.storage.sync.get(`wallet_${address}`, (result) => {
+                resolve(result[`wallet_${address}`]);
+              });
+            })
+          );
 
-        // Wait for all data to load
-        const [walletData, assetData] = await Promise.all([
-          Promise.all(walletPromises),
-          Promise.all(assetPromises)
-        ]);
+          // Load assets from local storage
+          const assetPromises = walletIndex.map(address => 
+            new Promise((resolve) => {
+              chrome.storage.local.get(`assets_${address}`, (result) => {
+                resolve(result[`assets_${address}`]);
+              });
+            })
+          );
 
-        // Combine wallet data with assets
-        wallets = walletData.map((wallet, index) => ({
-          ...wallet,
-          assets: assetData[index] || []
-        })).filter(Boolean);
+          // Wait for all data to load
+          const [walletData, assetData] = await Promise.all([
+            Promise.all(walletPromises),
+            Promise.all(assetPromises)
+          ]);
 
-        resolve();
+          // Combine wallet data with assets
+          wallets = walletData.map((wallet, index) => ({
+            ...wallet,
+            assets: assetData[index] || []
+          })).filter(Boolean);
+
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
       });
     } catch (error) {
       reject(error);
@@ -250,81 +258,103 @@ async function saveWallets() {
 async function addWallet() {
   const addressInput = document.getElementById('addressInput');
   const nameInput = document.getElementById('nameInput');
-  const walletTypeSelect = document.getElementById('walletTypeSelector');
-  
-  const address = addressInput?.value?.trim();
-  const name = nameInput?.value?.trim();
-  const walletType = walletTypeSelect?.value;
+  const walletTypeSelect = document.getElementById('walletType');
+  const addWalletBtn = document.getElementById('addWallet');
+
+  const address = addressInput.value.trim();
+  const name = nameInput.value.trim();
+  const walletType = walletTypeSelect.value;
+
+  // Validation
+  if (!address) {
+    showMessage('Please enter a wallet address', 'error');
+    return;
+  }
+  if (!name) {
+    showMessage('Please enter a wallet name', 'error');
+    return;
+  }
+  if (wallets.some(w => w.name.toLowerCase() === name.toLowerCase())) {
+    showMessage('A wallet with this name already exists', 'error');
+    return;
+  }
+  if (wallets.some(w => w.address === address)) {
+    showMessage('This wallet has already been added', 'error');
+    return;
+  }
+
+  // Show loading state
+  addWalletBtn.disabled = true;
+  showMessage('Adding wallet...', 'info');
 
   try {
-    if (!address) {
-      throw new Error('Please enter a wallet address');
-    }
-    if (!name) {
-      throw new Error('Please enter a wallet name');
-    }
-    if (wallets.length >= unlockedSlots) {
-      throw new Error('No available slots. Please unlock more slots.');
-    }
-    if (wallets.some(w => w.address === address)) {
-      throw new Error('This wallet address is already in your address book');
-    }
-
-    showSuccess('Adding wallet...');
-    console.log('Fetching wallet data for:', address);
-    const walletData = await fetchWalletData(address);
-    console.log('Received wallet data:', {
-      hasBalance: !!walletData.balance,
-      numAssets: walletData.assets?.length
-    });
-    
-    // Store wallet data
-    const wallet = {
-      address,
+    // Add temporary wallet to the list immediately
+    const tempWallet = {
       name,
+      address,
       walletType,
-      balance: walletData.balance || '0',
-      stake_address: walletData.stake_address || '',
-      timestamp: Date.now(),
-      // Store all assets
-      assets: (walletData.assets || []).map(asset => ({
-        unit: asset.unit,
-        quantity: asset.quantity,
-        decimals: asset.decimals,
-        display_name: asset.display_name,
-        ticker: asset.ticker,
-        readable_amount: asset.readable_amount
-      }))
+      isLoading: true,
+      balance: '0',
+      assets: []
     };
-
-    console.log('Processed wallet data:', {
-      dataSize: JSON.stringify(wallet).length,
-      numAssets: wallet.assets.length
-    });
-
-    // Add to wallets array
-    wallets.push(wallet);
     
-    try {
-      await saveWallets();
-      
-      // Clear inputs
-      addressInput.value = '';
-      nameInput.value = '';
-      walletTypeSelect.value = 'None';
-      
-      showSuccess('Wallet added successfully!');
-      
-      // Notify background script that a wallet was added
-      chrome.runtime.sendMessage({ type: 'WALLET_ADDED' });
-    } catch (storageError) {
-      // Remove from array if save failed
-      wallets.pop();
-      throw new Error(`Failed to save wallet: ${storageError.message}`);
+    wallets.push(tempWallet);
+    await saveWallets();
+
+    // Notify fullview to show loading state
+    const fullviewTabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
+    if (fullviewTabs.length > 0) {
+      chrome.tabs.sendMessage(fullviewTabs[0].id, { 
+        action: 'walletLoading',
+        wallet: tempWallet
+      });
     }
+
+    // Fetch wallet data
+    const data = await fetchWalletData(address);
+    
+    // Update the wallet with real data
+    const walletIndex = wallets.findIndex(w => w.address === address);
+    if (walletIndex !== -1) {
+      wallets[walletIndex] = {
+        name,
+        address,
+        walletType,
+        isLoading: false,
+        ...data
+      };
+    }
+
+    // Save wallets
+    await saveWallets();
+    
+    // Clear inputs
+    addressInput.value = '';
+    nameInput.value = '';
+    walletTypeSelect.value = 'None';
+    
+    // Show success message
+    showMessage('Wallet added successfully!', 'success');
+    updateUI();
+
+    // Refresh fullview with complete data
+    if (fullviewTabs.length > 0) {
+      chrome.tabs.sendMessage(fullviewTabs[0].id, { 
+        action: 'walletLoaded',
+        wallet: wallets[walletIndex]
+      });
+    }
+
   } catch (error) {
-    console.error('Failed to add wallet:', error);
-    showError(error.message || 'Failed to add wallet. Please try again.');
+    // Remove temporary wallet if it exists
+    const walletIndex = wallets.findIndex(w => w.address === address);
+    if (walletIndex !== -1) {
+      wallets.splice(walletIndex, 1);
+      await saveWallets();
+    }
+    showMessage(error.message || 'Failed to add wallet', 'error');
+  } finally {
+    addWalletBtn.disabled = false;
   }
 }
 
@@ -605,28 +635,28 @@ function setupEventListeners() {
   }
 
   // Open fullview button
-  const openFullviewBtn = document.getElementById('openFullview');
+  const openFullviewBtn = document.getElementById('openFullView');
   if (openFullviewBtn) {
-    openFullviewBtn.addEventListener('click', async () => {
-      // First check if a fullview tab already exists
-      const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
-      
-      if (tabs.length > 0) {
-        // If tab exists, activate it
-        await chrome.tabs.update(tabs[0].id, { active: true });
-      } else {
-        // If no tab exists, create one
-        await chrome.tabs.create({ url: chrome.runtime.getURL('fullview.html') });
-      }
-      
-      // Close the popup
-      window.close();
+    openFullviewBtn.addEventListener('click', () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL('fullview.html') });
     });
   }
 
-  // Initialize UI
-  loadWallets().then(() => {
-    updateUI();
+  // Input validation and real-time feedback
+  const addressInput = document.getElementById('addressInput');
+  addressInput.addEventListener('input', () => {
+    const address = addressInput.value.trim();
+    if (address && wallets.some(w => w.address === address)) {
+      showError('This wallet has already been added', 'error');
+    }
+  });
+
+  const nameInput = document.getElementById('nameInput');
+  nameInput.addEventListener('input', () => {
+    const name = nameInput.value.trim();
+    if (name && wallets.some(w => w.name.toLowerCase() === name.toLowerCase())) {
+      showError('A wallet with this name already exists', 'error');
+    }
   });
 }
 
@@ -661,3 +691,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     showError('Failed to initialize. Please try again.');
   }
 });
+
+// Helper Functions
+function showMessage(message, type = 'info') {
+  const container = document.getElementById('messageContainer');
+  const messageDiv = document.createElement('div');
+  messageDiv.className = `message ${type}`;
+  messageDiv.textContent = message;
+
+  // Clear existing messages
+  container.innerHTML = '';
+  container.appendChild(messageDiv);
+
+  // Show message with fade in
+  messageDiv.style.animation = 'slideIn 0.5s ease, fadeIn 0.5s ease';
+
+  // Keep message visible for 5 seconds then fade out
+  setTimeout(() => {
+    messageDiv.style.animation = 'slideOut 0.5s ease, fadeOut 0.5s ease';
+    setTimeout(() => {
+      if (container.contains(messageDiv)) {
+        container.removeChild(messageDiv);
+      }
+    }, 500);
+  }, 5000);
+}
+
+function setLoading(element, isLoading) {
+  if (isLoading) {
+    element.classList.add('loading');
+    element.disabled = true;
+  } else {
+    element.classList.remove('loading');
+    element.disabled = false;
+  }
+}

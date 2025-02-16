@@ -132,10 +132,18 @@ const requestQueue = new RequestQueue();
 
 async function loadWallets() {
   try {
-    const data = await chrome.storage.sync.get(['wallet_index', 'unlockedSlots']);
+    const data = await chrome.storage.sync.get(['wallet_index', 'unlockedSlots', 'slots_version']);
     const walletIndex = data.wallet_index || [];
     
-    if (!data.unlockedSlots) {
+    // Reset slots if version is old or not set
+    if (!data.slots_version || data.slots_version < 1) {
+      console.log('Resetting slots to new default of 5');
+      await chrome.storage.sync.set({ 
+        unlockedSlots: MAX_FREE_SLOTS,
+        slots_version: 1
+      });
+      unlockedSlots = MAX_FREE_SLOTS;
+    } else if (!data.unlockedSlots) {
       chrome.storage.sync.set({ unlockedSlots: MAX_FREE_SLOTS });
       unlockedSlots = MAX_FREE_SLOTS;
     } else {
@@ -988,11 +996,54 @@ async function rateLimitRequest() {
 }
 
 // Listen for reload messages from background script
-chrome.runtime.onMessage.addListener(async (message) => {
+chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'RELOAD_WALLETS') {
     console.log('Reloading wallets due to storage change');
-    await loadWallets();
-    updateUI();
+    loadWallets().then(() => {
+      updateUI();
+    });
+  }
+});
+
+// Listen for messages from popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'walletLoading') {
+    // Add loading wallet box immediately
+    const wallet = message.wallet;
+    const walletContainer = document.getElementById('walletContainer');
+    
+    const walletBox = document.createElement('div');
+    walletBox.className = 'wallet-box loading';
+    walletBox.id = `wallet-${wallet.address}`;
+    
+    walletBox.innerHTML = `
+      <div class="wallet-header">
+        <h3>${wallet.name}</h3>
+        <div class="wallet-type">
+          ${wallet.walletType !== 'None' ? `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}">` : ''}
+        </div>
+      </div>
+      <div class="loading-container">
+        <div class="loading-spinner"></div>
+        <p>Fetching wallet data...</p>
+      </div>
+    `;
+    
+    walletContainer.appendChild(walletBox);
+  } 
+  else if (message.action === 'walletLoaded') {
+    // Update the loading box with complete data
+    const wallet = message.wallet;
+    const walletBox = document.getElementById(`wallet-${wallet.address}`);
+    if (walletBox) {
+      walletBox.className = 'wallet-box';
+      createWalletBox(wallet, wallets.findIndex(w => w.address === wallet.address));
+    }
+  }
+  else if (message.action === 'refresh') {
+    loadWallets().then(() => {
+      updateUI();
+    });
   }
 });
 

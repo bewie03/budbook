@@ -187,13 +187,17 @@ app.get('/api/wallet/:address', async (req, res) => {
         const assets = [];
         console.log('Processing assets:', addressData.amount.length);
         
-        for (const amount of addressData.amount) {
+        // Sort assets by quantity (value) before processing
+        const sortedAmounts = addressData.amount
+            .filter(a => a.unit !== 'lovelace')
+            .sort((a, b) => BigInt(b.quantity) - BigInt(a.quantity));
+        
+        // Only process top 20 assets initially
+        const assetsToProcess = sortedAmounts.slice(0, 20);
+        console.log('Processing top 20 assets out of:', sortedAmounts.length);
+        
+        for (const amount of assetsToProcess) {
             try {
-                if (amount.unit === 'lovelace') {
-                    console.log('Skipping lovelace entry');
-                    continue;
-                }
-
                 console.log('Processing asset:', amount.unit);
                 
                 // Get asset details from cache or Blockfrost
@@ -437,8 +441,8 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
 
         // Find output to our address
         const output = txDetails.outputs.find(o => 
-          o.address === PAYMENT_ADDRESS && 
-          o.amount.some(a => a.unit === 'lovelace')
+            o.address === PAYMENT_ADDRESS && 
+            o.amount.some(a => a.unit === 'lovelace')
         );
 
         if (output) {
