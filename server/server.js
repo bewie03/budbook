@@ -72,10 +72,6 @@ app.get('/', (req, res) => {
   });
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
-});
 
 async function fetchBlockfrost(endpoint, errorContext = '') {
   try {
