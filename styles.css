@@ -373,6 +373,11 @@ html, body {
   font-size: 14px;
 }
 
+.action-button.active {
+  background: rgb(56, 97, 251);
+  color: #fff;
+}
+
 .assets-list {
   display: flex;
   flex-direction: column;
