@@ -1407,10 +1407,10 @@ function formatBalance(balance) {
   // Convert from lovelace to ADA (1 ADA = 1,000,000 lovelace)
   const adaValue = parseFloat(rawBalance) / 1000000;
   
-  // Format with proper decimals
+  // Format with 2 decimal places
   return `₳${adaValue.toLocaleString(undefined, { 
     minimumFractionDigits: 2,
-    maximumFractionDigits: 6 
+    maximumFractionDigits: 2 
   })}`;
 }
 
@@ -1638,32 +1638,80 @@ function setupEventListeners() {
 
 async function updateStorageUsage() {
   try {
-    // Get total bytes in use
-    const bytesInUse = await chrome.storage.sync.getBytesInUse();
+    // First get all stored data to analyze
+    const allData = await chrome.storage.sync.get(null);
+    console.log('All stored data:', allData);
+    
+    // Calculate total size manually since getBytesInUse might not be reliable
+    let totalSize = 0;
+    for (const key in allData) {
+      // Skip any undefined or invalid keys
+      if (key === 'wallet_undefined' || key === 'undefined') {
+        // Clean up invalid data
+        chrome.storage.sync.remove(key);
+        continue;
+      }
+      
+      const value = allData[key];
+      if (value === null || value === undefined) {
+        chrome.storage.sync.remove(key);
+        continue;
+      }
+      
+      const size = new TextEncoder().encode(JSON.stringify(value)).length;
+      console.log(`Size of ${key}: ${size} bytes (${JSON.stringify(value).length} chars)`);
+      totalSize += size;
+    }
+    console.log('Calculated total size:', totalSize, 'bytes');
     
     // Chrome sync storage limit is 5MB (5,242,880 bytes)
-    const STORAGE_LIMIT = 5 * 1024 * 1024;
+    const STORAGE_LIMIT = 5 * 1024 * 1024; // 5MB
+    console.log('Storage limit:', STORAGE_LIMIT);
     
-    // Calculate percentage used
-    const percentageUsed = Math.round((bytesInUse / STORAGE_LIMIT) * 100);
+    // Calculate percentage used (use 2 decimal places)
+    const percentageUsed = Math.max(0.01, (totalSize / STORAGE_LIMIT) * 100);
+    const roundedPercentage = Math.round(percentageUsed * 100) / 100;
+    console.log('Storage percentage used:', roundedPercentage);
     
     // Update UI
     const storageUsedElement = document.getElementById('storageUsed');
     const storageBarElement = document.getElementById('storageBar');
     
     if (storageUsedElement && storageBarElement) {
-      storageUsedElement.textContent = percentageUsed;
-      storageBarElement.style.width = `${percentageUsed}%`;
+      console.log('Updating storage UI elements');
+      storageUsedElement.textContent = roundedPercentage.toFixed(2);
+      storageBarElement.style.width = `${roundedPercentage}%`;
       
       // Update color based on usage
-      if (percentageUsed > 90) {
+      if (roundedPercentage > 90) {
         storageBarElement.style.backgroundColor = '#ff4444';
-      } else if (percentageUsed > 70) {
+      } else if (roundedPercentage > 70) {
         storageBarElement.style.backgroundColor = '#ffa500';
       } else {
         storageBarElement.style.backgroundColor = '#3498db';
       }
+    } else {
+      console.warn('Storage UI elements not found:', {
+        storageUsedElement: !!storageUsedElement,
+        storageBarElement: !!storageBarElement
+      });
     }
+
+    // Also clean up duplicate data
+    if (allData.wallet_index && allData.wallet_order && 
+        JSON.stringify(allData.wallet_index) === JSON.stringify(allData.wallet_order)) {
+      // If they're identical, we can remove wallet_order and just use index
+      chrome.storage.sync.remove('wallet_order');
+    }
+
+    // Log Chrome storage limits
+    console.log('Chrome storage limits:', {
+      QUOTA_BYTES: chrome.storage.sync.QUOTA_BYTES,
+      QUOTA_BYTES_PER_ITEM: chrome.storage.sync.QUOTA_BYTES_PER_ITEM,
+      MAX_ITEMS: chrome.storage.sync.MAX_ITEMS,
+      MAX_WRITE_OPERATIONS_PER_HOUR: chrome.storage.sync.MAX_WRITE_OPERATIONS_PER_HOUR,
+      MAX_WRITE_OPERATIONS_PER_MINUTE: chrome.storage.sync.MAX_WRITE_OPERATIONS_PER_MINUTE
+    });
   } catch (error) {
     console.error('Error updating storage usage:', error);
   }
