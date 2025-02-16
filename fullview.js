@@ -1,40 +1,79 @@
 // Import the shared constants and functions
-import { StorageManager } from './storage.js';
-import { 
-    WALLET_LOGOS, 
-    MAX_FREE_SLOTS, 
-    SLOTS_PER_PAYMENT,
-    CACHE_DURATION,
-    API_BASE_URL,
-    BONE_PAYMENT_AMOUNT,
-    BONE_POLICY_ID,
-    BONE_ASSET_NAME,
-    CURRENCIES
-} from './constants.js';
+const MAX_FREE_SLOTS = 5;
+const SLOTS_PER_PAYMENT = 5;
+const MAX_TOTAL_SLOTS = 500;
+const BONE_PAYMENT_AMOUNT = 100;
+const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
+const BONE_POLICY_ID = ''; // Add your BONE token policy ID here
+const BONE_ASSET_NAME = ''; // Add your BONE token asset name here
 
-// Keep config import for API key
-const { BLOCKFROST_API_KEY } = await import('./config.js');
+const CURRENCIES = {
+  'ADA': { symbol: '₳', rate: 1 },
+  'USD': { symbol: '$', rate: 0 },
+  'EUR': { symbol: '€', rate: 0 },
+  'GBP': { symbol: '£', rate: 0 }
+};
 
-// Global state
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache duration
+
+// Available wallet logos
+const WALLET_LOGOS = {
+  'None': '',
+  'Default': 'icons/default.png',
+  'Pool.pm': 'icons/pool.pm.png',
+  'Nami': 'icons/nami.png',
+  'Eternal': 'icons/eternal.png',
+  'Adalite': 'icons/adalite.png',
+  'Vesper': 'icons/vesper.png',
+  'Daedalus': 'icons/daedalus.png',
+  'Gero': 'icons/gero.png',
+  'Lace': 'icons/lace.png',
+  'Custom': ''
+};
+
 let wallets = [];
 let unlockedSlots = 0;
 let selectedCurrency = 'ADA';
 
-const API_DELAY = 500; // ms between requests
-let lastRequestTime = 0;
+// Cache management
+const ASSET_CACHE_KEY = 'walletpup_asset_cache';
 
-// Rate limiting
-async function rateLimitRequest() {
-  const now = Date.now();
-  const timeSinceLastRequest = now - lastRequestTime;
-  if (timeSinceLastRequest < API_DELAY) {
-    await wait(API_DELAY - timeSinceLastRequest);
+async function getAssetCache() {
+  try {
+    const cache = await chrome.storage.sync.get(ASSET_CACHE_KEY);
+    return cache[ASSET_CACHE_KEY] || {};
+  } catch (error) {
+    console.error('Error reading asset cache:', error);
+    return {};
   }
-  lastRequestTime = Date.now();
 }
 
-async function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+async function setAssetCache(assetId, data) {
+  try {
+    const cache = await getAssetCache();
+    cache[assetId] = {
+      data,
+      timestamp: Date.now() // Keep timestamp for debugging purposes
+    };
+    await chrome.storage.sync.set({ [ASSET_CACHE_KEY]: cache });
+  } catch (error) {
+    console.error('Error writing to asset cache:', error);
+  }
+}
+
+async function getAssetFromCache(assetId) {
+  try {
+    const cache = await getAssetCache();
+    const cachedAsset = cache[assetId];
+    
+    if (cachedAsset) {
+      return cachedAsset.data;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error reading from asset cache:', error);
+    return null;
+  }
 }
 
 // Request Queue System
@@ -99,22 +138,82 @@ const requestQueue = new RequestQueue();
 
 async function loadWallets() {
   try {
-    const walletsData = await StorageManager.getWallets();
-    const container = document.getElementById('walletList');
-    container.innerHTML = '';
-
-    for (const wallet of walletsData) {
-      const walletData = await fetchWalletData(wallet.address);
-      const icon = WALLET_LOGOS[wallet.walletType] || WALLET_LOGOS['None'];
-      
-      // Create wallet element
-      const walletElement = await createWalletBox(wallet, walletData, icon);
-      container.appendChild(walletElement);
+    const data = await chrome.storage.sync.get(['wallet_index', 'unlockedSlots', 'slots_version']);
+    const walletIndex = data.wallet_index || [];
+    
+    // Reset slots if version is old or not set
+    if (!data.slots_version || data.slots_version < 1) {
+      console.log('Resetting slots to new default of 5');
+      await chrome.storage.sync.set({ 
+        unlockedSlots: MAX_FREE_SLOTS,
+        slots_version: 1
+      });
+      unlockedSlots = MAX_FREE_SLOTS;
+    } else if (!data.unlockedSlots) {
+      chrome.storage.sync.set({ unlockedSlots: MAX_FREE_SLOTS });
+      unlockedSlots = MAX_FREE_SLOTS;
+    } else {
+      unlockedSlots = data.unlockedSlots;
     }
 
-    updateStorageUsage();
+    // Load wallets sequentially
+    wallets = [];
+    for (const address of walletIndex) {
+      try {
+        // Load stored metadata first
+        const storedData = await new Promise((resolve) => {
+          chrome.storage.sync.get(`wallet_${address}`, (result) => {
+            resolve(result[`wallet_${address}`] || {});
+          });
+        });
+
+        // Fetch fresh data
+        console.log('Fetching fresh data for wallet:', address);
+        const walletData = await fetchWalletData(address);
+        console.log('Received wallet data:', walletData);
+
+        // Only store essential data in memory
+        wallets.push({
+          address,
+          name: storedData.name || 'Unnamed Wallet',
+          walletType: storedData.walletType || 'None',
+          balance: walletData.balance || 0,
+          assets: (walletData.assets || []).map(asset => ({
+            unit: asset.unit,
+            name: asset.name,
+            fingerprint: asset.fingerprint,
+            quantity: asset.quantity,
+            decimals: asset.decimals,
+            isNFT: isNFT(asset)
+          })),
+          stakingInfo: walletData.stakingInfo
+        });
+      } catch (error) {
+        console.error(`Error loading wallet ${address}:`, error);
+        // Add placeholder with stored metadata
+        const storedData = await new Promise((resolve) => {
+          chrome.storage.sync.get(`wallet_${address}`, (result) => {
+            resolve(result[`wallet_${address}`] || {});
+          });
+        });
+
+        wallets.push({
+          address,
+          name: storedData.name || 'Unnamed Wallet',
+          walletType: storedData.walletType || 'None',
+          error: error.message,
+          balance: 0,
+          assets: []
+        });
+      }
+    }
+
+    console.log('Loaded wallets:', wallets);
+    await renderWallets();
+    await updateStorageUsage();
   } catch (error) {
     console.error('Error loading wallets:', error);
+    showError('Failed to load wallets');
   }
 }
 
@@ -122,7 +221,7 @@ async function saveWallets() {
   try {
     // Save wallet index (list of addresses)
     const walletIndex = wallets.map(w => w.address);
-    await StorageManager.saveWallets(walletIndex);
+    await chrome.storage.sync.set({ wallet_index: walletIndex });
 
     // Save only essential metadata for each wallet
     const savePromises = wallets.map(wallet => {
@@ -132,7 +231,7 @@ async function saveWallets() {
         address: wallet.address,
         lastUpdated: Date.now()
       };
-      return StorageManager.saveWalletMetadata(wallet.address, metadata);
+      return chrome.storage.sync.set({ [`wallet_${wallet.address}`]: metadata });
     });
 
     await Promise.all(savePromises);
@@ -150,12 +249,12 @@ async function fetchWalletData(address) {
     // Check cache first
     const cacheKey = `wallet_data_${address}`;
     const now = Date.now();
-    const cache = await StorageManager.getCache(cacheKey);
+    const cache = await chrome.storage.local.get(cacheKey);
     
     // If we have cached data and it's not expired, use it
-    if (cache && now - cache.timestamp < CACHE_DURATION) {
+    if (cache[cacheKey] && now - cache[cacheKey].timestamp < CACHE_DURATION) {
       console.log('Using cached data for', address);
-      return cache.data;
+      return cache[cacheKey].data;
     }
 
     // If server is not running, return empty data
@@ -204,9 +303,11 @@ async function fetchWalletData(address) {
     };
 
     // Cache the fresh data
-    await StorageManager.setCache(cacheKey, {
-      data: walletData,
-      timestamp: now
+    await chrome.storage.local.set({
+      [cacheKey]: {
+        data: walletData,
+        timestamp: now
+      }
     });
 
     return walletData;
@@ -242,7 +343,7 @@ checkServerStatus(); // Initial check
 
 async function cleanupCache() {
   try {
-    const data = await StorageManager.getCache();
+    const data = await chrome.storage.local.get(null);
     const now = Date.now();
     const keysToRemove = [];
 
@@ -253,7 +354,7 @@ async function cleanupCache() {
     }
 
     if (keysToRemove.length > 0) {
-      await StorageManager.removeCache(keysToRemove);
+      await chrome.storage.local.remove(keysToRemove);
       console.log('Cleaned up cache entries:', keysToRemove);
     }
   } catch (error) {
@@ -471,8 +572,8 @@ async function createWalletBox(wallet, index) {
   // Get icon path or custom icon data
   let iconSrc = '';
   if (walletType === 'Custom') {
-    const data = await StorageManager.getWalletIcon(wallet.address);
-    iconSrc = data || WALLET_LOGOS['None'];
+    const data = await chrome.storage.local.get(`wallet_icon_${wallet.address}`);
+    iconSrc = data[`wallet_icon_${wallet.address}`] || WALLET_LOGOS['None'];
   } else {
     iconSrc = WALLET_LOGOS[walletType] || WALLET_LOGOS['None'];
   }
@@ -928,16 +1029,16 @@ async function refreshWallet(index) {
     const assetCachePattern = `asset_${wallet.address}_*`;
     
     // Clear wallet data cache
-    await StorageManager.removeCache(walletCacheKey);
+    await chrome.storage.local.remove(walletCacheKey);
     
     // Clear asset caches
-    const storage = await StorageManager.getCache();
+    const storage = await chrome.storage.local.get(null);
     const keysToRemove = Object.keys(storage).filter(key => 
       key.startsWith(`asset_${wallet.address}_`) || 
       key.startsWith(`metadata_${wallet.address}_`)
     );
     if (keysToRemove.length > 0) {
-      await StorageManager.removeCache(keysToRemove);
+      await chrome.storage.local.remove(keysToRemove);
     }
 
     // Fetch data with retry
@@ -988,6 +1089,23 @@ async function refreshWallet(index) {
       walletBox.classList.remove('loading');
     }
   }
+}
+
+// Rate limiting
+const API_DELAY = 500; // ms between requests
+let lastRequestTime = 0;
+
+async function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function rateLimitRequest() {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  if (timeSinceLastRequest < API_DELAY) {
+    await wait(API_DELAY - timeSinceLastRequest);
+  }
+  lastRequestTime = Date.now();
 }
 
 // Listen for messages from background script and popup
@@ -1223,8 +1341,10 @@ async function initiatePayment() {
           }
 
           statusDiv.textContent = 'Payment verified!';
-          const { availableSlots } = await StorageManager.getAvailableSlots();
-          await StorageManager.setAvailableSlots((availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT);
+          const { availableSlots } = await chrome.storage.local.get('availableSlots');
+          await chrome.storage.local.set({
+            availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
+          });
 
           showSuccess('Payment verified! Your slots have been added.');
           
@@ -1251,11 +1371,18 @@ async function initiatePayment() {
   }
 }
 
-function formatBalance(lovelace) {
-  if (!lovelace) return '0.00 ₳';
+function formatBalance(balance) {
+  // Convert null/undefined to 0
+  const rawBalance = balance || 0;
+  
   // Convert from lovelace to ADA (1 ADA = 1,000,000 lovelace)
-  const ada = parseInt(lovelace) / 1000000;
-  return `${ada.toFixed(2)} ₳`;
+  const adaValue = parseFloat(rawBalance) / 1000000;
+  
+  // Format with proper decimals
+  return `₳${adaValue.toLocaleString(undefined, { 
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6 
+  })}`;
 }
 
 function formatTokenAmount(amount, decimals = 0) {
@@ -1308,8 +1435,10 @@ function pollPaymentStatus(paymentId, modal) {
         statusDiv.className = 'payment-status success';
       }
       
-      const { availableSlots } = await StorageManager.getAvailableSlots();
-      await StorageManager.setAvailableSlots((availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT);
+      const { availableSlots } = await chrome.storage.local.get('availableSlots');
+      await chrome.storage.local.set({
+        availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
+      });
 
       showSuccess('Payment verified! Your slots have been added.');
       
@@ -1409,7 +1538,7 @@ async function deleteWallet(index) {
 
     // Remove custom icon if exists
     if (walletToDelete.walletType === 'Custom') {
-      await StorageManager.removeWalletIcon(walletToDelete.address);
+      await chrome.storage.local.remove(`wallet_icon_${walletToDelete.address}`);
     }
 
     // Remove from array
@@ -1480,7 +1609,7 @@ function setupEventListeners() {
 async function updateStorageUsage() {
   try {
     // Get total bytes in use
-    const bytesInUse = await StorageManager.getBytesInUse();
+    const bytesInUse = await chrome.storage.sync.getBytesInUse();
     
     // Chrome sync storage limit is 5MB (5,242,880 bytes)
     const STORAGE_LIMIT = 5 * 1024 * 1024;

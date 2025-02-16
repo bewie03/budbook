@@ -1,23 +1,28 @@
-import { StorageManager } from './storage.js';
-import { 
-    WALLET_LOGOS, 
-    MAX_FREE_SLOTS, 
-    SLOTS_PER_PAYMENT,
-    MAX_TOTAL_SLOTS,
-    BONE_PAYMENT_AMOUNT,
-    API_BASE_URL,
-    MAX_STORED_ASSETS,
-    ADA_LOVELACE,
-    BONE_POLICY_ID,
-    BONE_ASSET_NAME,
-    CURRENCIES
-} from './constants.js';
-
 // Constants
-// Removed constants as they are now imported from constants.js
+const MAX_FREE_SLOTS = 5;
+const SLOTS_PER_PAYMENT = 5;
+const MAX_TOTAL_SLOTS = 100;
+const BONE_PAYMENT_AMOUNT = 100;
+const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
+const MAX_STORED_ASSETS = 5; // Store only top 5 assets by value
+const ADA_LOVELACE = 1000000; // 1 ADA = 1,000,000 Lovelace
+const BONE_POLICY_ID = ''; // Add your BONE token policy ID here
+const BONE_ASSET_NAME = ''; // Add your BONE token asset name here
 
 // Available wallet logos
-// Removed WALLET_LOGOS as it is now imported from constants.js
+const WALLET_LOGOS = {
+  'None': '',
+  'Default': 'icons/default.png',
+  'Pool.pm': 'icons/pool.pm.png',
+  'Nami': 'icons/nami.png',
+  'Eternal': 'icons/eternal.png',
+  'Adalite': 'icons/adalite.png',
+  'Vesper': 'icons/vesper.png',
+  'Daedalus': 'icons/daedalus.png',
+  'Gero': 'icons/gero.png',
+  'Lace': 'icons/lace.png',
+  'Custom': ''
+};
 
 // Global state
 let wallets = [];
@@ -121,22 +126,68 @@ async function requestPayment() {
 
 // Storage Functions
 async function loadWallets() {
-  try {
-    const wallets = await StorageManager.getWallets();
-    const container = document.getElementById('wallet-list');
-    container.innerHTML = '';
+  return new Promise((resolve, reject) => {
+    try {
+      // Load wallet index and slots from sync storage
+      chrome.storage.sync.get(['wallet_index', 'unlockedSlots', 'slots_version'], async (data) => {
+        try {
+          const walletIndex = data.wallet_index || [];
+          wallets = [];
 
-    for (const wallet of wallets) {
-      const walletData = await StorageManager.getWalletData(wallet.address);
-      const icon = await StorageManager.getWalletIcon(wallet.address);
-      
-      // Create wallet list item
-      const listItem = createWalletListItem(wallet, walletData, icon);
-      container.appendChild(listItem);
+          // Reset slots if version is old or not set
+          if (!data.slots_version || data.slots_version < 1) {
+            console.log('Resetting slots to new default of 5');
+            await chrome.storage.sync.set({ 
+              unlockedSlots: MAX_FREE_SLOTS,
+              slots_version: 1
+            });
+            unlockedSlots = MAX_FREE_SLOTS;
+          } else if (!data.unlockedSlots) {
+            chrome.storage.sync.set({ unlockedSlots: MAX_FREE_SLOTS });
+            unlockedSlots = MAX_FREE_SLOTS;
+          } else {
+            unlockedSlots = data.unlockedSlots;
+          }
+
+          // Load wallet metadata from sync storage
+          const walletPromises = walletIndex.map(address => 
+            new Promise((resolve) => {
+              chrome.storage.sync.get(`wallet_${address}`, (result) => {
+                resolve(result[`wallet_${address}`]);
+              });
+            })
+          );
+
+          // Load assets from local storage
+          const assetPromises = walletIndex.map(address => 
+            new Promise((resolve) => {
+              chrome.storage.local.get(`assets_${address}`, (result) => {
+                resolve(result[`assets_${address}`]);
+              });
+            })
+          );
+
+          // Wait for all data to load
+          const [walletData, assetData] = await Promise.all([
+            Promise.all(walletPromises),
+            Promise.all(assetPromises)
+          ]);
+
+          // Combine wallet data with assets
+          wallets = walletData.map((wallet, index) => ({
+            ...wallet,
+            assets: assetData[index] || []
+          })).filter(Boolean);
+
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    } catch (error) {
+      reject(error);
     }
-  } catch (error) {
-    console.error('Error loading wallet list:', error);
-  }
+  });
 }
 
 async function saveWallets() {
