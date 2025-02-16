@@ -138,8 +138,9 @@ const requestQueue = new RequestQueue();
 
 async function loadWallets() {
   try {
-    const data = await chrome.storage.sync.get(['wallet_index', 'unlockedSlots', 'slots_version']);
+    const data = await chrome.storage.sync.get(['wallet_index', 'unlockedSlots', 'slots_version', 'wallet_order']);
     const walletIndex = data.wallet_index || [];
+    const savedOrder = data.wallet_order || [];
     
     // Reset slots if version is old or not set
     if (!data.slots_version || data.slots_version < 1) {
@@ -156,8 +157,8 @@ async function loadWallets() {
       unlockedSlots = data.unlockedSlots;
     }
 
-    // Load wallets sequentially
-    wallets = [];
+    // Load wallets
+    const tempWallets = {};
     for (const address of walletIndex) {
       try {
         // Load stored metadata first
@@ -172,8 +173,8 @@ async function loadWallets() {
         const walletData = await fetchWalletData(address);
         console.log('Received wallet data:', walletData);
 
-        // Only store essential data in memory
-        wallets.push({
+        // Store wallet data in temporary object
+        tempWallets[address] = {
           address,
           name: storedData.name || 'Unnamed Wallet',
           walletType: storedData.walletType || 'None',
@@ -184,10 +185,13 @@ async function loadWallets() {
             fingerprint: asset.fingerprint,
             quantity: asset.quantity,
             decimals: asset.decimals,
-            isNFT: isNFT(asset)
+            isNFT: isNFT(asset),
+            metadata: asset.metadata,
+            onchainMetadata: asset.onchainMetadata,
+            image: asset.image
           })),
           stakingInfo: walletData.stakingInfo
-        });
+        };
       } catch (error) {
         console.error(`Error loading wallet ${address}:`, error);
         // Add placeholder with stored metadata
@@ -197,14 +201,32 @@ async function loadWallets() {
           });
         });
 
-        wallets.push({
+        tempWallets[address] = {
           address,
           name: storedData.name || 'Unnamed Wallet',
           walletType: storedData.walletType || 'None',
-          error: error.message,
           balance: 0,
-          assets: []
-        });
+          assets: [],
+          error: true
+        };
+      }
+    }
+
+    // Order wallets based on saved order, falling back to wallet_index for any new wallets
+    wallets = [];
+    
+    // First add wallets in saved order
+    for (const address of savedOrder) {
+      if (tempWallets[address]) {
+        wallets.push(tempWallets[address]);
+        delete tempWallets[address];
+      }
+    }
+    
+    // Then add any remaining wallets that weren't in the saved order
+    for (const address of walletIndex) {
+      if (tempWallets[address]) {
+        wallets.push(tempWallets[address]);
       }
     }
 
@@ -222,6 +244,10 @@ async function saveWallets() {
     // Save wallet index (list of addresses)
     const walletIndex = wallets.map(w => w.address);
     await chrome.storage.sync.set({ wallet_index: walletIndex });
+
+    // Save wallet order
+    const walletOrder = wallets.map(w => w.address);
+    await chrome.storage.sync.set({ wallet_order: walletOrder });
 
     // Save only essential metadata for each wallet
     const savePromises = wallets.map(wallet => {
@@ -297,7 +323,10 @@ async function fetchWalletData(address) {
         fingerprint: asset.fingerprint,
         quantity: asset.quantity,
         decimals: asset.decimals,
-        isNFT: isNFT(asset)
+        isNFT: isNFT(asset),
+        metadata: asset.metadata,
+        onchainMetadata: asset.onchainMetadata,
+        image: asset.image
       })),
       stakingInfo
     };
@@ -1521,8 +1550,9 @@ function handleDrop(e) {
   const [movedWallet] = wallets.splice(fromIndex, 1);
   wallets.splice(toIndex, 0, movedWallet);
   
-  // Save the new order
-  saveWallets();
+  // Save the new order to chrome storage
+  const walletOrder = wallets.map(w => w.address);
+  chrome.storage.sync.set({ wallet_order: walletOrder });
   
   // Re-render wallets
   renderWallets();
