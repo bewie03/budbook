@@ -1,60 +1,40 @@
 // Import the shared constants and functions
 import { StorageManager } from './storage.js';
-import { WALLET_LOGOS, MAX_FREE_SLOTS, SLOTS_PER_PAYMENT, CACHE_DURATION } from './constants.js';
+import { 
+    WALLET_LOGOS, 
+    MAX_FREE_SLOTS, 
+    SLOTS_PER_PAYMENT,
+    CACHE_DURATION,
+    API_BASE_URL,
+    BONE_PAYMENT_AMOUNT,
+    BONE_POLICY_ID,
+    BONE_ASSET_NAME,
+    CURRENCIES
+} from './constants.js';
 
 // Keep config import for API key
 const { BLOCKFROST_API_KEY } = await import('./config.js');
 
-const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
-const BONE_POLICY_ID = ''; // Add your BONE token policy ID here
-const BONE_ASSET_NAME = ''; // Add your BONE token asset name here
-const BONE_PAYMENT_AMOUNT = 100;
+// Global state
+let wallets = [];
+let unlockedSlots = 0;
+let selectedCurrency = 'ADA';
 
-const CURRENCIES = {
-  'ADA': { symbol: '₳', rate: 1 },
-  'USD': { symbol: '$', rate: 0 },
-  'EUR': { symbol: '€', rate: 0 },
-  'GBP': { symbol: '£', rate: 0 }
-};
+const API_DELAY = 500; // ms between requests
+let lastRequestTime = 0;
 
-const ASSET_CACHE_KEY = 'walletpup_asset_cache';
-
-async function getAssetCache() {
-  try {
-    const cache = await StorageManager.getAssetCache();
-    return cache[ASSET_CACHE_KEY] || {};
-  } catch (error) {
-    console.error('Error reading asset cache:', error);
-    return {};
+// Rate limiting
+async function rateLimitRequest() {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  if (timeSinceLastRequest < API_DELAY) {
+    await wait(API_DELAY - timeSinceLastRequest);
   }
+  lastRequestTime = Date.now();
 }
 
-async function setAssetCache(assetId, data) {
-  try {
-    const cache = await getAssetCache();
-    cache[assetId] = {
-      data,
-      timestamp: Date.now() // Keep timestamp for debugging purposes
-    };
-    await StorageManager.setAssetCache(cache);
-  } catch (error) {
-    console.error('Error writing to asset cache:', error);
-  }
-}
-
-async function getAssetFromCache(assetId) {
-  try {
-    const cache = await getAssetCache();
-    const cachedAsset = cache[assetId];
-    
-    if (cachedAsset) {
-      return cachedAsset.data;
-    }
-    return null;
-  } catch (error) {
-    console.error('Error reading from asset cache:', error);
-    return null;
-  }
+async function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // Request Queue System
@@ -1008,23 +988,6 @@ async function refreshWallet(index) {
       walletBox.classList.remove('loading');
     }
   }
-}
-
-// Rate limiting
-const API_DELAY = 500; // ms between requests
-let lastRequestTime = 0;
-
-async function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function rateLimitRequest() {
-  const now = Date.now();
-  const timeSinceLastRequest = now - lastRequestTime;
-  if (timeSinceLastRequest < API_DELAY) {
-    await wait(API_DELAY - timeSinceLastRequest);
-  }
-  lastRequestTime = Date.now();
 }
 
 // Listen for messages from background script and popup

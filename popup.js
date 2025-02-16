@@ -1,5 +1,17 @@
 import { StorageManager } from './storage.js';
-import { WALLET_LOGOS, MAX_FREE_SLOTS, SLOTS_PER_PAYMENT, MAX_TOTAL_SLOTS, BONE_PAYMENT_AMOUNT, API_BASE_URL, MAX_STORED_ASSETS, ADA_LOVELACE, BONE_POLICY_ID, BONE_ASSET_NAME } from './constants.js';
+import { 
+    WALLET_LOGOS, 
+    MAX_FREE_SLOTS, 
+    SLOTS_PER_PAYMENT,
+    MAX_TOTAL_SLOTS,
+    BONE_PAYMENT_AMOUNT,
+    API_BASE_URL,
+    MAX_STORED_ASSETS,
+    ADA_LOVELACE,
+    BONE_POLICY_ID,
+    BONE_ASSET_NAME,
+    CURRENCIES
+} from './constants.js';
 
 // Constants
 // Removed constants as they are now imported from constants.js
