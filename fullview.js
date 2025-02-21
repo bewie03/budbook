@@ -1042,65 +1042,6 @@ async function createWalletBox(wallet, index) {
     }
   }
 
-  // Load staking info
-  if (wallet.stake_address) {
-    fetchStakingInfo(wallet.stake_address).then(stakingInfo => {
-      const stakingContainer = stakingSection.querySelector('.staking-info');
-      if (stakingInfo.error) {
-        stakingContainer.innerHTML = `
-          <div class="staking-error">
-            <i class="fas fa-exclamation-circle"></i>
-            Failed to load staking information
-          </div>
-        `;
-      } else {
-        const rewardsInAda = (parseInt(stakingInfo.rewards) / 1000000).toFixed(2);
-        stakingContainer.innerHTML = `
-          <div class="staking-details">
-            <div class="staking-row">
-              <span class="staking-label">Status:</span>
-              <span class="staking-value ${stakingInfo.active ? 'active' : 'inactive'}">
-                <i class="fas ${stakingInfo.active ? 'fa-check-circle' : 'fa-times-circle'}"></i>
-                ${stakingInfo.active ? 'Staked' : 'Not Staked'}
-              </span>
-            </div>
-            <div class="staking-row">
-              <span class="staking-label">Pool:</span>
-              <span class="staking-value">${stakingInfo.ticker}</span>
-            </div>
-            <div class="staking-row">
-              <span class="staking-label">Total Rewards:</span>
-              <span class="staking-value">₳${rewardsInAda}</span>
-            </div>
-            <div class="staking-row">
-              <span class="staking-label">Stake Address:</span>
-              <span class="staking-value stake-address" title="${stakingInfo.stake_address}">
-                ${truncateAddress(stakingInfo.stake_address)}
-                <i class="fas fa-copy copy-icon"></i>
-              </span>
-            </div>
-          </div>
-        `;
-
-        // Add click handler for copying stake address
-        const stakeAddressEl = stakingContainer.querySelector('.stake-address');
-        if (stakeAddressEl) {
-          stakeAddressEl.addEventListener('click', () => {
-            copyToClipboard(stakingInfo.stake_address, stakeAddressEl);
-          });
-        }
-      }
-    });
-  } else {
-    const stakingContainer = stakingSection.querySelector('.staking-info');
-    stakingContainer.innerHTML = `
-      <div class="staking-error">
-        <i class="fas fa-exclamation-circle"></i>
-        No stake address found for this wallet
-      </div>
-    `;
-  }
-
   return box;
 }
 
