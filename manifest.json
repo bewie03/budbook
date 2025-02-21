@@ -5,6 +5,7 @@
   "description": "A simple address book for Cardano wallets",
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "tabs"
   ],
   "host_permissions": [

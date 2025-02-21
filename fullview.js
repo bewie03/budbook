@@ -299,6 +299,8 @@ async function saveWallets() {
 
 async function fetchWalletData(address, forceFresh = false) {
   try {
+    await cleanupCache();  // Clean up before fetching
+    
     // Check cache first (unless forceFresh is true)
     if (!forceFresh) {
       const cacheKey = `wallet_data_${address}`;
@@ -399,17 +401,40 @@ async function cleanupCache() {
     const data = await chrome.storage.local.get(null);
     const now = Date.now();
     const keysToRemove = [];
-
+    let totalSize = 0;
+    
+    // Calculate total size and find old items
     for (const [key, value] of Object.entries(data)) {
-      if (key.startsWith('wallet_data_') && now - value.timestamp > CACHE_DURATION) {
+      totalSize += JSON.stringify(value).length;
+      
+      // Clean up old cached data (older than 1 hour)
+      if (key.startsWith('cache_') && value.timestamp && (now - value.timestamp > 3600000)) {
+        keysToRemove.push(key);
+      }
+      
+      // Clean up old asset data (older than 24 hours)
+      if (key.startsWith('asset_') && value.timestamp && (now - value.timestamp > 86400000)) {
         keysToRemove.push(key);
       }
     }
-
+    
+    // If we're close to quota (80%), remove more aggressively
+    if (totalSize > (chrome.storage.local.QUOTA_BYTES * 0.8)) {
+      console.log('Storage usage high, cleaning up more aggressively');
+      
+      // Sort items by timestamp and remove older ones
+      const items = Object.entries(data)
+        .filter(([key]) => key.startsWith('cache_') || key.startsWith('asset_'))
+        .sort(([,a], [,b]) => (b.timestamp || 0) - (a.timestamp || 0));
+      
+      // Keep only the 100 most recent items
+      const itemsToRemove = items.slice(100);
+      keysToRemove.push(...itemsToRemove.map(([key]) => key));
+    }
+    
     if (keysToRemove.length > 0) {
+      console.log('Cleaning up storage, removing', keysToRemove.length, 'items');
       await chrome.storage.local.remove(keysToRemove);
-      console.log('Cleaned up cache entries:', keysToRemove);
-      await updateStorageUsage();
     }
   } catch (error) {
     console.error('Error cleaning up cache:', error);
@@ -527,10 +552,10 @@ function convertIpfsUrl(url) {
   
   // List of IPFS gateways to try
   const IPFS_GATEWAYS = [
-    'https://ipfs.io/ipfs/',
     'https://cloudflare-ipfs.com/ipfs/',
     'https://gateway.pinata.cloud/ipfs/',
-    'https://dweb.link/ipfs/'
+    'https://dweb.link/ipfs/',
+    'https://ipfs.io/ipfs/'  // Move ipfs.io to last as it's having issues
   ];
 
   try {
@@ -539,30 +564,35 @@ function convertIpfsUrl(url) {
     
     // Handle ipfs:// protocol
     if (url.startsWith('ipfs://')) {
-      const hash = url.replace('ipfs://', '');
-      // Try the first gateway by default, others can be tried if image fails to load
+      const hash = url.replace('ipfs://', '').replace('/ipfs/', '');
+      // Try the first gateway by default
       return `${IPFS_GATEWAYS[0]}${hash}`;
     }
     
     // Handle /ipfs/ paths
     if (url.includes('/ipfs/')) {
-      const hash = url.split('/ipfs/')[1];
+      const hash = url.split('/ipfs/').pop().replace('/ipfs/', '');
       return `${IPFS_GATEWAYS[0]}${hash}`;
     }
     
     // If it's already using a gateway but failing, try another gateway
     for (const gateway of IPFS_GATEWAYS) {
       if (url.includes(gateway)) {
-        const hash = url.split(gateway)[1];
+        const hash = url.split(gateway).pop().replace('/ipfs/', '');
         const nextGatewayIndex = (IPFS_GATEWAYS.indexOf(gateway) + 1) % IPFS_GATEWAYS.length;
         return `${IPFS_GATEWAYS[nextGatewayIndex]}${hash}`;
       }
     }
     
+    // If we get here and the URL looks like a hash, treat it as one
+    if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}/.test(url)) {
+      return `${IPFS_GATEWAYS[0]}${url}`;
+    }
+    
     return url;
   } catch (error) {
     console.error('Error converting IPFS URL:', error);
-    return url;
+    return null;
   }
 }
 
@@ -996,7 +1026,7 @@ function getRandomColor(text) {
   
   // Generate a consistent color based on text
   let hash = 0;
-  for (let i = 0; i <text.length; i++) {
+  for (let i = 0; i < text.length; i++) {
     hash = text.charCodeAt(i) + ((hash << 5) - hash);
   }
   const hue = hash % COLORS.length;
@@ -1507,12 +1537,587 @@ let isDragging = false;
 // Update drag start/end handlers
 function handleDragStart(e) {
   isDragging = true;
-  // ... rest of drag start code
+  draggedItem = this;
+  this.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', this.getAttribute('data-index'));
 }
 
 function handleDragEnd(e) {
   isDragging = false;
-  // ... rest of drag end code
+  this.classList.remove('dragging');
+  document.querySelectorAll('.wallet-item').forEach(item => {
+    item.classList.remove('drag-over');
+  });
+  draggedItem = null;
+}
+
+function handleDragOver(e) {
+  if (e.preventDefault) {
+    e.preventDefault();
+  }
+  e.dataTransfer.dropEffect = 'move';
+  return false;
+}
+
+function handleDragEnter(e) {
+  this.classList.add('drag-over');
+}
+
+function handleDragLeave(e) {
+  this.classList.remove('drag-over');
+}
+
+async function handleDrop(e) {
+  e.stopPropagation();
+  e.preventDefault();
+  
+  if (draggedItem === this) return;
+  
+  this.classList.remove('drag-over');
+  
+  const fromIndex = parseInt(draggedItem.getAttribute('data-index'));
+  const toIndex = parseInt(this.getAttribute('data-index'));
+  
+  if (isNaN(fromIndex) || isNaN(toIndex)) return;
+  
+  // Reorder wallets array
+  const [movedWallet] = wallets.splice(fromIndex, 1);
+  wallets.splice(toIndex, 0, movedWallet);
+  
+  // Save the new order to chrome storage
+  const walletOrder = wallets.map(w => w.address);
+  chrome.storage.sync.set({ wallet_order: walletOrder });
+  await updateStorageUsage();
+  
+  // Re-render wallets
+  renderWallets();
+}
+
+// Wallet management functions
+async function deleteWallet(index) {
+  try {
+    const walletToDelete = wallets[index];
+    if (!walletToDelete) {
+      throw new Error('Wallet not found');
+    }
+
+    // Remove custom icon if exists
+    if (walletToDelete.walletType === 'Custom') {
+      await chrome.storage.local.remove(`wallet_icon_${walletToDelete.address}`);
+    }
+
+    // Remove from array
+    wallets.splice(index, 1);
+    
+    // Save changes
+    await saveWallets();
+    
+    // Re-render UI
+    await renderWallets();
+    
+    showSuccess('Wallet deleted successfully');
+  } catch (error) {
+    console.error('Error deleting wallet:', error);
+    showError('Failed to delete wallet');
+  }
+}
+
+// Setup event listeners
+function setupEventListeners() {
+  // Listen for messages from popup
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'WALLET_ADDED') {
+      // Add the new wallet with loading state
+      wallets.push({
+        ...message.wallet,
+        balance: '0',
+        assets: [],
+        stakingInfo: null,
+        isLoading: true
+      });
+      renderWallets();
+    } else if (message.type === 'WALLET_UPDATED') {
+      // Update the wallet with complete data
+      const index = wallets.findIndex(w => w.address === message.wallet.address);
+      if (index !== -1) {
+        wallets[index] = {
+          ...message.wallet,
+          isLoading: false
+        };
+        renderWallets();
+      }
+    }
+  });
+
+  // Add refresh button listeners
+  document.querySelectorAll('.refresh-btn').forEach(button => {
+    button.addEventListener('click', async () => {
+      const index = parseInt(button.closest('.wallet-item').dataset.index);
+      if (!isNaN(index)) {
+        await refreshWallet(index);
+      }
+    });
+  });
+
+  // Add wallet name click listeners for copying address
+  document.querySelectorAll('.wallet-text').forEach(element => {
+    element.addEventListener('click', async () => {
+      const walletItem = element.closest('.wallet-item');
+      const address = walletItem.dataset.address;
+      if (address) {
+        await copyToClipboard(address);
+        const walletType = element.querySelector('.wallet-type');
+        const originalText = walletType.innerText;
+        walletType.innerText = 'Copied!';
+        walletType.style.color = '#00b894';
+        setTimeout(() => {
+          walletType.innerText = originalText;
+          walletType.style.color = '';
+        }, 1000);
+      }
+    });
+  });
+
+  // Add navigation button listeners
+  document.querySelectorAll('.wallet-nav-button').forEach(button => {
+    button.addEventListener('click', () => {
+      const walletItem = button.closest('.wallet-item');
+      const sectionName = button.dataset.section;
+      
+      // Update active button
+      walletItem.querySelectorAll('.wallet-nav-button').forEach(b => b.classList.remove('active'));
+      button.classList.add('active');
+      
+      // Update active section
+      walletItem.querySelectorAll('.wallet-section').forEach(section => {
+        section.classList.toggle('active', section.getAttribute('data-section') === sectionName);
+      });
+    });
+  });
+
+  // Add copyable text listeners
+  document.querySelectorAll('.copyable-text').forEach(element => {
+    element.addEventListener('click', async () => {
+      await copyToClipboard(element.dataset.copy, element);
+    });
+  });
+}
+
+async function updateStorageUsage() {
+  try {
+    // Get all stored data to analyze
+    const allData = await chrome.storage.local.get(null);
+    console.log('All stored data:', allData);
+    
+    // Calculate total size
+    let totalSize = 0;
+    for (const key in allData) {
+      const value = allData[key];
+      if (value === null || value === undefined) {
+        chrome.storage.local.remove(key);
+        continue;
+      }
+      
+      const jsonString = JSON.stringify(value);
+      const size = new TextEncoder().encode(jsonString).length;
+      console.log(`Size for ${key}:`, {
+        rawValue: value,
+        jsonSize: jsonString.length,
+        byteSize: size
+      });
+      totalSize += size;
+    }
+    
+    console.log('Total size in bytes:', totalSize);
+    
+    // Chrome local storage limit (usually 10MB = 10,485,760 bytes)
+    const STORAGE_LIMIT = chrome.storage.local.QUOTA_BYTES || 10485760;
+    console.log('Storage limit in bytes:', STORAGE_LIMIT);
+    
+    // Calculate percentage used (with 2 decimal places)
+    const percentageUsed = (totalSize / STORAGE_LIMIT) * 100;
+    const roundedPercentage = Math.round(percentageUsed * 100) / 100;
+    console.log('Storage percentage:', {
+      raw: percentageUsed,
+      rounded: roundedPercentage
+    });
+    
+    // Update UI
+    const storageUsedElement = document.getElementById('storageUsed');
+    if (storageUsedElement) {
+      storageUsedElement.textContent = `${roundedPercentage}%`;
+      console.log('Updated storage display:', storageUsedElement.textContent);
+    }
+
+  } catch (error) {
+    console.error('Error updating storage usage:', error);
+  }
+}
+
+// Function to filter and render assets based on type
+function renderAssetsList(walletIndex, tabType) {
+  const wallet = wallets[walletIndex];
+  if (!wallet || !wallet.assets) return;
+
+  const assetsContainer = document.querySelector('.assets-list');
+  if (!assetsContainer) return;
+
+  // Clear existing assets
+  assetsContainer.innerHTML = '';
+
+  // Filter assets based on tab type
+  const filteredAssets = wallet.assets.filter(asset => {
+    if (tabType === 'all') return true;
+    if (tabType === 'nfts') return isNFT(asset);
+    if (tabType === 'tokens') return !isNFT(asset);
+    return true;
+  });
+
+  // Render filtered assets
+  filteredAssets.forEach(asset => {
+    const assetCard = createAssetCard(asset);
+    assetsContainer.appendChild(assetCard);
+  });
+}
+
+function setupAssetsPanelListeners() {
+  const panel = document.querySelector('.assets-panel');
+  if (!panel) return; // Exit if panel doesn't exist
+
+  const closeBtn = panel.querySelector('.close-assets');
+  const tabs = panel.querySelectorAll('.assets-tab');
+  
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      panel.classList.remove('expanded');
+    });
+  }
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const currentWallet = panel.dataset.walletIndex;
+      const tabType = tab.dataset.tab;
+      
+      // Update button styles
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      
+      // Render assets for the selected tab
+      renderAssetsList(currentWallet, tabType);
+    });
+  });
+}
+
+// Add global tab functionality
+function setupGlobalTabs() {
+  const globalTabs = document.querySelectorAll('.global-tab-btn');
+  
+  globalTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      // Update active state of global tabs
+      globalTabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      
+      // Get all wallet sections
+      const walletItems = document.querySelectorAll('.wallet-item');
+      
+      walletItems.forEach(wallet => {
+        // Get all sections in this wallet
+        const sections = wallet.querySelectorAll('.wallet-section');
+        const buttons = wallet.querySelectorAll('.wallet-nav-button');
+        
+        // Update sections visibility
+        sections.forEach(s => {
+          if (s.getAttribute('data-section') === tab.dataset.section) {
+            s.classList.add('active');
+          } else {
+            s.classList.remove('active');
+          }
+        });
+        
+        // Update nav buttons state
+        buttons.forEach(btn => {
+          if (btn.getAttribute('data-section') === tab.dataset.section) {
+            btn.classList.add('active');
+          } else {
+            btn.classList.remove('active');
+          }
+        });
+      });
+    });
+  });
+}
+
+// Add asset search functionality
+function setupAssetSearch() {
+  const searchInput = document.getElementById('assetSearch');
+  if (!searchInput) return;
+
+  let searchTimeout;
+
+  searchInput.addEventListener('input', (e) => {
+    clearTimeout(searchTimeout);
+    
+    searchTimeout = setTimeout(() => {
+      const searchTerm = e.target.value.toLowerCase().trim();
+      console.log('Searching for:', searchTerm);
+      
+      const walletItems = document.querySelectorAll('.wallet-item');
+      let hasVisibleWallets = false;
+
+      walletItems.forEach(walletItem => {
+        const walletIndex = walletItem.getAttribute('data-index');
+        const wallet = wallets[walletIndex];
+        
+        if (!wallet || !wallet.assets) {
+          walletItem.classList.add('hidden');
+          return;
+        }
+
+        // Filter the wallet's assets
+        const matchingAssets = wallet.assets.filter(asset => {
+          const assetName = (asset.name || '').toLowerCase();
+          const assetUnit = (asset.unit || '').toLowerCase();
+          const assetPolicy = (asset.policyId || '').toLowerCase();
+          const assetFingerprint = (asset.fingerprint || '').toLowerCase();
+          
+          return assetName.includes(searchTerm) || 
+                 assetUnit.includes(searchTerm) || 
+                 assetPolicy.includes(searchTerm) ||
+                 assetFingerprint.includes(searchTerm);
+        });
+
+        const hasMatchingAsset = matchingAssets.length > 0;
+
+        if (searchTerm === '') {
+          walletItem.classList.remove('hidden');
+          hasVisibleWallets = true;
+          
+          // Reset asset visibility
+          walletItem.querySelectorAll('.asset-thumbnail').forEach(asset => {
+            asset.classList.remove('hidden');
+          });
+        } else if (hasMatchingAsset) {
+          walletItem.classList.remove('hidden');
+          hasVisibleWallets = true;
+          
+          // Switch to assets tab for this wallet
+          const sections = walletItem.querySelectorAll('.wallet-section');
+          const buttons = walletItem.querySelectorAll('.wallet-nav-button');
+          
+          sections.forEach(s => {
+            s.classList.toggle('active', s.getAttribute('data-section') === 'assets');
+          });
+          
+          buttons.forEach(btn => {
+            btn.classList.toggle('active', btn.getAttribute('data-section') === 'assets');
+          });
+
+          // Switch global tab to assets
+          const globalTabs = document.querySelectorAll('.global-tab-btn');
+          globalTabs.forEach(tab => {
+            tab.classList.toggle('active', tab.getAttribute('data-section') === 'assets');
+          });
+
+          // Show/hide individual assets based on search
+          walletItem.querySelectorAll('.asset-thumbnail').forEach((assetThumb, i) => {
+            const asset = wallet.assets[i];
+            if (asset) {
+              const assetName = (asset.name || '').toLowerCase();
+              const assetUnit = (asset.unit || '').toLowerCase();
+              const assetPolicy = (asset.policyId || '').toLowerCase();
+              const assetFingerprint = (asset.fingerprint || '').toLowerCase();
+              
+              const matches = assetName.includes(searchTerm) || 
+                            assetUnit.includes(searchTerm) || 
+                            assetPolicy.includes(searchTerm) ||
+                            assetFingerprint.includes(searchTerm);
+              
+              assetThumb.classList.toggle('hidden', !matches);
+            }
+          });
+        } else {
+          walletItem.classList.add('hidden');
+        }
+      });
+
+      // Show/hide no results message
+      let noResultsMsg = document.getElementById('noResultsMsg');
+      if (!hasVisibleWallets && searchTerm !== '') {
+        if (!noResultsMsg) {
+          noResultsMsg = document.createElement('div');
+          noResultsMsg.id = 'noResultsMsg';
+          noResultsMsg.className = 'no-results-message';
+          noResultsMsg.textContent = 'No wallets found with matching assets';
+          document.getElementById('walletList').appendChild(noResultsMsg);
+        }
+      } else if (noResultsMsg) {
+        noResultsMsg.remove();
+      }
+    }, 300);
+  });
+
+  // Clear search when switching global tabs
+  document.querySelectorAll('.global-tab-btn').forEach(tab => {
+    tab.addEventListener('click', () => {
+      if (searchInput.value) {
+        searchInput.value = '';
+        searchInput.dispatchEvent(new Event('input'));
+      }
+    });
+  });
+}
+
+// Rate limiting
+const API_DELAY = 500; // ms between requests
+let lastRequestTime = 0;
+
+async function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function rateLimitRequest() {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  if (timeSinceLastRequest < API_DELAY) {
+    await wait(API_DELAY - timeSinceLastRequest);
+  }
+  lastRequestTime = Date.now();
+}
+
+// Start the cache refresh monitor
+function startCacheRefreshMonitor() {
+  const CACHE_CHECK_INTERVAL = 30000; // Check cache every 30 seconds
+  const CACHE_REFRESH_THRESHOLD = 60000; // Refresh if less than 1 minute left
+  
+  // Initialize progress bar
+  const refreshBar = document.querySelector('.refresh-bar');
+  const refreshTimeText = document.getElementById('refreshTime');
+  let startTime = Date.now();
+  let nextRefreshTime = startTime + CACHE_DURATION;
+
+  // Update progress bar every second
+  const updateProgressBar = () => {
+    const now = Date.now();
+    const elapsed = now - startTime;
+    const remaining = nextRefreshTime - now;
+    
+    // Update progress bar
+    const progress = (elapsed / CACHE_DURATION) * 100;
+    refreshBar.style.transform = `scaleX(${progress / 100})`;
+    
+    // Update time text
+    const secondsRemaining = Math.max(0, Math.ceil(remaining / 1000));
+    const minutes = Math.floor(secondsRemaining / 60);
+    const seconds = secondsRemaining % 60;
+    refreshTimeText.textContent = `${minutes}m ${seconds}s`;
+    
+    // If time's up, refresh all wallets
+    if (remaining <= 0) {
+      refreshAllWallets();
+    } else {
+      // Schedule next update
+      requestAnimationFrame(updateProgressBar);
+    }
+  };
+
+  // Function to refresh all wallets
+  const refreshAllWallets = async () => {
+    console.log('Cache duration reached, refreshing all wallets');
+    
+    if (!wallets || wallets.length === 0) {
+      startProgressBar();
+      return;
+    }
+
+    // Start refresh animations for all wallets
+    wallets.forEach((_, index) => {
+      const button = document.querySelector(`[data-index="${index}"] .refresh-btn i`);
+      if (button) button.classList.add('rotating');
+    });
+
+    try {
+      // Refresh all wallets in parallel
+      const refreshResults = await Promise.all(
+        wallets.map((_, index) => refreshWallet(index))
+      );
+
+      // If any wallet was updated, save and re-render
+      if (refreshResults.some(result => result)) {
+        await saveWallets();
+        await renderWallets();
+      }
+    } catch (error) {
+      console.error('Error refreshing all wallets:', error);
+    }
+
+    // Restart progress bar
+    startProgressBar();
+  };
+
+  // Start progress bar animation
+  const startProgressBar = () => {
+    startTime = Date.now();
+    nextRefreshTime = startTime + CACHE_DURATION;
+    refreshBar.style.transition = 'transform 1s linear';
+    updateProgressBar();
+  };
+
+  // Initial start
+  startProgressBar();
+
+  // Check for wallets that need immediate refresh
+  setInterval(async () => {
+    try {
+      if (!wallets || wallets.length === 0) return;
+
+      const now = Date.now();
+      let needsRefresh = false;
+
+      // Check each wallet's cache
+      for (const wallet of wallets) {
+        const cacheKey = `wallet_data_${wallet.address}`;
+        const cache = await chrome.storage.local.get(cacheKey);
+
+        if (cache[cacheKey]) {
+          const timeLeft = (cache[cacheKey].timestamp + CACHE_DURATION) - now;
+          if (timeLeft <= CACHE_REFRESH_THRESHOLD) {
+            needsRefresh = true;
+            break;
+          }
+        }
+      }
+
+      // If any wallet needs refresh, refresh all of them
+      if (needsRefresh) {
+        refreshAllWallets();
+      }
+    } catch (error) {
+      console.error('Error in cache refresh monitor:', error);
+    }
+  }, CACHE_CHECK_INTERVAL);
+}
+
+// Add this helper function for formatting token quantities
+function formatTokenQuantity(amount, decimals = 0) {
+  try {
+    // For NFTs just return 1
+    if (amount === '1' && decimals === 0) {
+      return '1';
+    }
+
+    // Convert to float and apply decimals
+    const floatAmount = parseFloat(amount) / (10 ** decimals);
+    
+    // Format with 6 decimal places and remove trailing zeros
+    const formatted = floatAmount.toFixed(6).replace(/\.?0+$/, '');
+    console.log('Formatting token:', { amount, decimals, result: formatted });
+    return formatted;
+  } catch (error) {
+    console.error('Error formatting token quantity:', error);
+    return amount.toString();
+  }
 }
 
 // Initial load
@@ -1883,511 +2488,4 @@ async function handleDrop(e) {
   
   // Re-render wallets
   renderWallets();
-}
-
-// Wallet management functions
-async function deleteWallet(index) {
-  try {
-    const walletToDelete = wallets[index];
-    if (!walletToDelete) {
-      throw new Error('Wallet not found');
-    }
-
-    // Remove custom icon if exists
-    if (walletToDelete.walletType === 'Custom') {
-      await chrome.storage.local.remove(`wallet_icon_${walletToDelete.address}`);
-    }
-
-    // Remove from array
-    wallets.splice(index, 1);
-    
-    // Save changes
-    await saveWallets();
-    
-    // Re-render UI
-    await renderWallets();
-    
-    showSuccess('Wallet deleted successfully');
-  } catch (error) {
-    console.error('Error deleting wallet:', error);
-    showError('Failed to delete wallet');
-  }
-}
-
-// Setup event listeners
-function setupEventListeners() {
-  // Listen for messages from popup
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'WALLET_ADDED') {
-      // Add the new wallet with loading state
-      wallets.push({
-        ...message.wallet,
-        balance: '0',
-        assets: [],
-        stakingInfo: null,
-        isLoading: true
-      });
-      renderWallets();
-    } else if (message.type === 'WALLET_UPDATED') {
-      // Update the wallet with complete data
-      const index = wallets.findIndex(w => w.address === message.wallet.address);
-      if (index !== -1) {
-        wallets[index] = {
-          ...message.wallet,
-          isLoading: false
-        };
-        renderWallets();
-      }
-    }
-  });
-
-  // Add refresh button listeners
-  document.querySelectorAll('.refresh-btn').forEach(button => {
-    button.addEventListener('click', async () => {
-      const index = parseInt(button.closest('.wallet-item').dataset.index);
-      if (!isNaN(index)) {
-        await refreshWallet(index);
-      }
-    });
-  });
-
-  // Add wallet name click listeners for copying address
-  document.querySelectorAll('.wallet-text').forEach(element => {
-    element.addEventListener('click', async () => {
-      const walletItem = element.closest('.wallet-item');
-      const address = walletItem.dataset.address;
-      if (address) {
-        await copyToClipboard(address);
-        const walletType = element.querySelector('.wallet-type');
-        const originalText = walletType.innerText;
-        walletType.innerText = 'Copied!';
-        walletType.style.color = '#00b894';
-        setTimeout(() => {
-          walletType.innerText = originalText;
-          walletType.style.color = '';
-        }, 1000);
-      }
-    });
-  });
-
-  // Add navigation button listeners
-  document.querySelectorAll('.wallet-nav-button').forEach(button => {
-    button.addEventListener('click', () => {
-      const walletItem = button.closest('.wallet-item');
-      const sectionName = button.dataset.section;
-      
-      // Update active button
-      walletItem.querySelectorAll('.wallet-nav-button').forEach(b => b.classList.remove('active'));
-      button.classList.add('active');
-      
-      // Update active section
-      walletItem.querySelectorAll('.wallet-section').forEach(section => {
-        section.classList.toggle('active', section.getAttribute('data-section') === sectionName);
-      });
-    });
-  });
-
-  // Add copyable text listeners
-  document.querySelectorAll('.copyable-text').forEach(element => {
-    element.addEventListener('click', async () => {
-      await copyToClipboard(element.dataset.copy, element);
-    });
-  });
-}
-
-async function updateStorageUsage() {
-  try {
-    // Get all stored data to analyze
-    const allData = await chrome.storage.local.get(null);
-    console.log('All stored data:', allData);
-    
-    // Calculate total size
-    let totalSize = 0;
-    for (const key in allData) {
-      const value = allData[key];
-      if (value === null || value === undefined) {
-        chrome.storage.local.remove(key);
-        continue;
-      }
-      
-      const jsonString = JSON.stringify(value);
-      const size = new TextEncoder().encode(jsonString).length;
-      console.log(`Size for ${key}:`, {
-        rawValue: value,
-        jsonSize: jsonString.length,
-        byteSize: size
-      });
-      totalSize += size;
-    }
-    
-    console.log('Total size in bytes:', totalSize);
-    
-    // Chrome local storage limit (usually 10MB = 10,485,760 bytes)
-    const STORAGE_LIMIT = chrome.storage.local.QUOTA_BYTES || 10485760;
-    console.log('Storage limit in bytes:', STORAGE_LIMIT);
-    
-    // Calculate percentage used (with 2 decimal places)
-    const percentageUsed = (totalSize / STORAGE_LIMIT) * 100;
-    const roundedPercentage = Math.round(percentageUsed * 100) / 100;
-    console.log('Storage percentage:', {
-      raw: percentageUsed,
-      rounded: roundedPercentage
-    });
-    
-    // Update UI
-    const storageUsedElement = document.getElementById('storageUsed');
-    if (storageUsedElement) {
-      storageUsedElement.textContent = `${roundedPercentage}%`;
-      console.log('Updated storage display:', storageUsedElement.textContent);
-    }
-
-  } catch (error) {
-    console.error('Error updating storage usage:', error);
-  }
-}
-
-// Function to filter and render assets based on type
-function renderAssetsList(walletIndex, tabType) {
-  const wallet = wallets[walletIndex];
-  if (!wallet || !wallet.assets) return;
-
-  const assetsContainer = document.querySelector('.assets-list');
-  if (!assetsContainer) return;
-
-  // Clear existing assets
-  assetsContainer.innerHTML = '';
-
-  // Filter assets based on tab type
-  const filteredAssets = wallet.assets.filter(asset => {
-    if (tabType === 'all') return true;
-    if (tabType === 'nfts') return isNFT(asset);
-    if (tabType === 'tokens') return !isNFT(asset);
-    return true;
-  });
-
-  // Render filtered assets
-  filteredAssets.forEach(asset => {
-    const assetCard = createAssetCard(asset);
-    assetsContainer.appendChild(assetCard);
-  });
-}
-
-function setupAssetsPanelListeners() {
-  const panel = document.querySelector('.assets-panel');
-  if (!panel) return; // Exit if panel doesn't exist
-
-  const closeBtn = panel.querySelector('.close-assets');
-  const tabs = panel.querySelectorAll('.assets-tab');
-  
-  if (closeBtn) {
-    closeBtn.addEventListener('click', () => {
-      panel.classList.remove('expanded');
-    });
-  }
-
-  tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const currentWallet = panel.dataset.walletIndex;
-      const tabType = tab.dataset.tab;
-      
-      // Update button styles
-      tabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      
-      // Render assets for the selected tab
-      renderAssetsList(currentWallet, tabType);
-    });
-  });
-}
-
-// Add global tab functionality
-function setupGlobalTabs() {
-  const globalTabs = document.querySelectorAll('.global-tab-btn');
-  
-  globalTabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      // Update active state of global tabs
-      globalTabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      
-      // Get all wallet sections
-      const walletItems = document.querySelectorAll('.wallet-item');
-      
-      walletItems.forEach(wallet => {
-        // Get all sections in this wallet
-        const sections = wallet.querySelectorAll('.wallet-section');
-        const buttons = wallet.querySelectorAll('.wallet-nav-button');
-        
-        // Update sections visibility
-        sections.forEach(s => {
-          if (s.getAttribute('data-section') === tab.dataset.section) {
-            s.classList.add('active');
-          } else {
-            s.classList.remove('active');
-          }
-        });
-        
-        // Update nav buttons state
-        buttons.forEach(btn => {
-          if (btn.getAttribute('data-section') === tab.dataset.section) {
-            btn.classList.add('active');
-          } else {
-            btn.classList.remove('active');
-          }
-        });
-      });
-    });
-  });
-}
-
-// Add asset search functionality
-function setupAssetSearch() {
-  const searchInput = document.getElementById('assetSearch');
-  if (!searchInput) return;
-
-  let searchTimeout;
-
-  searchInput.addEventListener('input', (e) => {
-    clearTimeout(searchTimeout);
-    
-    searchTimeout = setTimeout(() => {
-      const searchTerm = e.target.value.toLowerCase().trim();
-      console.log('Searching for:', searchTerm);
-      
-      const walletItems = document.querySelectorAll('.wallet-item');
-      let hasVisibleWallets = false;
-
-      walletItems.forEach(walletItem => {
-        const walletIndex = walletItem.getAttribute('data-index');
-        const wallet = wallets[walletIndex];
-        
-        if (!wallet || !wallet.assets) {
-          walletItem.classList.add('hidden');
-          return;
-        }
-
-        // Search through the wallet's assets array
-        const hasMatchingAsset = wallet.assets.some(asset => {
-          const assetName = (asset.name || '').toLowerCase();
-          const assetUnit = (asset.unit || '').toLowerCase();
-          const assetPolicy = (asset.policyId || '').toLowerCase();
-          const assetFingerprint = (asset.fingerprint || '').toLowerCase();
-          
-          const matches = assetName.includes(searchTerm) || 
-                         assetUnit.includes(searchTerm) || 
-                         assetPolicy.includes(searchTerm) ||
-                         assetFingerprint.includes(searchTerm);
-          
-          if (matches) {
-            console.log('Found matching asset:', asset.name, 'in wallet:', wallet.name || wallet.address);
-          }
-          
-          return matches;
-        });
-
-        if (searchTerm === '') {
-          walletItem.classList.remove('hidden');
-          hasVisibleWallets = true;
-        } else if (hasMatchingAsset) {
-          walletItem.classList.remove('hidden');
-          hasVisibleWallets = true;
-          
-          // Switch to assets tab for this wallet
-          const sections = walletItem.querySelectorAll('.wallet-section');
-          const buttons = walletItem.querySelectorAll('.wallet-nav-button');
-          
-          sections.forEach(s => {
-            s.classList.toggle('active', s.getAttribute('data-section') === 'assets');
-          });
-          
-          buttons.forEach(btn => {
-            btn.classList.toggle('active', btn.getAttribute('data-section') === 'assets');
-          });
-
-          // Switch global tab to assets
-          const globalTabs = document.querySelectorAll('.global-tab-btn');
-          globalTabs.forEach(tab => {
-            tab.classList.toggle('active', tab.getAttribute('data-section') === 'assets');
-          });
-        } else {
-          walletItem.classList.add('hidden');
-        }
-      });
-
-      // Show/hide no results message
-      let noResultsMsg = document.getElementById('noResultsMsg');
-      if (!hasVisibleWallets && searchTerm !== '') {
-        if (!noResultsMsg) {
-          noResultsMsg = document.createElement('div');
-          noResultsMsg.id = 'noResultsMsg';
-          noResultsMsg.className = 'no-results-message';
-          noResultsMsg.textContent = 'No wallets found with matching assets';
-          document.getElementById('walletList').appendChild(noResultsMsg);
-        }
-      } else if (noResultsMsg) {
-        noResultsMsg.remove();
-      }
-    }, 300);
-  });
-
-  // Clear search when switching global tabs
-  document.querySelectorAll('.global-tab-btn').forEach(tab => {
-    tab.addEventListener('click', () => {
-      if (searchInput.value) {
-        searchInput.value = '';
-        searchInput.dispatchEvent(new Event('input'));
-      }
-    });
-  });
-}
-
-// Rate limiting
-const API_DELAY = 500; // ms between requests
-let lastRequestTime = 0;
-
-async function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function rateLimitRequest() {
-  const now = Date.now();
-  const timeSinceLastRequest = now - lastRequestTime;
-  if (timeSinceLastRequest < API_DELAY) {
-    await wait(API_DELAY - timeSinceLastRequest);
-  }
-  lastRequestTime = Date.now();
-}
-
-// Start the cache refresh monitor
-function startCacheRefreshMonitor() {
-  const CACHE_CHECK_INTERVAL = 30000; // Check cache every 30 seconds
-  const CACHE_REFRESH_THRESHOLD = 60000; // Refresh if less than 1 minute left
-  
-  // Initialize progress bar
-  const refreshBar = document.querySelector('.refresh-bar');
-  const refreshTimeText = document.getElementById('refreshTime');
-  let startTime = Date.now();
-  let nextRefreshTime = startTime + CACHE_DURATION;
-
-  // Update progress bar every second
-  const updateProgressBar = () => {
-    const now = Date.now();
-    const elapsed = now - startTime;
-    const remaining = nextRefreshTime - now;
-    
-    // Update progress bar
-    const progress = (elapsed / CACHE_DURATION) * 100;
-    refreshBar.style.transform = `scaleX(${progress / 100})`;
-    
-    // Update time text
-    const secondsRemaining = Math.max(0, Math.ceil(remaining / 1000));
-    const minutes = Math.floor(secondsRemaining / 60);
-    const seconds = secondsRemaining % 60;
-    refreshTimeText.textContent = `${minutes}m ${seconds}s`;
-    
-    // If time's up, refresh all wallets
-    if (remaining <= 0) {
-      refreshAllWallets();
-    } else {
-      // Schedule next update
-      requestAnimationFrame(updateProgressBar);
-    }
-  };
-
-  // Function to refresh all wallets
-  const refreshAllWallets = async () => {
-    console.log('Cache duration reached, refreshing all wallets');
-    
-    if (!wallets || wallets.length === 0) {
-      startProgressBar();
-      return;
-    }
-
-    // Start refresh animations for all wallets
-    wallets.forEach((_, index) => {
-      const button = document.querySelector(`[data-index="${index}"] .refresh-btn i`);
-      if (button) button.classList.add('rotating');
-    });
-
-    try {
-      // Refresh all wallets in parallel
-      const refreshResults = await Promise.all(
-        wallets.map((_, index) => refreshWallet(index))
-      );
-
-      // If any wallet was updated, save and re-render
-      if (refreshResults.some(result => result)) {
-        await saveWallets();
-        await renderWallets();
-      }
-    } catch (error) {
-      console.error('Error refreshing all wallets:', error);
-    }
-
-    // Restart progress bar
-    startProgressBar();
-  };
-
-  // Start progress bar animation
-  const startProgressBar = () => {
-    startTime = Date.now();
-    nextRefreshTime = startTime + CACHE_DURATION;
-    refreshBar.style.transition = 'transform 1s linear';
-    updateProgressBar();
-  };
-
-  // Initial start
-  startProgressBar();
-
-  // Check for wallets that need immediate refresh
-  setInterval(async () => {
-    try {
-      if (!wallets || wallets.length === 0) return;
-
-      const now = Date.now();
-      let needsRefresh = false;
-
-      // Check each wallet's cache
-      for (const wallet of wallets) {
-        const cacheKey = `wallet_data_${wallet.address}`;
-        const cache = await chrome.storage.local.get(cacheKey);
-
-        if (cache[cacheKey]) {
-          const timeLeft = (cache[cacheKey].timestamp + CACHE_DURATION) - now;
-          if (timeLeft <= CACHE_REFRESH_THRESHOLD) {
-            needsRefresh = true;
-            break;
-          }
-        }
-      }
-
-      // If any wallet needs refresh, refresh all of them
-      if (needsRefresh) {
-        refreshAllWallets();
-      }
-    } catch (error) {
-      console.error('Error in cache refresh monitor:', error);
-    }
-  }, CACHE_CHECK_INTERVAL);
-}
-
-// Add this helper function for formatting token quantities
-function formatTokenQuantity(amount, decimals = 0) {
-  try {
-    // For NFTs just return 1
-    if (amount === '1' && decimals === 0) {
-      return '1';
-    }
-
-    // Convert to float and apply decimals
-    const floatAmount = parseFloat(amount) / (10 ** decimals);
-    
-    // Format with 6 decimal places and remove trailing zeros
-    const formatted = floatAmount.toFixed(6).replace(/\.?0+$/, '');
-    console.log('Formatting token:', { amount, decimals, result: formatted });
-    return formatted;
-  } catch (error) {
-    console.error('Error formatting token quantity:', error);
-    return amount.toString();
-  }
 }
