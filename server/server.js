@@ -258,6 +258,7 @@ app.get('/api/wallet/:address', async (req, res) => {
                 // Process metadata like the Discord bot
                 const onchainMetadata = assetInfo.onchain_metadata || {};
                 const metadata = assetInfo.metadata || {};
+                const decimals = assetInfo.decimals || 0;
 
                 // Get image URL
                 let imageUrl = null;
@@ -284,13 +285,13 @@ app.get('/api/wallet/:address', async (req, res) => {
 
                 console.log('Pre-formatting quantity:', {
                     raw: amount.quantity,
-                    decimals: assetInfo.decimals || 0
+                    decimals: decimals
                 });
 
                 // Structure the asset data
                 const asset = {
                     unit: amount.unit,
-                    quantity: formatAmount(amount.quantity, 0),
+                    quantity: formatAmount(amount.quantity, decimals),
                     name: metadata.name || onchainMetadata.name || assetInfo.asset_name || amount.unit,
                     ticker: metadata.ticker || onchainMetadata.ticker || null,
                     description: metadata.description || onchainMetadata.description || null,
