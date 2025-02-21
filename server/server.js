@@ -119,21 +119,17 @@ async function fetchBlockfrost(endpoint, errorContext = '') {
 
 // Helper to validate Cardano address format
 function isValidCardanoAddress(address) {
-  // Check for basic format
+  // Basic validation - let Blockfrost API handle detailed validation
   if (!address || typeof address !== 'string') return false;
-
-  // Mainnet Shelley addresses (addr1...)
-  const shelleyMainnetRegex = /^addr1[a-zA-Z0-9]{98}$/;
   
-  // Mainnet Byron addresses (Ae2...)
-  const byronMainnetRegex = /^(Ae2|DdzFF)[a-zA-Z0-9]{20,100}$/;
+  // Just check if it starts with a valid prefix
+  const validPrefixes = ['addr1', 'Ae2', 'DdzFF', 'stake1'];
+  const hasValidPrefix = validPrefixes.some(prefix => address.startsWith(prefix));
   
-  // Mainnet stake addresses (stake1...)
-  const stakeMainnetRegex = /^stake1[a-zA-Z0-9]{50,60}$/;
+  // Minimum length check (reasonable minimum for any Cardano address)
+  const hasValidLength = address.length >= 50;
 
-  return shelleyMainnetRegex.test(address) || 
-         byronMainnetRegex.test(address) || 
-         stakeMainnetRegex.test(address);
+  return hasValidPrefix && hasValidLength;
 }
 
 // Helper to safely format token amounts

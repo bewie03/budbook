@@ -8,6 +8,7 @@ const MAX_STORED_ASSETS = 5; // Store only top 5 assets by value
 const ADA_LOVELACE = 1000000; // 1 ADA = 1,000,000 Lovelace
 const BONE_POLICY_ID = ''; // Add your BONE token policy ID here
 const BONE_ASSET_NAME = ''; // Add your BONE token asset name here
+const CACHE_DURATION = 300000; // 5 minutes
 
 // Available wallet logos
 const WALLET_LOGOS = {
@@ -128,10 +129,11 @@ async function requestPayment() {
 async function loadWallets() {
   return new Promise((resolve, reject) => {
     try {
-      // Load wallet index and slots from sync storage
-      chrome.storage.sync.get(['wallet_index', 'unlockedSlots', 'slots_version'], async (data) => {
+      // Load only essential data from sync storage
+      chrome.storage.sync.get(['wallet_index', 'unlockedSlots', 'slots_version', 'wallet_order'], async (data) => {
         try {
           const walletIndex = data.wallet_index || [];
+          const savedOrder = data.wallet_order || [];
           wallets = [];
 
           // Reset slots if version is old or not set
@@ -150,34 +152,61 @@ async function loadWallets() {
           }
 
           // Load wallet metadata from sync storage
-          const walletPromises = walletIndex.map(address => 
-            new Promise((resolve) => {
-              chrome.storage.sync.get(`wallet_${address}`, (result) => {
-                resolve(result[`wallet_${address}`]);
+          const tempWallets = {};
+          for (const address of walletIndex) {
+            try {
+              // Load stored metadata
+              const storedData = await new Promise((resolve) => {
+                chrome.storage.sync.get(`wallet_${address}`, (result) => {
+                  resolve(result[`wallet_${address}`] || {});
+                });
               });
-            })
-          );
 
-          // Load assets from local storage
-          const assetPromises = walletIndex.map(address => 
-            new Promise((resolve) => {
-              chrome.storage.local.get(`assets_${address}`, (result) => {
-                resolve(result[`assets_${address}`]);
-              });
-            })
-          );
+              // Check local storage cache
+              const cacheKey = `wallet_data_${address}`;
+              const cache = await chrome.storage.local.get(cacheKey);
+              
+              let walletData = {
+                balance: '0',
+                assets: [],
+                stakingInfo: null
+              };
+              
+              if (cache[cacheKey] && Date.now() - cache[cacheKey].timestamp < CACHE_DURATION) {
+                walletData = cache[cacheKey].data;
+              }
 
-          // Wait for all data to load
-          const [walletData, assetData] = await Promise.all([
-            Promise.all(walletPromises),
-            Promise.all(assetPromises)
-          ]);
+              // Initialize wallet with metadata and cached data
+              tempWallets[address] = {
+                address,
+                name: storedData.name || 'Unnamed Wallet',
+                walletType: storedData.walletType || 'None',
+                balance: walletData.balance,
+                assets: walletData.assets,
+                stakingInfo: walletData.stakingInfo
+              };
+            } catch (error) {
+              console.error(`Error loading wallet ${address}:`, error);
+            }
+          }
 
-          // Combine wallet data with assets
-          wallets = walletData.map((wallet, index) => ({
-            ...wallet,
-            assets: assetData[index] || []
-          })).filter(Boolean);
+          // Order wallets based on saved order
+          wallets = [];
+          
+          // First add wallets in saved order
+          for (const address of savedOrder) {
+            if (tempWallets[address]) {
+              wallets.push(tempWallets[address]);
+              delete tempWallets[address];
+            }
+          }
+          
+          // Then add any remaining wallets
+          for (const address of walletIndex) {
+            if (tempWallets[address]) {
+              wallets.push(tempWallets[address]);
+            }
+          }
 
           resolve();
         } catch (error) {
@@ -196,16 +225,11 @@ async function saveWallets() {
       // Create a wallet index (just addresses)
       const walletIndex = wallets.map(w => w.address);
 
-      // Prepare individual wallet saves
+      // Prepare sync storage data (only essential data)
       const syncPromises = wallets.map(wallet => 
         new Promise((resolve, reject) => {
-          // Store minimal wallet data in sync storage
           const syncData = {
-            address: wallet.address,
             name: wallet.name,
-            balance: wallet.balance,
-            stake_address: wallet.stake_address,
-            timestamp: wallet.timestamp,
             walletType: wallet.walletType
           };
 
@@ -221,11 +245,20 @@ async function saveWallets() {
         })
       );
 
-      // Store assets in local storage
+      // Store wallet data in local storage cache
       const localPromises = wallets.map(wallet => 
         new Promise((resolve, reject) => {
+          const cacheData = {
+            data: {
+              balance: wallet.balance,
+              assets: wallet.assets,
+              stakingInfo: wallet.stakingInfo
+            },
+            timestamp: Date.now()
+          };
+
           chrome.storage.local.set({ 
-            [`assets_${wallet.address}`]: wallet.assets 
+            [`wallet_data_${wallet.address}`]: cacheData 
           }, () => {
             if (chrome.runtime.lastError) {
               reject(chrome.runtime.lastError);
@@ -236,12 +269,13 @@ async function saveWallets() {
         })
       );
 
-      // Save the index and wait for all saves
+      // Save the index and slots to sync storage
       Promise.all([
         new Promise((resolve, reject) => {
           chrome.storage.sync.set({ 
             wallet_index: walletIndex,
-            unlockedSlots 
+            unlockedSlots,
+            wallet_order: walletIndex // Save current order
           }, () => {
             if (chrome.runtime.lastError) {
               reject(chrome.runtime.lastError);
@@ -257,127 +291,6 @@ async function saveWallets() {
       reject(error);
     }
   });
-}
-
-async function addWallet() {
-  const addressInput = document.getElementById('addressInput');
-  const nameInput = document.getElementById('nameInput');
-  const walletTypeSelect = document.getElementById('walletType');
-  const addWalletBtn = document.getElementById('addWallet');
-
-  const address = addressInput.value.trim();
-  const name = nameInput.value.trim();
-  const walletType = walletTypeSelect.value;
-
-  // Validation
-  if (!address) {
-    showMessage('Please enter a wallet address', 'error');
-    return;
-  }
-  if (!name) {
-    showMessage('Please enter a wallet name', 'error');
-    return;
-  }
-  if (wallets.some(w => w.name.toLowerCase() === name.toLowerCase())) {
-    showMessage('A wallet with this name already exists', 'error');
-    return;
-  }
-  if (wallets.some(w => w.address === address)) {
-    showMessage('This wallet has already been added', 'error');
-    return;
-  }
-
-  // Show loading state
-  addWalletBtn.disabled = true;
-  showMessage('Adding wallet...', 'info');
-
-  try {
-    // Add temporary wallet to the list immediately
-    const tempWallet = {
-      name,
-      address,
-      walletType,
-      isLoading: true,
-      balance: '0',
-      assets: []
-    };
-    
-    wallets.push(tempWallet);
-    await saveWallets();
-
-    // Notify fullview to show loading state
-    const fullviewTabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
-    if (fullviewTabs.length > 0) {
-      chrome.tabs.sendMessage(fullviewTabs[0].id, { 
-        action: 'walletLoading',
-        wallet: {
-          name,
-          address,
-          walletType: walletType,
-          customIcon: walletType === 'Custom' ? customIconData : undefined
-        }
-      });
-    }
-
-    // Fetch wallet data
-    const data = await fetchWalletData(address);
-    
-    // Update the wallet with real data
-    const walletIndex = wallets.findIndex(w => w.address === address);
-    if (walletIndex !== -1) {
-      wallets[walletIndex] = {
-        name,
-        address,
-        walletType,
-        isLoading: false,
-        ...data
-      };
-    }
-
-    // Save wallets
-    await saveWallets();
-    
-    // Clear inputs
-    addressInput.value = '';
-    nameInput.value = '';
-    walletTypeSelect.value = 'None';
-    
-    // Notify all fullview tabs to reload
-    const tabs = await chrome.tabs.query({url: chrome.runtime.getURL('fullview.html')});
-    tabs.forEach(tab => {
-      chrome.tabs.sendMessage(tab.id, { type: 'RELOAD_WALLETS' });
-    });
-
-    // Show success message
-    showMessage('Wallet added successfully!', 'success');
-    updateUI();
-
-    // Refresh fullview with complete data
-    if (fullviewTabs.length > 0) {
-      chrome.tabs.sendMessage(fullviewTabs[0].id, { 
-        action: 'walletLoaded',
-        wallet: wallets[walletIndex]
-      });
-    }
-
-    // Save custom icon if present
-    if (walletType === 'Custom' && customIconData) {
-      await chrome.storage.local.set({
-        [`wallet_icon_${address}`]: customIconData
-      });
-      wallets[walletIndex].customIcon = customIconData;
-    }
-  } catch (error) {
-    // Remove temporary wallet if it exists
-    const walletIndex = wallets.findIndex(w => w.address === address);
-    if (walletIndex !== -1) {
-      wallets.splice(walletIndex, 1);
-      await saveWallets();
-    }
-    showMessage(error.message || 'Failed to add wallet', 'error');
-  } finally {
-    addWalletBtn.disabled = false;
-  }
 }
 
 // UI Functions
@@ -428,7 +341,24 @@ function showSuccess(message) {
 }
 
 function validateAddress(address) {
-  return address && address.startsWith('addr1') && address.length >= 59;
+  // Basic validation - let the API handle detailed validation
+  if (!address || typeof address !== 'string') return false;
+  
+  // Just check if it starts with a valid prefix
+  const validPrefixes = ['addr1', 'Ae2', 'DdzFF', 'stake1'];
+  const hasValidPrefix = validPrefixes.some(prefix => address.startsWith(prefix));
+  
+  // Minimum length check (reasonable minimum for any Cardano address)
+  const hasValidLength = address.length >= 50;
+  
+  console.log('Address validation:', {
+    address,
+    hasValidPrefix,
+    hasValidLength,
+    length: address.length
+  });
+
+  return hasValidPrefix && hasValidLength;
 }
 
 function convertIpfsUrl(url) {
@@ -880,4 +810,132 @@ async function getWalletLogo(walletType, address) {
     return data[`wallet_icon_${address}`] || WALLET_LOGOS['None'];
   }
   return WALLET_LOGOS[walletType] || WALLET_LOGOS['None'];
+}
+
+async function addWallet() {
+  const addressInput = document.getElementById('addressInput');
+  const nameInput = document.getElementById('nameInput');
+  const walletTypeSelect = document.getElementById('walletType');
+  const addWalletBtn = document.getElementById('addWallet');
+
+  const address = addressInput.value.trim();
+  const name = nameInput.value.trim();
+  const walletType = walletTypeSelect.value;
+
+  // Validation
+  if (!address) {
+    showMessage('Please enter a wallet address', 'error');
+    return;
+  }
+  if (!validateAddress(address)) {
+    showMessage('Please enter a valid Cardano address', 'error');
+    return;
+  }
+  if (!name) {
+    showMessage('Please enter a wallet name', 'error');
+    return;
+  }
+  if (wallets.some(w => w.name.toLowerCase() === name.toLowerCase())) {
+    showMessage('A wallet with this name already exists', 'error');
+    return;
+  }
+  if (wallets.some(w => w.address === address)) {
+    showMessage('This wallet has already been added', 'error');
+    return;
+  }
+
+  // Show loading state
+  addWalletBtn.disabled = true;
+  showMessage('Adding wallet...', 'info');
+
+  try {
+    // Add temporary wallet to the list immediately
+    const tempWallet = {
+      name,
+      address,
+      walletType,
+      isLoading: true,
+      balance: '0',
+      assets: []
+    };
+    
+    wallets.push(tempWallet);
+    await saveWallets();
+
+    // Notify fullview to show loading state
+    const fullviewTabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
+    if (fullviewTabs.length > 0) {
+      chrome.tabs.sendMessage(fullviewTabs[0].id, { 
+        type: 'WALLET_ADDED',
+        wallet: {
+          name,
+          address,
+          walletType,
+          isLoading: true,
+          customIcon: walletType === 'Custom' ? customIconData : undefined
+        }
+      });
+    }
+
+    // Fetch wallet data
+    const data = await fetchWalletData(address);
+    
+    // Update the wallet with real data
+    const walletIndex = wallets.findIndex(w => w.address === address);
+    if (walletIndex !== -1) {
+      wallets[walletIndex] = {
+        name,
+        address,
+        walletType,
+        isLoading: false,
+        ...data
+      };
+    }
+
+    // Save wallets
+    await saveWallets();
+    
+    // Clear inputs
+    addressInput.value = '';
+    nameInput.value = '';
+    walletTypeSelect.value = 'None';
+    
+    // Notify fullview to refresh with complete data
+    if (fullviewTabs.length > 0) {
+      chrome.tabs.sendMessage(fullviewTabs[0].id, { 
+        type: 'WALLET_UPDATED',
+        wallet: wallets[walletIndex]
+      });
+    }
+
+    // Show success message
+    showMessage('Wallet added successfully!', 'success');
+    updateUI();
+
+    // Refresh fullview with complete data
+    if (fullviewTabs.length > 0) {
+      chrome.tabs.sendMessage(fullviewTabs[0].id, { 
+        action: 'walletLoaded',
+        wallet: wallets[walletIndex]
+      });
+    }
+
+    // Save custom icon if present
+    if (walletType === 'Custom' && customIconData) {
+      await chrome.storage.local.set({
+        [`wallet_icon_${address}`]: customIconData
+      });
+      wallets[walletIndex].customIcon = customIconData;
+    }
+  } catch (error) {
+    // Remove temporary wallet if it exists
+    const walletIndex = wallets.findIndex(w => w.address === address);
+    if (walletIndex !== -1) {
+      wallets.splice(walletIndex, 1);
+      await saveWallets();
+    }
+    showMessage(error.message || 'Failed to add wallet', 'error');
+  } finally {
+    addWalletBtn.disabled = false;
+  }
 }
