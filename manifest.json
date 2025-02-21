@@ -11,10 +11,13 @@
   "host_permissions": [
     "https://budbook-2410440cbb61.herokuapp.com/*",
     "https://cdnjs.cloudflare.com/*",
-    "https://ipfs.io/*"
+    "https://ipfs.io/*",
+    "https://cloudflare-ipfs.com/*",
+    "https://gateway.pinata.cloud/*",
+    "https://dweb.link/*"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com https://ipfs.io; img-src 'self' data: https://ipfs.io;"
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com https://*.ipfs.io https://cloudflare-ipfs.com https://gateway.pinata.cloud https://dweb.link; img-src 'self' data: https://*.ipfs.io https://cloudflare-ipfs.com https://gateway.pinata.cloud https://dweb.link;"
   },
   "action": {
     "default_popup": "popup.html",
