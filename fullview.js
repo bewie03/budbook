@@ -776,11 +776,13 @@ async function createWalletBox(wallet, index) {
     assetThumbnail.className = `asset-thumbnail ${isNFT(asset) ? 'nft' : 'token'}`;
     assetThumbnail.style.cursor = 'pointer';
     const imageUrl = getAssetImage(asset);
+    
     assetThumbnail.innerHTML = imageUrl ? `
       <img src="${imageUrl}" alt="${asset.name || asset.unit}">
     ` : `
       <span style="background-color: ${getRandomColor(asset.name)}">${getFirstLetter(asset.name || asset.unit)}</span>
     `;
+    
     assetThumbnail.addEventListener('click', (e) => {
       e.stopPropagation();
       assetModal.show(asset);
@@ -1263,7 +1265,7 @@ function createAssetModal() {
       }
 
       // Format the asset information
-      const quantity = formatTokenQuantity(asset.quantity, asset.decimals);
+      const quantity = formatTokenQuantity(asset.quantity, asset.decimals || 0);
       const ticker = asset.ticker ? ` (${asset.ticker})` : '';
       const displayName = asset.name || 'Unnamed Asset';
       
@@ -1329,38 +1331,23 @@ function createAssetModal() {
 }
 
 // Add this helper function for formatting token quantities
-function formatTokenQuantity(quantity, decimals = 0) {
+function formatTokenQuantity(amount, decimals = 0) {
   try {
-    if (!quantity) return '0';
-    
-    // Convert to BigInt for precise handling
-    const bigQuantity = BigInt(quantity);
-    
-    // If no decimals or quantity is 1 (NFT), return as is
-    if (decimals === 0 || quantity === '1') {
-      return bigQuantity.toLocaleString();
+    // For NFTs just return 1
+    if (amount === '1' && decimals === 0) {
+      return '1';
     }
+
+    // Convert to float and apply decimals
+    const floatAmount = parseFloat(amount) / (10 ** decimals);
     
-    // Calculate divisor (e.g., for 6 decimals: 1000000)
-    const divisor = BigInt(10 ** decimals);
-    
-    // Get whole and decimal parts
-    const wholePart = (bigQuantity / divisor).toString();
-    const decimalPart = (bigQuantity % divisor).toString().padStart(decimals, '0');
-    
-    // Trim trailing zeros in decimal part
-    const trimmedDecimal = decimalPart.replace(/0+$/, '');
-    
-    // Format whole part with commas
-    const formattedWhole = BigInt(wholePart).toLocaleString();
-    
-    // Return formatted number
-    return trimmedDecimal 
-      ? `${formattedWhole}.${trimmedDecimal}`
-      : formattedWhole;
+    // Format with 6 decimal places and remove trailing zeros
+    const formatted = floatAmount.toFixed(6).replace(/\.?0+$/, '');
+    console.log('Formatting token:', { amount, decimals, result: formatted });
+    return formatted;
   } catch (error) {
     console.error('Error formatting token quantity:', error);
-    return quantity;
+    return amount.toString();
   }
 }
 
@@ -1399,11 +1386,26 @@ function initializeModal() {
 function showAssetModal(asset) {
   if (!modal) return; // Guard against modal not being initialized
   
-  modalImage.src = asset.image || 'icons/placeholder.png';
-  modalName.textContent = asset.name || 'Unnamed Asset';
-  modalAmount.textContent = `Amount: ${formatTokenAmount(asset.quantity, asset.decimals)}`;
-  modalPolicy.textContent = `Policy ID: ${asset.policy_id || 'N/A'}`;
   modal.style.display = 'block';
+  
+  // Set image or fallback
+  const imageUrl = getAssetImage(asset);
+  if (imageUrl) {
+    modalImage.src = imageUrl;
+    modalImage.style.display = 'block';
+  } else {
+    modalImage.style.display = 'none';
+  }
+  
+  // Set name and quantity
+  modalName.textContent = asset.name || asset.unit;
+  const quantity = formatTokenQuantity(asset.quantity, asset.decimals || 0);
+  modalAmount.textContent = `Quantity: ${quantity}`;
+  
+  // Set policy ID
+  if (modalPolicy) {
+    modalPolicy.textContent = asset.policy || '';
+  }
 }
 
 // Update createAssetCard to add click handler
@@ -1429,7 +1431,7 @@ function createAssetCard(asset) {
   
   const amount = document.createElement('div');
   amount.className = 'asset-amount';
-  amount.textContent = formatTokenAmount(asset.quantity, asset.decimals);
+  amount.textContent = formatTokenQuantity(asset.quantity, asset.decimals || 0);
   
   info.appendChild(name);
   info.appendChild(amount);
@@ -1738,16 +1740,6 @@ function formatBalance(balance) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2 
   })}`;
-}
-
-function formatTokenAmount(amount, decimals = 0) {
-  if (!amount) return '0';
-  
-  const value = parseFloat(amount) / Math.pow(10, decimals);
-  return value.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: decimals
-  });
 }
 
 function updateSlotCount() {

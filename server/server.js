@@ -135,18 +135,21 @@ function isValidCardanoAddress(address) {
 
 // Helper to safely format token amounts
 function formatAmount(quantity, decimals) {
-    try {
-        if (decimals === 0) return quantity;
-        
-        // Handle the amount as a string to avoid number precision issues
-        const str = quantity.padStart(decimals + 1, '0');
-        const whole = str.slice(0, -decimals) || '0';
-        const fraction = str.slice(-decimals);
-        
-        return `${whole}.${fraction}`;
-    } catch {
-        return null;
+  try {
+    // For NFTs just return 1
+    if (quantity === '1' && decimals === 0) {
+      return '1';
     }
+
+    // Convert to float and apply decimals
+    const floatAmount = parseFloat(quantity) / (10 ** decimals);
+    
+    // Format with 6 decimal places and remove trailing zeros
+    return floatAmount.toFixed(6).replace(/\.?0+$/, '');
+  } catch (error) {
+    console.error('Error formatting amount:', error);
+    return quantity.toString();
+  }
 }
 
 // Helper function to validate URLs
@@ -263,7 +266,7 @@ app.get('/api/wallet/:address', async (req, res) => {
                 // Structure the asset data
                 const asset = {
                     unit: amount.unit,
-                    quantity: amount.quantity,
+                    quantity: formatAmount(amount.quantity, assetInfo.decimals || 0),
                     decimals: assetInfo.decimals || 0,
                     name: metadata.name || onchainMetadata.name || assetInfo.asset_name || amount.unit,
                     ticker: metadata.ticker || onchainMetadata.ticker || null,
