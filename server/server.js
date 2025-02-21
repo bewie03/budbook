@@ -659,6 +659,20 @@ app.post('/webhook', express.json(), async (req, res) => {
       return res.status(400).json({ error: 'Invalid payload' });
     }
 
+    // Convert block_time to milliseconds and validate it's not too old
+    const txTimestamp = tx.block_time * 1000;
+    const currentTime = Date.now();
+    const maxAgeMs = 24 * 60 * 60 * 1000; // 24 hours
+    
+    if (currentTime - txTimestamp > maxAgeMs) {
+      console.log('Transaction is too old:', {
+        txTime: new Date(txTimestamp).toISOString(),
+        currentTime: new Date(currentTime).toISOString(),
+        maxAge: '24 hours'
+      });
+      return res.status(200).json({ success: true });
+    }
+
     // Find the output to our payment address with both ADA and BONE tokens
     const paymentOutput = tx.outputs.find(output => 
       output.address === PAYMENT_ADDRESS && 
@@ -669,9 +683,8 @@ app.post('/webhook', express.json(), async (req, res) => {
     );
 
     if (!paymentOutput) {
-      console.error('No valid payment to verification address found');
-      console.log('Available outputs:', JSON.stringify(tx.outputs, null, 2));
-      return res.status(400).json({ error: 'No relevant payment found' });
+      console.log('No valid payment output found in transaction');
+      return res.status(200).json({ success: true });
     }
 
     // Get ADA amount
@@ -698,8 +711,21 @@ app.post('/webhook', express.json(), async (req, res) => {
       
       if (payment && !payment.verified) {
         // Check if transaction happened after payment was initiated
-        if (tx.block_time * 1000 < payment.timestamp) {
-          console.log('Transaction is older than payment request, skipping');
+        if (txTimestamp < payment.timestamp) {
+          console.log('Transaction is older than payment request:', {
+            txTime: new Date(txTimestamp).toISOString(),
+            paymentTime: new Date(payment.timestamp).toISOString()
+          });
+          continue;
+        }
+
+        // Check if transaction is too far in the future (potential clock skew)
+        if (txTimestamp > payment.timestamp + maxAgeMs) {
+          console.log('Transaction is too far in the future:', {
+            txTime: new Date(txTimestamp).toISOString(),
+            paymentTime: new Date(payment.timestamp).toISOString(),
+            maxAge: '24 hours'
+          });
           continue;
         }
 
@@ -710,7 +736,11 @@ app.post('/webhook', express.json(), async (req, res) => {
           payment.verifiedAt = Date.now();
           await setInCache(key, payment);
           const paymentId = key.split(':')[1];
-          console.log('Payment verified for ID:', paymentId);
+          console.log('Payment verified:', {
+            paymentId,
+            txHash: tx.hash,
+            verifiedAt: new Date(payment.verifiedAt).toISOString()
+          });
           verifiedPayment = true;
           
           // Notify all clients watching this payment
@@ -719,13 +749,13 @@ app.post('/webhook', express.json(), async (req, res) => {
               if (client.paymentId === paymentId) {
                 try {
                   client.res.write(`data: ${JSON.stringify({ 
-                    verified: true, 
-                    used: false,
-                    message: 'Payment verified! Your slots will be updated.' 
+                    type: 'payment_verified',
+                    message: 'Your payment has been verified! Your slots will be updated shortly.',
+                    paymentId,
+                    txHash: tx.hash
                   })}\n\n`);
-                  console.log('Notified client:', clientId);
-                } catch (error) {
-                  console.error('Error notifying client:', error);
+                } catch (err) {
+                  console.error('Error sending SSE notification:', err);
                 }
               }
             }
@@ -736,7 +766,7 @@ app.post('/webhook', express.json(), async (req, res) => {
     }
 
     if (!verifiedPayment) {
-      console.log('No pending payment requests found for this transaction');
+      console.log('No matching unverified payment found for transaction');
     }
 
     res.status(200).json({ success: true });
