@@ -1203,52 +1203,117 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 let modal;
 let modalImage;
 let modalName;
-let modalQuantity;
-let modalDescription;
+let modalAmount;
+let modalPolicy;
 let closeModalButton;
 
-// Modal functions
-function showAssetModal(asset) {
-  const imageUrl = getAssetImage(asset);
-  modalImage.src = imageUrl || 'icons/placeholder.png';
-  modalName.textContent = asset.metadata?.name || asset.onchainMetadata?.name || 'Unknown Asset';
-  modalQuantity.textContent = `Quantity: ${formatTokenAmount(asset.quantity, asset.decimals)}`;
-  modalDescription.textContent = asset.metadata?.description || asset.onchainMetadata?.description || 'No description available';
-  modal.style.display = 'block';
-}
-
-function hideAssetModal() {
-  modal.style.display = 'none';
-}
-
+// Initialize modal elements
 function initializeModal() {
-  modal = document.getElementById('asset-modal');
-  modalImage = document.getElementById('modal-asset-image');
-  modalName = document.getElementById('modal-asset-name');
-  modalQuantity = document.getElementById('modal-asset-quantity');
-  modalDescription = document.getElementById('modal-asset-description');
+  modal = document.getElementById('assetModal');
+  modalImage = document.getElementById('modalAssetImage');
+  modalName = document.getElementById('modalAssetName');
+  modalAmount = document.getElementById('modalAssetAmount');
+  modalPolicy = document.getElementById('modalAssetPolicy');
   closeModalButton = document.querySelector('.close-modal');
 
-  // Add modal event listeners
+  // Close modal when clicking X or outside
   if (closeModalButton) {
-    closeModalButton.onclick = hideAssetModal;
+    closeModalButton.onclick = () => modal.style.display = 'none';
   }
   
   window.onclick = (event) => {
     if (event.target === modal) {
-      hideAssetModal();
+      modal.style.display = 'none';
     }
   };
+}
+
+// Modal functionality
+function showAssetModal(asset) {
+  if (!modal) return; // Guard against modal not being initialized
+  
+  modalImage.src = asset.image || 'icons/placeholder.png';
+  modalName.textContent = asset.name || 'Unnamed Asset';
+  modalAmount.textContent = `Amount: ${formatTokenAmount(asset.quantity, asset.decimals)}`;
+  modalPolicy.textContent = `Policy ID: ${asset.policy_id || 'N/A'}`;
+  modal.style.display = 'block';
+}
+
+// Update createAssetCard to add click handler
+function createAssetCard(asset) {
+  const card = document.createElement('div');
+  card.className = 'asset-card';
+  
+  const content = document.createElement('div');
+  content.className = 'asset-content';
+  
+  const image = document.createElement('img');
+  image.className = 'asset-image';
+  image.src = asset.image || 'icons/placeholder.png';
+  image.alt = asset.name || 'Asset';
+  image.onerror = () => image.src = 'icons/placeholder.png';
+  
+  const info = document.createElement('div');
+  info.className = 'asset-info';
+  
+  const name = document.createElement('div');
+  name.className = 'asset-name';
+  name.textContent = asset.name || 'Unnamed Asset';
+  
+  const amount = document.createElement('div');
+  amount.className = 'asset-amount';
+  amount.textContent = formatTokenAmount(asset.quantity, asset.decimals);
+  
+  info.appendChild(name);
+  info.appendChild(amount);
+  
+  content.appendChild(image);
+  content.appendChild(info);
+  
+  // Add click handler to content area
+  content.onclick = (e) => {
+    // Only show modal if not dragging
+    if (!isDragging) {
+      showAssetModal(asset);
+    }
+  };
+  
+  card.appendChild(content);
+  return card;
+}
+
+// Track dragging state
+let isDragging = false;
+
+// Update drag start/end handlers
+function handleDragStart(e) {
+  isDragging = true;
+  // ... rest of drag start code
+}
+
+function handleDragEnd(e) {
+  isDragging = false;
+  // ... rest of drag end code
 }
 
 // Initial load
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    initializeModal();
+    initializeModal(); // Initialize modal first
     await loadWallets();
+    
+    // Auto-refresh all wallets
+    console.log('Auto-refreshing all wallets...');
+    for (let i = 0; i < wallets.length; i++) {
+      await refreshWallet(i);
+    }
+    
     setupEventListeners();
+    setupAssetsPanelListeners();
+    updateUI();
+    updateStorageUsage();
   } catch (error) {
-    console.error('Error initializing fullview:', error);
+    console.error('Error during initial load:', error);
   }
 });
 
@@ -1503,6 +1568,7 @@ function pollPaymentStatus(paymentId, modal) {
 let draggedItem = null;
 
 function handleDragStart(e) {
+  isDragging = true;
   draggedItem = this;
   this.classList.add('dragging');
   e.dataTransfer.effectAllowed = 'move';
@@ -1510,6 +1576,7 @@ function handleDragStart(e) {
 }
 
 function handleDragEnd(e) {
+  isDragging = false;
   this.classList.remove('dragging');
   document.querySelectorAll('.wallet-item').forEach(item => {
     item.classList.remove('drag-over');
