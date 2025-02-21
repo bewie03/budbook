@@ -1140,27 +1140,40 @@ async function messageListener(message, sender, sendResponse) {
         // Add the wallet with loading state
         const newWallet = {
           ...message.wallet,
-          isLoading: true
+          isLoading: true,
+          balance: '0',
+          assets: [],
+          stakingInfo: null
         };
         wallets.push(newWallet);
-        await renderWallets();
+        await renderWallets(); // Show loading state immediately
         
         // Fetch data for the new wallet
-        const data = await fetchWalletData(message.wallet.address, true);
-        const walletIndex = wallets.length - 1;
-        
-        // Update wallet with fetched data
-        Object.assign(wallets[walletIndex], {
-          balance: data.balance || '0',
-          assets: data.assets || [],
-          stakingInfo: data.stakingInfo,
-          stake_address: data.stake_address,
-          lastUpdated: Date.now(),
-          isLoading: false
-        });
-        
-        await saveWallets();
-        await renderWallets();
+        try {
+          const data = await fetchWalletData(message.wallet.address, true);
+          const walletIndex = wallets.findIndex(w => w.address === message.wallet.address);
+          if (walletIndex !== -1) {
+            // Update wallet with fetched data
+            wallets[walletIndex] = {
+              ...wallets[walletIndex],
+              balance: data.balance || '0',
+              assets: data.assets || [],
+              stakingInfo: data.stakingInfo,
+              stake_address: data.stake_address,
+              lastUpdated: Date.now(),
+              isLoading: false
+            };
+            await saveWallets();
+            await renderWallets();
+          }
+        } catch (error) {
+          console.error('Error fetching wallet data:', error);
+          const walletIndex = wallets.findIndex(w => w.address === message.wallet.address);
+          if (walletIndex !== -1) {
+            wallets[walletIndex].isLoading = false;
+            await renderWallets();
+          }
+        }
         break;
 
       case 'REFRESH_WALLET':
@@ -2092,9 +2105,7 @@ async function deleteWallet(index) {
 
     // Hide the delete confirmation immediately
     const deleteConfirm = walletElement.querySelector('.delete-confirm');
-    if (deleteConfirm) {
-      deleteConfirm.classList.remove('show');
-    }
+    deleteConfirm.classList.remove('show');
 
     // Add deleting class to trigger animation
     walletElement.classList.add('deleting');

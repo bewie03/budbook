@@ -305,49 +305,47 @@ async function saveWallets() {
 
 // UI Functions
 function showError(message) {
-  const errorDiv = document.getElementById('errorMsg');
-  if (errorDiv) {
-    // Remove any existing visible messages
-    const visibleMessages = document.querySelectorAll('.error.visible, .success.visible');
-    visibleMessages.forEach(msg => msg.classList.remove('visible'));
-    
-    errorDiv.textContent = message;
-    errorDiv.style.display = 'block';
-    
-    // Force a reflow before adding the visible class
-    errorDiv.offsetHeight;
-    errorDiv.classList.add('visible');
-    
-    setTimeout(() => {
-      errorDiv.classList.remove('visible');
-      setTimeout(() => {
-        errorDiv.style.display = 'none';
-      }, 300); // Wait for transition to finish
-    }, 3000);
+  const container = document.getElementById('messageContainer');
+  if (!container) return;
+
+  // Remove any existing messages
+  while (container.firstChild) {
+    container.firstChild.remove();
   }
+
+  const errorDiv = document.createElement('div');
+  errorDiv.className = 'message error';
+  errorDiv.textContent = message;
+  container.appendChild(errorDiv);
+
+  // Auto-remove after 3 seconds
+  setTimeout(() => {
+    if (errorDiv.parentNode === container) {
+      errorDiv.remove();
+    }
+  }, 3000);
 }
 
-function showSuccess(message) {
-  const successDiv = document.getElementById('successMsg');
-  if (successDiv) {
-    // Remove any existing visible messages
-    const visibleMessages = document.querySelectorAll('.error.visible, .success.visible');
-    visibleMessages.forEach(msg => msg.classList.remove('visible'));
-    
-    successDiv.textContent = message;
-    successDiv.style.display = 'block';
-    
-    // Force a reflow before adding the visible class
-    successDiv.offsetHeight;
-    successDiv.classList.add('visible');
-    
-    setTimeout(() => {
-      successDiv.classList.remove('visible');
-      setTimeout(() => {
-        successDiv.style.display = 'none';
-      }, 300); // Wait for transition to finish
-    }, 3000);
+function showMessage(message, type = 'info') {
+  const container = document.getElementById('messageContainer');
+  if (!container) return;
+
+  // Remove any existing messages
+  while (container.firstChild) {
+    container.firstChild.remove();
   }
+
+  const messageDiv = document.createElement('div');
+  messageDiv.className = `message ${type}`;
+  messageDiv.textContent = message;
+  container.appendChild(messageDiv);
+
+  // Auto-remove after 3 seconds
+  setTimeout(() => {
+    if (messageDiv.parentNode === container) {
+      messageDiv.remove();
+    }
+  }, 3000);
 }
 
 function validateAddress(address) {
@@ -834,26 +832,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Helper Functions
 function showMessage(message, type = 'info') {
   const container = document.getElementById('messageContainer');
+  if (!container) return;
+
+  // Remove any existing messages
+  while (container.firstChild) {
+    container.firstChild.remove();
+  }
+
   const messageDiv = document.createElement('div');
   messageDiv.className = `message ${type}`;
   messageDiv.textContent = message;
-
-  // Clear existing messages
-  container.innerHTML = '';
   container.appendChild(messageDiv);
 
-  // Show message with fade in
-  messageDiv.style.animation = 'slideIn 0.5s ease, fadeIn 0.5s ease';
-
-  // Keep message visible for 5 seconds then fade out
+  // Auto-remove after 3 seconds
   setTimeout(() => {
-    messageDiv.style.animation = 'slideOut 0.5s ease, fadeOut 0.5s ease';
-    setTimeout(() => {
-      if (container.contains(messageDiv)) {
-        container.removeChild(messageDiv);
-      }
-    }, 500);
-  }, 5000);
+    if (messageDiv.parentNode === container) {
+      messageDiv.remove();
+    }
+  }, 3000);
 }
 
 function setLoading(element, isLoading) {
@@ -876,12 +872,12 @@ async function getWalletLogo(walletType, address) {
 }
 
 async function addWallet() {
-  try {
-    const addressInput = document.getElementById('addressInput');
-    const nameInput = document.getElementById('nameInput');
-    const walletTypeSelect = document.getElementById('walletType');
-    const addWalletBtn = document.getElementById('addWallet');
+  const addressInput = document.getElementById('addressInput');
+  const nameInput = document.getElementById('nameInput');
+  const walletTypeSelect = document.getElementById('walletType');
+  const addButton = document.getElementById('addWallet');
 
+  try {
     const address = addressInput.value.trim();
     const name = nameInput.value.trim();
     const walletType = walletTypeSelect.value;
@@ -897,8 +893,8 @@ async function addWallet() {
       return;
     }
 
-    if (name.length > 32) {
-      showError('Wallet name must be 32 characters or less');
+    if (name.length > 25) {
+      showError('Wallet name must be 25 characters or less');
       return;
     }
 
@@ -907,11 +903,13 @@ async function addWallet() {
       return;
     }
 
+    // Check for duplicate wallet name
     if (wallets.some(w => w.name.toLowerCase() === name.toLowerCase())) {
       showError('A wallet with this name already exists');
       return;
     }
 
+    // Check for duplicate wallet address
     if (wallets.some(w => w.address === address)) {
       showError('This wallet has already been added');
       return;
@@ -922,7 +920,7 @@ async function addWallet() {
       return;
     }
 
-    addWalletBtn.disabled = true;
+    addButton.disabled = true;
     showMessage('Adding wallet...', 'info');
 
     // Create the wallet object
@@ -933,27 +931,23 @@ async function addWallet() {
       customIcon: walletType === 'Custom' ? customIconData : null
     };
 
-    // Store custom icon in local storage if present
-    if (walletType === 'Custom' && customIconData) {
-      await chrome.storage.local.set({
-        [`wallet_icon_${address}`]: { customIcon: customIconData }
-      });
-    }
-
     // First notify fullview that we're adding a wallet
     const fullviewTabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
     
-    // Send WALLET_ADDED message
+    // Send WALLET_ADDED message before saving to storage
     if (fullviewTabs.length > 0) {
-      await chrome.tabs.sendMessage(fullviewTabs[0].id, {
+      chrome.tabs.sendMessage(fullviewTabs[0].id, {
         type: 'WALLET_ADDED',
         wallet: newWallet
       });
     }
 
-    // Add wallet locally
+    // Add wallet locally and save
     wallets.push(newWallet);
     await saveWallets();
+
+    // Show success and update UI
+    showMessage('Wallet added successfully!', 'success');
     updateSlotDisplay();
 
     // Clear form
@@ -967,27 +961,16 @@ async function addWallet() {
       selectedIcon.style.display = 'none';
     }
 
-    showMessage('Wallet added successfully!', 'success');
-
-    // Wait a moment then check if the wallet data was loaded in fullview
-    setTimeout(async () => {
-      const data = await chrome.storage.local.get(`wallet_data_${address}`);
-      if (!data[`wallet_data_${address}`]) {
-        // If no data yet, send a message to fullview to force refresh this wallet
-        if (fullviewTabs.length > 0) {
-          chrome.tabs.sendMessage(fullviewTabs[0].id, {
-            type: 'REFRESH_WALLET',
-            address: address
-          });
-        }
-      }
-    }, 2000); // Wait 2 seconds before checking
+    const customIconUpload = document.getElementById('customIconUpload');
+    if (customIconUpload) {
+      customIconUpload.style.display = 'none';
+    }
 
   } catch (error) {
     console.error('Error adding wallet:', error);
-    showError('Failed to add wallet');
+    showError('Failed to add wallet. Please try again.');
   } finally {
-    addWalletBtn.disabled = false;
+    addButton.disabled = false;
   }
 }
 
