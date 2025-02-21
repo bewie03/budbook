@@ -299,8 +299,6 @@ async function saveWallets() {
 
 async function fetchWalletData(address, forceFresh = false) {
   try {
-    await cleanupCache();  // Clean up before fetching
-    
     // Check cache first (unless forceFresh is true)
     if (!forceFresh) {
       const cacheKey = `wallet_data_${address}`;
@@ -401,40 +399,17 @@ async function cleanupCache() {
     const data = await chrome.storage.local.get(null);
     const now = Date.now();
     const keysToRemove = [];
-    let totalSize = 0;
-    
-    // Calculate total size and find old items
+
     for (const [key, value] of Object.entries(data)) {
-      totalSize += JSON.stringify(value).length;
-      
-      // Clean up old cached data (older than 1 hour)
-      if (key.startsWith('cache_') && value.timestamp && (now - value.timestamp > 3600000)) {
-        keysToRemove.push(key);
-      }
-      
-      // Clean up old asset data (older than 24 hours)
-      if (key.startsWith('asset_') && value.timestamp && (now - value.timestamp > 86400000)) {
+      if (key.startsWith('wallet_data_') && now - value.timestamp > CACHE_DURATION) {
         keysToRemove.push(key);
       }
     }
-    
-    // If we're close to quota (80%), remove more aggressively
-    if (totalSize > (chrome.storage.local.QUOTA_BYTES * 0.8)) {
-      console.log('Storage usage high, cleaning up more aggressively');
-      
-      // Sort items by timestamp and remove older ones
-      const items = Object.entries(data)
-        .filter(([key]) => key.startsWith('cache_') || key.startsWith('asset_'))
-        .sort(([,a], [,b]) => (b.timestamp || 0) - (a.timestamp || 0));
-      
-      // Keep only the 100 most recent items
-      const itemsToRemove = items.slice(100);
-      keysToRemove.push(...itemsToRemove.map(([key]) => key));
-    }
-    
+
     if (keysToRemove.length > 0) {
-      console.log('Cleaning up storage, removing', keysToRemove.length, 'items');
       await chrome.storage.local.remove(keysToRemove);
+      console.log('Cleaned up cache entries:', keysToRemove);
+      await updateStorageUsage();
     }
   } catch (error) {
     console.error('Error cleaning up cache:', error);
@@ -552,10 +527,10 @@ function convertIpfsUrl(url) {
   
   // List of IPFS gateways to try
   const IPFS_GATEWAYS = [
+    'https://ipfs.io/ipfs/',
     'https://cloudflare-ipfs.com/ipfs/',
     'https://gateway.pinata.cloud/ipfs/',
-    'https://dweb.link/ipfs/',
-    'https://ipfs.io/ipfs/'  // Move ipfs.io to last as it's having issues
+    'https://dweb.link/ipfs/'
   ];
 
   try {
@@ -564,35 +539,30 @@ function convertIpfsUrl(url) {
     
     // Handle ipfs:// protocol
     if (url.startsWith('ipfs://')) {
-      const hash = url.replace('ipfs://', '').replace('/ipfs/', '');
-      // Try the first gateway by default
+      const hash = url.replace('ipfs://', '');
+      // Try the first gateway by default, others can be tried if image fails to load
       return `${IPFS_GATEWAYS[0]}${hash}`;
     }
     
     // Handle /ipfs/ paths
     if (url.includes('/ipfs/')) {
-      const hash = url.split('/ipfs/').pop().replace('/ipfs/', '');
+      const hash = url.split('/ipfs/')[1];
       return `${IPFS_GATEWAYS[0]}${hash}`;
     }
     
     // If it's already using a gateway but failing, try another gateway
     for (const gateway of IPFS_GATEWAYS) {
       if (url.includes(gateway)) {
-        const hash = url.split(gateway).pop().replace('/ipfs/', '');
+        const hash = url.split(gateway)[1];
         const nextGatewayIndex = (IPFS_GATEWAYS.indexOf(gateway) + 1) % IPFS_GATEWAYS.length;
         return `${IPFS_GATEWAYS[nextGatewayIndex]}${hash}`;
       }
     }
     
-    // If we get here and the URL looks like a hash, treat it as one
-    if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}/.test(url)) {
-      return `${IPFS_GATEWAYS[0]}${url}`;
-    }
-    
     return url;
   } catch (error) {
     console.error('Error converting IPFS URL:', error);
-    return null;
+    return url;
   }
 }
 
@@ -1026,7 +996,7 @@ function getRandomColor(text) {
   
   // Generate a consistent color based on text
   let hash = 0;
-  for (let i = 0; i < text.length; i++) {
+  for (let i = 0; i <text.length; i++) {
     hash = text.charCodeAt(i) + ((hash << 5) - hash);
   }
   const hue = hash % COLORS.length;
@@ -1535,6 +1505,327 @@ function createAssetCard(asset) {
 let isDragging = false;
 
 // Update drag start/end handlers
+function handleDragStart(e) {
+  isDragging = true;
+  // ... rest of drag start code
+}
+
+function handleDragEnd(e) {
+  isDragging = false;
+  // ... rest of drag end code
+}
+
+// Initial load
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    initializeModal(); // Initialize modal first
+    
+    // Load wallets and get list of ones needing refresh
+    const walletsNeedingRefresh = await loadWallets();
+    if (walletsNeedingRefresh === null) return;
+    
+    // Render wallets with any cached data we have
+    await renderWallets();
+    
+    // Find all refresh buttons after rendering
+    const refreshButtons = document.querySelectorAll('.refresh-btn');
+    
+    // Only refresh wallets that need it
+    if (walletsNeedingRefresh.length > 0) {
+      console.log('Refreshing wallets with expired/no cache:', walletsNeedingRefresh);
+      
+      // Start spinning only buttons for wallets being refreshed
+      wallets.forEach((wallet, index) => {
+        if (walletsNeedingRefresh.includes(wallet.address)) {
+          const button = refreshButtons[index];
+          if (button) {
+            const icon = button.querySelector('i');
+            if (icon) icon.classList.add('rotating');
+          }
+        }
+      });
+      
+      // Refresh only the wallets that need it
+      const refreshResults = await Promise.all(
+        wallets.map((wallet, index) => 
+          walletsNeedingRefresh.includes(wallet.address) 
+            ? refreshWallet(index) 
+            : Promise.resolve(false)
+        )
+      );
+      
+      // Save and render if any wallet was updated
+      if (refreshResults.some(result => result)) {
+        await saveWallets();
+        await renderWallets();
+      }
+    } else {
+      console.log('All wallets have valid cache, no refresh needed');
+    }
+    
+    // Setup remaining UI elements
+    setupEventListeners();
+    setupGlobalTabs();
+    setupAssetSearch();
+    startCacheRefreshMonitor();
+    
+    // Add initial storage update with a small delay to ensure all data is loaded
+    setTimeout(async () => {
+      await updateStorageUsage();
+    }, 1000);
+    
+    // Add periodic storage update (every 30 seconds)
+    setInterval(updateStorageUsage, 30000);
+  } catch (error) {
+    console.error('Error during initial load:', error);
+    showError('Failed to load wallets');
+  }
+});
+
+// Buy slots button handler
+document.getElementById('buySlots').addEventListener('click', async () => {
+  try {
+    // Show confirmation modal
+    const modal = createModal(`
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Buy More Slots</h2>
+        </div>
+        <div class="payment-details">
+          <div class="amount-display">
+            ${BONE_PAYMENT_AMOUNT} BONE
+          </div>
+          <p>Get ${SLOTS_PER_PAYMENT} additional wallet slots</p>
+        </div>
+        <div class="modal-buttons">
+          <button class="modal-button secondary">Cancel</button>
+          <button class="modal-button primary">Proceed to Payment</button>
+        </div>
+      </div>
+    `);
+    
+    document.body.appendChild(modal);
+    
+    // Handle cancel button
+    const cancelButton = modal.querySelector('.secondary');
+    if (cancelButton) {
+      cancelButton.addEventListener('click', () => {
+        modal.remove();
+      });
+    }
+    
+    // Handle proceed button
+    const proceedButton = modal.querySelector('.primary');
+    if (proceedButton) {
+      proceedButton.addEventListener('click', async () => {
+        modal.remove();
+        await initiatePayment();
+      });
+    }
+  } catch (error) {
+    console.error('Error handling buy slots:', error);
+    showError('Failed to show payment modal');
+  }
+});
+
+async function initiatePayment() {
+  try {
+    // Get extension's installation ID
+    const installId = chrome.runtime.id;
+    
+    // Get payment details from server
+    const response = await fetch(`${API_BASE_URL}/api/initiate-payment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        installId
+      })
+    });
+
+    if (!response.ok) throw new Error('Failed to initiate payment');
+    const { paymentId, address } = await response.json();
+    
+    // Show payment details modal
+    const modal = createModal(`
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Buy More Slots</h2>
+          <div class="payment-status">Waiting for payment...</div>
+        </div>
+        
+        <div class="payment-details">
+          <div class="amount-display">
+            ${BONE_PAYMENT_AMOUNT} BONE
+          </div>
+          
+          <div class="address-container">
+            <span class="label">Send to:</span>
+            <div class="address-box">${address}</div>
+          </div>
+        </div>
+
+        <div class="modal-buttons">
+          <button class="modal-button secondary">Cancel</button>
+          <button class="modal-button primary">Check Status</button>
+        </div>
+      </div>
+    `);
+
+    document.body.appendChild(modal);
+
+    // Add button handlers
+    const cancelButton = modal.querySelector('.modal-button.secondary');
+    const checkButton = modal.querySelector('.modal-button.primary');
+
+    cancelButton.addEventListener('click', () => {
+      modal.remove();
+    });
+
+    checkButton.addEventListener('click', async () => {
+      const statusDiv = modal.querySelector('.payment-status');
+      statusDiv.textContent = 'Checking payment status...';
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
+        if (!response.ok) throw new Error('Failed to verify payment');
+        const { verified, used } = await response.json();
+
+        if (verified) {
+          if (used) {
+            showError('This payment has already been used.');
+            modal.remove();
+            return;
+          }
+
+          statusDiv.textContent = 'Payment verified!';
+          const { availableSlots } = await chrome.storage.local.get('availableSlots');
+          await chrome.storage.local.set({
+            availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
+          });
+          await updateStorageUsage();
+
+          showSuccess('Payment verified! Your slots have been added.');
+          
+          // Close modal after 2 seconds
+          setTimeout(() => {
+            modal.remove();
+            updateUI();
+          }, 2000);
+        } else {
+          statusDiv.textContent = 'Payment not detected yet. Try again in a few moments.';
+        }
+      } catch (error) {
+        console.error('Error checking payment:', error);
+        statusDiv.textContent = 'Error checking payment status';
+      }
+    });
+
+    // Start polling for payment status
+    pollPaymentStatus(paymentId, modal);
+
+  } catch (error) {
+    console.error('Payment initiation error:', error);
+    showError('Failed to initiate payment. Please try again.');
+  }
+}
+
+function formatBalance(balance) {
+  // Convert null/undefined to 0
+  const rawBalance = balance || 0;
+  
+  // Convert from lovelace to ADA (1 ADA = 1,000,000 lovelace)
+  const adaValue = parseFloat(rawBalance) / 1000000;
+  
+  // Format with 2 decimal places
+  return `₳ ${adaValue.toLocaleString(undefined, { 
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+}
+
+function updateSlotCount() {
+  const slotCountElement = document.getElementById('slotCount');
+  const maxSlots = MAX_FREE_SLOTS;
+  const currentSlots = wallets ? wallets.length : 0;
+  
+  if (slotCountElement) {
+    slotCountElement.textContent = `${currentSlots}/${maxSlots}`;
+  }
+}
+
+function createModal(html) {
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.style.backgroundColor = 'rgba(0, 0, 0, 0.75)';
+  modal.innerHTML = html;
+  return modal;
+}
+
+function pollPaymentStatus(paymentId, modal) {
+  let attempts = 0;
+  const maxAttempts = 36; // 3 minutes total with increasing intervals
+  
+  const checkStatus = async () => {
+    attempts++;
+    const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
+    if (!response.ok) throw new Error('Failed to verify payment');
+    const { verified, used } = await response.json();
+
+    if (verified) {
+      if (used) {
+        showError('This payment has already been used.');
+        modal.remove();
+        return true;
+      }
+
+      // Update status and add slots
+      const statusDiv = modal.querySelector('.payment-status');
+      if (statusDiv) {
+        statusDiv.textContent = 'Payment verified!';
+        statusDiv.className = 'payment-status success';
+      }
+      
+      const { availableSlots } = await chrome.storage.local.get('availableSlots');
+      await chrome.storage.local.set({
+        availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
+      });
+      await updateStorageUsage();
+
+      showSuccess('Payment verified! Your slots have been added.');
+      
+      // Close modal after 2 seconds
+      setTimeout(() => {
+        modal.remove();
+        updateUI();
+      }, 2000);
+      
+      return true;
+    }
+    
+    if (attempts >= maxAttempts) {
+      const statusDiv = modal.querySelector('.payment-status');
+      if (statusDiv) {
+        statusDiv.textContent = 'Verification timeout';
+        statusDiv.className = 'payment-status error';
+      }
+      return true;
+    }
+    
+    // Calculate next delay with exponential backoff
+    const nextDelay = Math.min(2000 * Math.pow(1.2, attempts), 10000); // Cap at 10 seconds
+    setTimeout(checkStatus, nextDelay);
+    
+    return false;
+  };
+  
+  checkStatus();
+}
+
+// Drag and drop functionality
+let draggedItem = null;
+
 function handleDragStart(e) {
   isDragging = true;
   draggedItem = this;
@@ -2118,374 +2409,4 @@ function formatTokenQuantity(amount, decimals = 0) {
     console.error('Error formatting token quantity:', error);
     return amount.toString();
   }
-}
-
-// Initial load
-document.addEventListener('DOMContentLoaded', async () => {
-  try {
-    initializeModal(); // Initialize modal first
-    
-    // Load wallets and get list of ones needing refresh
-    const walletsNeedingRefresh = await loadWallets();
-    if (walletsNeedingRefresh === null) return;
-    
-    // Render wallets with any cached data we have
-    await renderWallets();
-    
-    // Find all refresh buttons after rendering
-    const refreshButtons = document.querySelectorAll('.refresh-btn');
-    
-    // Only refresh wallets that need it
-    if (walletsNeedingRefresh.length > 0) {
-      console.log('Refreshing wallets with expired/no cache:', walletsNeedingRefresh);
-      
-      // Start spinning only buttons for wallets being refreshed
-      wallets.forEach((wallet, index) => {
-        if (walletsNeedingRefresh.includes(wallet.address)) {
-          const button = refreshButtons[index];
-          if (button) {
-            const icon = button.querySelector('i');
-            if (icon) icon.classList.add('rotating');
-          }
-        }
-      });
-      
-      // Refresh only the wallets that need it
-      const refreshResults = await Promise.all(
-        wallets.map((wallet, index) => 
-          walletsNeedingRefresh.includes(wallet.address) 
-            ? refreshWallet(index) 
-            : Promise.resolve(false)
-        )
-      );
-      
-      // Save and render if any wallet was updated
-      if (refreshResults.some(result => result)) {
-        await saveWallets();
-        await renderWallets();
-      }
-    } else {
-      console.log('All wallets have valid cache, no refresh needed');
-    }
-    
-    // Setup remaining UI elements
-    setupEventListeners();
-    setupGlobalTabs();
-    setupAssetSearch();
-    startCacheRefreshMonitor();
-    
-    // Add initial storage update with a small delay to ensure all data is loaded
-    setTimeout(async () => {
-      await updateStorageUsage();
-    }, 1000);
-    
-    // Add periodic storage update (every 30 seconds)
-    setInterval(updateStorageUsage, 30000);
-  } catch (error) {
-    console.error('Error during initial load:', error);
-    showError('Failed to load wallets');
-  }
-});
-
-// Buy slots button handler
-document.getElementById('buySlots').addEventListener('click', async () => {
-  try {
-    // Show confirmation modal
-    const modal = createModal(`
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Buy More Slots</h2>
-        </div>
-        <div class="payment-details">
-          <div class="amount-display">
-            ${BONE_PAYMENT_AMOUNT} BONE
-          </div>
-          <p>Get ${SLOTS_PER_PAYMENT} additional wallet slots</p>
-        </div>
-        <div class="modal-buttons">
-          <button class="modal-button secondary">Cancel</button>
-          <button class="modal-button primary">Proceed to Payment</button>
-        </div>
-      </div>
-    `);
-    
-    document.body.appendChild(modal);
-    
-    // Handle cancel button
-    const cancelButton = modal.querySelector('.secondary');
-    if (cancelButton) {
-      cancelButton.addEventListener('click', () => {
-        modal.remove();
-      });
-    }
-    
-    // Handle proceed button
-    const proceedButton = modal.querySelector('.primary');
-    if (proceedButton) {
-      proceedButton.addEventListener('click', async () => {
-        modal.remove();
-        await initiatePayment();
-      });
-    }
-  } catch (error) {
-    console.error('Error handling buy slots:', error);
-    showError('Failed to show payment modal');
-  }
-});
-
-async function initiatePayment() {
-  try {
-    // Get extension's installation ID
-    const installId = chrome.runtime.id;
-    
-    // Get payment details from server
-    const response = await fetch(`${API_BASE_URL}/api/initiate-payment`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        installId
-      })
-    });
-
-    if (!response.ok) throw new Error('Failed to initiate payment');
-    const { paymentId, address } = await response.json();
-    
-    // Show payment details modal
-    const modal = createModal(`
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Buy More Slots</h2>
-          <div class="payment-status">Waiting for payment...</div>
-        </div>
-        
-        <div class="payment-details">
-          <div class="amount-display">
-            ${BONE_PAYMENT_AMOUNT} BONE
-          </div>
-          
-          <div class="address-container">
-            <span class="label">Send to:</span>
-            <div class="address-box">${address}</div>
-          </div>
-        </div>
-
-        <div class="modal-buttons">
-          <button class="modal-button secondary">Cancel</button>
-          <button class="modal-button primary">Check Status</button>
-        </div>
-      </div>
-    `);
-
-    document.body.appendChild(modal);
-
-    // Add button handlers
-    const cancelButton = modal.querySelector('.modal-button.secondary');
-    const checkButton = modal.querySelector('.modal-button.primary');
-
-    cancelButton.addEventListener('click', () => {
-      modal.remove();
-    });
-
-    checkButton.addEventListener('click', async () => {
-      const statusDiv = modal.querySelector('.payment-status');
-      statusDiv.textContent = 'Checking payment status...';
-
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-        if (!response.ok) throw new Error('Failed to verify payment');
-        const { verified, used } = await response.json();
-
-        if (verified) {
-          if (used) {
-            showError('This payment has already been used.');
-            modal.remove();
-            return;
-          }
-
-          statusDiv.textContent = 'Payment verified!';
-          const { availableSlots } = await chrome.storage.local.get('availableSlots');
-          await chrome.storage.local.set({
-            availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
-          });
-          await updateStorageUsage();
-
-          showSuccess('Payment verified! Your slots have been added.');
-          
-          // Close modal after 2 seconds
-          setTimeout(() => {
-            modal.remove();
-            updateUI();
-          }, 2000);
-        } else {
-          statusDiv.textContent = 'Payment not detected yet. Try again in a few moments.';
-        }
-      } catch (error) {
-        console.error('Error checking payment:', error);
-        statusDiv.textContent = 'Error checking payment status';
-      }
-    });
-
-    // Start polling for payment status
-    pollPaymentStatus(paymentId, modal);
-
-  } catch (error) {
-    console.error('Payment initiation error:', error);
-    showError('Failed to initiate payment. Please try again.');
-  }
-}
-
-function formatBalance(balance) {
-  // Convert null/undefined to 0
-  const rawBalance = balance || 0;
-  
-  // Convert from lovelace to ADA (1 ADA = 1,000,000 lovelace)
-  const adaValue = parseFloat(rawBalance) / 1000000;
-  
-  // Format with 2 decimal places
-  return `₳ ${adaValue.toLocaleString(undefined, { 
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })}`;
-}
-
-function updateSlotCount() {
-  const slotCountElement = document.getElementById('slotCount');
-  const maxSlots = MAX_FREE_SLOTS;
-  const currentSlots = wallets ? wallets.length : 0;
-  
-  if (slotCountElement) {
-    slotCountElement.textContent = `${currentSlots}/${maxSlots}`;
-  }
-}
-
-function createModal(html) {
-  const modal = document.createElement('div');
-  modal.className = 'modal';
-  modal.style.backgroundColor = 'rgba(0, 0, 0, 0.75)';
-  modal.innerHTML = html;
-  return modal;
-}
-
-function pollPaymentStatus(paymentId, modal) {
-  let attempts = 0;
-  const maxAttempts = 36; // 3 minutes total with increasing intervals
-  
-  const checkStatus = async () => {
-    attempts++;
-    const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-    if (!response.ok) throw new Error('Failed to verify payment');
-    const { verified, used } = await response.json();
-
-    if (verified) {
-      if (used) {
-        showError('This payment has already been used.');
-        modal.remove();
-        return true;
-      }
-
-      // Update status and add slots
-      const statusDiv = modal.querySelector('.payment-status');
-      if (statusDiv) {
-        statusDiv.textContent = 'Payment verified!';
-        statusDiv.className = 'payment-status success';
-      }
-      
-      const { availableSlots } = await chrome.storage.local.get('availableSlots');
-      await chrome.storage.local.set({
-        availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
-      });
-      await updateStorageUsage();
-
-      showSuccess('Payment verified! Your slots have been added.');
-      
-      // Close modal after 2 seconds
-      setTimeout(() => {
-        modal.remove();
-        updateUI();
-      }, 2000);
-      
-      return true;
-    }
-    
-    if (attempts >= maxAttempts) {
-      const statusDiv = modal.querySelector('.payment-status');
-      if (statusDiv) {
-        statusDiv.textContent = 'Verification timeout';
-        statusDiv.className = 'payment-status error';
-      }
-      return true;
-    }
-    
-    // Calculate next delay with exponential backoff
-    const nextDelay = Math.min(2000 * Math.pow(1.2, attempts), 10000); // Cap at 10 seconds
-    setTimeout(checkStatus, nextDelay);
-    
-    return false;
-  };
-  
-  checkStatus();
-}
-
-// Drag and drop functionality
-let draggedItem = null;
-
-function handleDragStart(e) {
-  isDragging = true;
-  draggedItem = this;
-  this.classList.add('dragging');
-  e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', this.getAttribute('data-index'));
-}
-
-function handleDragEnd(e) {
-  isDragging = false;
-  this.classList.remove('dragging');
-  document.querySelectorAll('.wallet-item').forEach(item => {
-    item.classList.remove('drag-over');
-  });
-  draggedItem = null;
-}
-
-function handleDragOver(e) {
-  if (e.preventDefault) {
-    e.preventDefault();
-  }
-  e.dataTransfer.dropEffect = 'move';
-  return false;
-}
-
-function handleDragEnter(e) {
-  this.classList.add('drag-over');
-}
-
-function handleDragLeave(e) {
-  this.classList.remove('drag-over');
-}
-
-async function handleDrop(e) {
-  e.stopPropagation();
-  e.preventDefault();
-  
-  if (draggedItem === this) return;
-  
-  this.classList.remove('drag-over');
-  
-  const fromIndex = parseInt(draggedItem.getAttribute('data-index'));
-  const toIndex = parseInt(this.getAttribute('data-index'));
-  
-  if (isNaN(fromIndex) || isNaN(toIndex)) return;
-  
-  // Reorder wallets array
-  const [movedWallet] = wallets.splice(fromIndex, 1);
-  wallets.splice(toIndex, 0, movedWallet);
-  
-  // Save the new order to chrome storage
-  const walletOrder = wallets.map(w => w.address);
-  chrome.storage.sync.set({ wallet_order: walletOrder });
-  await updateStorageUsage();
-  
-  // Re-render wallets
-  renderWallets();
 }
