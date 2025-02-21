@@ -180,6 +180,13 @@ async function loadWallets() {
           });
         });
 
+        // Load custom icon if present
+        const iconData = await new Promise((resolve) => {
+          chrome.storage.local.get(`wallet_icon_${address}`, (result) => {
+            resolve(result[`wallet_icon_${address}`] || {});
+          });
+        });
+
         // Check local storage cache
         const cacheKey = `wallet_data_${address}`;
         const cache = await chrome.storage.local.get(cacheKey);
@@ -198,24 +205,15 @@ async function loadWallets() {
             console.log('Using cached data for', address);
             walletData = cache[cacheKey].data;
             needsRefresh = false;
-          } else {
-            // Cache exists but is expired
-            console.log('Cache expired for', address);
-            await chrome.storage.local.remove(cacheKey);
           }
-        } else {
-          // No cache exists
-          console.log('No cache found for', address);
         }
 
-        // Initialize wallet with metadata and any cached data
+        // Combine all data
         tempWallets[address] = {
           address,
-          name: storedData.name || 'Unnamed Wallet',
-          walletType: storedData.walletType || 'None',
-          balance: walletData.balance,
-          assets: walletData.assets,
-          stakingInfo: walletData.stakingInfo,
+          ...storedData,
+          ...walletData,
+          customIcon: iconData.customIcon,
           isLoading: needsRefresh
         };
 
@@ -339,13 +337,6 @@ async function fetchWalletData(address, forceFresh = false) {
         const stakingResponse = await fetch(`${API_BASE_URL}/api/accounts/${data.stake_address}`);
         if (stakingResponse.ok) {
           stakingInfo = await stakingResponse.json();
-          // Save stake_address to wallet data and trigger refresh
-          const walletIndex = wallets.findIndex(w => w.address === address);
-          if (walletIndex !== -1) {
-            wallets[walletIndex].stake_address = data.stake_address;
-            await saveWallets();
-            await renderWallets();
-          }
         }
       } catch (error) {
         console.error('Error fetching staking info:', error);
@@ -364,7 +355,8 @@ async function fetchWalletData(address, forceFresh = false) {
         onchainMetadata: asset.onchainMetadata,
         image: asset.image
       })),
-      stakingInfo
+      stakingInfo,
+      stake_address: data.stake_address
     };
 
     // Cache the fresh data
@@ -376,6 +368,13 @@ async function fetchWalletData(address, forceFresh = false) {
       }
     });
     await updateStorageUsage();
+
+    // Find wallet index and update stake_address if needed
+    const walletIndex = wallets.findIndex(w => w.address === address);
+    if (walletIndex !== -1 && data.stake_address) {
+      wallets[walletIndex].stake_address = data.stake_address;
+      await saveWallets();
+    }
 
     return walletData;
   } catch (error) {
@@ -420,6 +419,54 @@ async function cleanupCache() {
     }
   } catch (error) {
     console.error('Error cleaning up cache:', error);
+  }
+}
+
+async function cleanupStorage() {
+  try {
+    const allData = await chrome.storage.local.get(null);
+    const now = Date.now();
+    const keysToRemove = [];
+
+    // Get list of valid wallet addresses
+    const validAddresses = wallets.map(w => w.address);
+
+    // Check each storage key
+    for (const key in allData) {
+      // Remove expired wallet data caches
+      if (key.startsWith('wallet_data_')) {
+        const address = key.replace('wallet_data_', '');
+        if (!validAddresses.includes(address)) {
+          keysToRemove.push(key);
+          continue;
+        }
+        if (now - allData[key].timestamp > CACHE_DURATION) {
+          keysToRemove.push(key);
+        }
+      }
+      
+      // Remove expired or invalid asset caches
+      if (key.startsWith('asset_') || key.startsWith('metadata_')) {
+        const address = key.split('_')[1];
+        if (!validAddresses.includes(address)) {
+          keysToRemove.push(key);
+        }
+      }
+
+      // Remove any null or undefined values
+      if (allData[key] === null || allData[key] === undefined) {
+        keysToRemove.push(key);
+      }
+    }
+
+    // Remove all identified keys
+    if (keysToRemove.length > 0) {
+      console.log('Cleaning up storage keys:', keysToRemove);
+      await chrome.storage.local.remove(keysToRemove);
+      await updateStorageUsage();
+    }
+  } catch (error) {
+    console.error('Error cleaning up storage:', error);
   }
 }
 
@@ -627,9 +674,11 @@ async function createWalletBox(wallet, index) {
     box.innerHTML = `
       <div class="wallet-header">
         <div class="wallet-info">
-          ${wallet.walletType && WALLET_LOGOS[wallet.walletType] ? 
-            `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-icon">` : 
-            ''}
+          ${wallet.walletType === 'Custom' && wallet.customIcon ? 
+            `<img src="${wallet.customIcon}" alt="${wallet.name}" class="wallet-icon">` :
+            wallet.walletType && WALLET_LOGOS[wallet.walletType] ? 
+              `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-icon">` : 
+              ''}
           <div class="wallet-text">
             <div class="wallet-name">${wallet.name}</div>
             <div class="wallet-address">${truncateAddress(wallet.address)}</div>
@@ -666,13 +715,13 @@ async function createWalletBox(wallet, index) {
   let iconSrc = '';
   if (walletType === 'Custom' && wallet.customIcon) {
     iconSrc = wallet.customIcon;
-  } else {
-    iconSrc = WALLET_LOGOS[walletType] || WALLET_LOGOS['None'];
+  } else if (WALLET_LOGOS[walletType]) {
+    iconSrc = WALLET_LOGOS[walletType];
   }
 
   header.innerHTML = `
     <div class="wallet-info">
-      ${iconSrc ? `<img src="${iconSrc}" alt="${walletType}" class="wallet-icon">` : ''}
+      ${iconSrc ? `<img src="${iconSrc}" alt="${wallet.name}" class="wallet-icon">` : ''}
       <div class="wallet-text" role="button" title="Click to copy address">
         <div class="wallet-name">${wallet.name || 'Unnamed Wallet'}</div>
         <div class="wallet-address">${truncateAddress(wallet.address || '')}</div>
@@ -1084,124 +1133,165 @@ function getRandomColor(text) {
 chrome.runtime.onMessage.removeListener(messageListener);
 
 // Single message listener for all wallet-related events
-function messageListener(message, sender, sendResponse) {
-  if (!message.type) return;
-
-  console.log('Received message:', message.type);
-  
-  switch (message.type) {
-    case 'WALLET_ADDED':
-      // Check if wallet already exists
-      if (wallets.some(w => w.address === message.wallet.address)) {
-        console.log('Wallet already exists, ignoring add message');
-        return;
-      }
-      
-      // Add new wallet with loading state
-      wallets.push({
-        ...message.wallet,
-        isLoading: true,
-        balance: '0',
-        assets: []
-      });
-      break;
-
-    case 'WALLET_UPDATED':
-      const index = wallets.findIndex(w => w.address === message.wallet.address);
-      if (index !== -1) {
-        wallets[index] = {
+async function messageListener(message, sender, sendResponse) {
+  try {
+    switch (message.type) {
+      case 'WALLET_ADDED':
+        // Add the wallet with loading state
+        const newWallet = {
           ...message.wallet,
-          isLoading: false
+          isLoading: true
         };
-      }
-      break;
+        wallets.push(newWallet);
+        await renderWallets();
+        
+        // Fetch data for the new wallet
+        const data = await fetchWalletData(message.wallet.address, true);
+        const walletIndex = wallets.length - 1;
+        
+        // Update wallet with fetched data
+        Object.assign(wallets[walletIndex], {
+          balance: data.balance || '0',
+          assets: data.assets || [],
+          stakingInfo: data.stakingInfo,
+          stake_address: data.stake_address,
+          lastUpdated: Date.now(),
+          isLoading: false
+        });
+        
+        await saveWallets();
+        await renderWallets();
+        break;
 
-    default:
-      return;
+      case 'REFRESH_WALLET':
+        const walletToRefresh = wallets.find(w => w.address === message.address);
+        if (walletToRefresh) {
+          const index = wallets.indexOf(walletToRefresh);
+          await refreshWallet(index);
+        }
+        break;
+
+      case 'WALLET_UPDATED':
+        const updatedWallet = message.wallet;
+        const existingIndex = wallets.findIndex(w => w.address === updatedWallet.address);
+        if (existingIndex !== -1) {
+          wallets[existingIndex] = {
+            ...wallets[existingIndex],
+            ...updatedWallet
+          };
+          await saveWallets();
+          await renderWallets();
+        }
+        break;
+
+      case 'WALLET_DELETED':
+        const addressToDelete = message.address;
+        const deleteIndex = wallets.findIndex(w => w.address === addressToDelete);
+        if (deleteIndex !== -1) {
+          wallets.splice(deleteIndex, 1);
+          await saveWallets();
+          await renderWallets();
+        }
+        break;
+    }
+  } catch (error) {
+    console.error('Error handling message:', error);
   }
-
-  // Only render once per message
-  renderWallets();
 }
 
 // Add the single message listener
 chrome.runtime.onMessage.addListener(messageListener);
 
 async function addWallet() {
+  const name = document.getElementById('nameInput').value.trim();
+  const address = document.getElementById('addressInput').value.trim();
+  const walletType = document.getElementById('walletType').value;
+  const addWalletBtn = document.getElementById('addWallet');
+
+  // Validation
+  if (!address) {
+    showError('Please enter a wallet address');
+    return;
+  }
+  if (!validateAddress(address)) {
+    showError('Please enter a valid Cardano address');
+    return;
+  }
+  if (!name) {
+    showError('Please enter a wallet name');
+    return;
+  }
+  if (wallets.some(w => w.name.toLowerCase() === name.toLowerCase())) {
+    showError('A wallet with this name already exists');
+    return;
+  }
+  if (wallets.some(w => w.address === address)) {
+    showError('This wallet has already been added');
+    return;
+  }
+  if (wallets.length >= unlockedSlots) {
+    showError('No available slots. Please unlock more slots.');
+    return;
+  }
+
+  addWalletBtn.disabled = true;
+  showMessage('Adding wallet...', 'info');
+
   try {
-    if (wallets.length >= unlockedSlots) {
-      showError(`You've reached the maximum number of free slots (${MAX_FREE_SLOTS}). Purchase more slots to add more wallets.`);
-      return;
-    }
-
-    const addressInput = document.getElementById('walletAddress');
-    const nameInput = document.getElementById('walletName');
-    const typeSelect = document.getElementById('walletType');
-
-    if (!addressInput || !nameInput || !typeSelect) {
-      showError('Required input elements not found');
-      return;
-    }
-
-    const address = addressInput.value.trim();
-    const name = nameInput.value.trim() || 'Unnamed Wallet';
-    const walletType = address.startsWith('$') ? 'Vesper' : 'None';
-
-    if (!address) {
-      showError('Please enter a wallet address');
-      return;
-    }
-
-    // Check if wallet already exists
-    if (wallets.some(w => w.address === address)) {
-      showError('This wallet has already been added');
-      return;
-    }
-
-    // Create new wallet object
+    // Create the wallet object with loading state
     const newWallet = {
-      address,
       name,
+      address,
       walletType,
-      balance: 0,
-      assets: [],
+      customIcon: walletType === 'Custom' ? customIconData : undefined,
       isLoading: true
     };
 
-    // Add to wallets array
+    // Add wallet to list first to show loading state
     wallets.push(newWallet);
-
-    // Save to storage
-    await saveWallets();
-
-    // Clear inputs
-    addressInput.value = '';
-    nameInput.value = '';
-    typeSelect.value = 'None';
-
-    // Refresh UI
     await renderWallets();
-    
-    // Start loading wallet data
-    await refreshWallet(wallets.length - 1);
 
-    showSuccess('Wallet added successfully!');
+    // Fetch wallet data
+    const data = await fetchWalletData(address, true);
+    
+    // Update wallet with fetched data
+    const walletIndex = wallets.length - 1;
+    Object.assign(wallets[walletIndex], {
+      balance: data.balance || '0',
+      assets: data.assets || [],
+      stakingInfo: data.stakingInfo,
+      stake_address: data.stake_address,
+      lastUpdated: Date.now(),
+      isLoading: false
+    });
+
+    // Save and re-render
+    await saveWallets();
+    await renderWallets();
+
+    // Add cool animation class to the new wallet box
+    const walletBox = document.querySelector(`[data-index="${walletIndex}"]`);
+    if (walletBox) {
+      walletBox.classList.add('wallet-added');
+      setTimeout(() => walletBox.classList.remove('wallet-added'), 1000);
+    }
+
+    // Clear form
+    document.getElementById('nameInput').value = '';
+    document.getElementById('addressInput').value = '';
+    document.getElementById('walletType').value = 'None';
+    customIconData = null;
+
+    showMessage('Wallet added successfully!', 'success');
   } catch (error) {
     console.error('Error adding wallet:', error);
+    // Remove the wallet if it failed
+    wallets.pop();
+    await renderWallets();
     showError('Failed to add wallet');
+  } finally {
+    addWalletBtn.disabled = false;
   }
-}
-
-async function updateUI() {
-  await renderWallets();
-  await updateStorageUsage();
-  setupEventListeners();
-}
-
-function needsRefresh(wallet) {
-  if (!wallet.lastUpdated) return true;
-  const fiveMinutes = 5 * 60 * 1000;
-  return Date.now() - wallet.lastUpdated > fiveMinutes;
 }
 
 async function refreshWallet(index) {
@@ -1617,9 +1707,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     initializeModal(); // Initialize modal first
     
-    // Load wallets and get list of ones needing refresh
+    // Load wallets
     const walletsNeedingRefresh = await loadWallets();
     if (walletsNeedingRefresh === null) return;
+    
+    // Clean up storage and update usage
+    await cleanupStorage();
+    await updateStorageUsage();
     
     // Render wallets with any cached data we have
     await renderWallets();

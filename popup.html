@@ -254,7 +254,7 @@
 
     <div class="form-group">
       <label for="nameInput">Wallet Name</label>
-      <input type="text" id="nameInput" placeholder="Give your wallet a name">
+      <input type="text" id="nameInput" placeholder="Give your wallet a name" maxlength="25">
     </div>
 
     <div class="form-group">
@@ -273,11 +273,14 @@
         <option value="Custom">Custom Icon</option>
       </select>
       <div id="customIconUpload" style="display: none; margin-top: 8px;">
-        <input type="file" id="iconFile" accept="image/*" style="display: none;">
+        <input type="file" id="iconFile" accept="image/gif,image/png,image/jpeg,image/webp" style="display: none;">
         <button type="button" id="uploadButton" class="secondary-button">
           Choose Icon
         </button>
-        <div id="selectedIcon" style="margin-top: 8px; display: none;">
+        <div style="font-size: 12px; color: var(--text-light); margin-top: 4px;">
+          Max size: 1MB, Max dimensions: 512x512px. Supports PNG, JPEG, GIF, WebP
+        </div>
+        <div id="selectedIcon" style="display: none;">
           <img id="iconPreview" style="width: 32px; height: 32px; object-fit: contain;">
           <button type="button" id="removeIcon" class="icon-button">×</button>
         </div>
