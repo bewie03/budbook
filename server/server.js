@@ -659,19 +659,25 @@ app.post('/webhook', express.json(), async (req, res) => {
       return res.status(400).json({ error: 'Invalid payload' });
     }
 
-    // Find the output to our payment address with BONE tokens
+    // Find the output to our payment address with both ADA and BONE tokens
     const paymentOutput = tx.outputs.find(output => 
       output.address === PAYMENT_ADDRESS && 
       output.amount && 
       output.amount.length > 0 &&
+      output.amount.some(asset => asset.unit === 'lovelace') &&
       output.amount.some(asset => asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)
     );
 
     if (!paymentOutput) {
-      console.error('No valid BONE payment to verification address found');
+      console.error('No valid payment to verification address found');
       console.log('Available outputs:', JSON.stringify(tx.outputs, null, 2));
       return res.status(400).json({ error: 'No relevant payment found' });
     }
+
+    // Get ADA amount
+    const adaAsset = paymentOutput.amount.find(asset => asset.unit === 'lovelace');
+    const adaAmount = parseInt(adaAsset.quantity);
+    console.log('ADA payment received:', adaAmount / 1000000, 'ADA');
 
     // Get BONE token amount
     const boneAsset = paymentOutput.amount.find(asset => 
@@ -691,8 +697,8 @@ app.post('/webhook', express.json(), async (req, res) => {
       console.log('Checking payment:', key, payment);
       
       if (payment && !payment.verified) {
-        // Verify if received amount is at least 100 BONE
-        if (boneAmount >= REQUIRED_BONE_PAYMENT) {
+        // Verify both ADA and BONE amounts match exactly
+        if (adaAmount === payment.adaAmount && boneAmount === payment.boneAmount) {
           payment.verified = true;
           payment.txHash = tx.hash;
           await setInCache(key, payment);

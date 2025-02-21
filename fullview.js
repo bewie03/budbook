@@ -1847,7 +1847,47 @@ function setupBuyButton() {
               border-radius: var(--border-radius);
             ">
               <div style="font-size: 1.6em; margin: 10px 0; color: var(--primary-color);">${boneAmount} BONE</div>
-              <div style="font-size: 1.4em; margin: 10px 0; color: var(--text-color);">₳ ${adaAmount} ADA</div>
+              <div style="
+                font-size: 1.4em;
+                margin: 10px 0;
+                color: var(--text-color);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 10px;
+              ">
+                <div style="
+                  background: rgba(52, 152, 219, 0.1);
+                  padding: 8px 16px;
+                  border-radius: 8px;
+                  border: 1px solid rgba(52, 152, 219, 0.2);
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                ">
+                  <span>₳ ${adaAmount}</span>
+                  <button 
+                    id="copyAdaButton"
+                    style="
+                      background: rgba(52, 152, 219, 0.2);
+                      border: none;
+                      color: var(--text-color);
+                      padding: 4px 8px;
+                      border-radius: 4px;
+                      cursor: pointer;
+                      font-size: 12px;
+                      display: flex;
+                      align-items: center;
+                      gap: 4px;
+                      transition: all 0.2s ease;
+                    "
+                  >
+                    <i class="fas fa-copy"></i>
+                    Copy
+                  </button>
+                </div>
+                <span style="color: var(--text-secondary)"></span>
+              </div>
             </div>
             
             <div style="margin: 24px 0;">
@@ -1924,13 +1964,13 @@ function setupBuyButton() {
               }
 
               statusDiv.textContent = 'Payment verified!';
-              const { availableSlots } = await chrome.storage.local.get('availableSlots');
-              await chrome.storage.local.set({
+              const { availableSlots } = await chrome.storage.sync.get('availableSlots');
+              await chrome.storage.sync.set({
                 availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
               });
               await updateStorageUsage();
 
-              showSuccess('Payment verified! Your slots have been added.');
+              showSuccess('Payment verified! Your slots have been added and synced across all your devices.');
               
               // Close modal after 2 seconds
               setTimeout(() => {
@@ -1946,6 +1986,32 @@ function setupBuyButton() {
           }
         };
 
+        // Add copy button handler
+        const copyButton = modal.querySelector('#copyAdaButton');
+        if (copyButton) {
+          copyButton.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+              await navigator.clipboard.writeText(adaAmount);
+              const originalHTML = copyButton.innerHTML;
+              copyButton.innerHTML = '<i class="fas fa-check"></i> Copied!';
+              copyButton.style.background = 'rgba(46, 204, 113, 0.2)';
+              setTimeout(() => {
+                copyButton.innerHTML = originalHTML;
+                copyButton.style.background = 'rgba(52, 152, 219, 0.2)';
+              }, 2000);
+            } catch (err) {
+              console.error('Failed to copy:', err);
+              copyButton.innerHTML = '<i class="fas fa-times"></i> Failed';
+              copyButton.style.background = 'rgba(231, 76, 60, 0.2)';
+              setTimeout(() => {
+                copyButton.innerHTML = '<i class="fas fa-copy"></i> Copy';
+                copyButton.style.background = 'rgba(52, 152, 219, 0.2)';
+              }, 2000);
+            }
+          });
+        }
       } catch (error) {
         console.error('Payment error:', error);
         showError(error.message || 'Failed to initiate payment');
@@ -1978,6 +2044,8 @@ async function initializePage() {
   console.log('Starting initialization...');
   initialized = true;
   await init();
+  setupEventListeners();
+  setupBuyButton();
 }
 
 // Setup event listeners first
@@ -1994,18 +2062,293 @@ function setupEventListeners() {
   
   if (buySlots) {
     console.log('Adding click handler to button');
-    buySlots.addEventListener('click', async () => {
-      console.log('Buy slots button clicked!');
+    buySlots.addEventListener('click', async (e) => {
+      e.preventDefault();
+      console.log('Button clicked! Creating modal...');
+      
+      // Create and show modal
+      const modal = document.createElement('div');
+      modal.className = 'payment-modal';
+      modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(26, 27, 31, 0.95);
+        backdrop-filter: blur(5px);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+      `;
+      
+      modal.innerHTML = `
+        <div class="modal-content" style="
+          background: var(--card-bg);
+          color: var(--text-color);
+          padding: 24px;
+          border-radius: var(--border-radius);
+          width: 90%;
+          max-width: 500px;
+          position: relative;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+          border: 1px solid var(--border-color);
+        ">
+          <div class="modal-header" style="margin-bottom: 24px;">
+            <h2 style="margin: 0; color: var(--text-color); font-size: 24px;">Buy More Slots</h2>
+            <div class="payment-status" style="
+              margin-top: 12px;
+              padding: 8px 16px;
+              border-radius: 20px;
+              background: rgba(255, 255, 255, 0.1);
+              font-size: 14px;
+              color: var(--text-secondary);
+            ">Initializing payment...</div>
+          </div>
+          
+          <div class="payment-details">
+            <div style="text-align: center; margin: 24px 0;">
+              <div style="font-size: 1.4em; margin: 10px 0; color: var(--text-color);">Processing...</div>
+            </div>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+            <button class="modal-button secondary" style="
+              padding: 10px 20px;
+              border: 1px solid var(--border-color);
+              background: transparent;
+              color: var(--text-color);
+              border-radius: var(--border-radius);
+              cursor: pointer;
+              font-size: 14px;
+              transition: all 0.2s;
+            ">Cancel</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+      
+      // Add initial button handler
+      const cancelButton = modal.querySelector('.modal-button.secondary');
+      cancelButton.onclick = () => modal.remove();
+
       try {
-        console.log('Initiating payment...');
-        await initiatePayment();
+        console.log('Starting payment process...');
+        const response = await fetch(`${API_BASE_URL}/api/initiate-payment`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            installId: chrome.runtime.id
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to initiate payment');
+        }
+
+        const { paymentId, address, adaAmount, boneAmount } = await response.json();
+        
+        // Update modal content with payment details
+        const modalContent = modal.querySelector('.modal-content');
+        modalContent.innerHTML = `
+          <div class="modal-header" style="margin-bottom: 24px;">
+            <h2 style="margin: 0; color: var(--text-color); font-size: 24px;">Buy More Slots</h2>
+            <div class="payment-status" style="
+              margin-top: 12px;
+              padding: 8px 16px;
+              border-radius: 20px;
+              background: rgba(255, 255, 255, 0.1);
+              font-size: 14px;
+              color: var(--text-secondary);
+            ">Waiting for payment...</div>
+          </div>
+          
+          <div class="payment-details">
+            <div style="
+              text-align: center;
+              margin: 24px 0;
+              padding: 20px;
+              background: rgba(91, 134, 229, 0.1);
+              border-radius: var(--border-radius);
+            ">
+              <div style="font-size: 1.6em; margin: 10px 0; color: var(--primary-color);">${boneAmount} BONE</div>
+              <div style="
+                font-size: 1.4em;
+                margin: 10px 0;
+                color: var(--text-color);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 10px;
+              ">
+                <div style="
+                  background: rgba(52, 152, 219, 0.1);
+                  padding: 8px 16px;
+                  border-radius: 8px;
+                  border: 1px solid rgba(52, 152, 219, 0.2);
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                ">
+                  <span>₳ ${adaAmount}</span>
+                  <button 
+                    id="copyAdaButton"
+                    style="
+                      background: rgba(52, 152, 219, 0.2);
+                      border: none;
+                      color: var(--text-color);
+                      padding: 4px 8px;
+                      border-radius: 4px;
+                      cursor: pointer;
+                      font-size: 12px;
+                      display: flex;
+                      align-items: center;
+                      gap: 4px;
+                      transition: all 0.2s ease;
+                    "
+                  >
+                    <i class="fas fa-copy"></i>
+                    Copy
+                  </button>
+                </div>
+                <span style="color: var(--text-secondary)">ADA</span>
+              </div>
+            </div>
+            
+            <div style="margin: 24px 0;">
+              <div style="margin-bottom: 8px; color: var(--text-secondary);">Send to:</div>
+              <div style="
+                background: var(--input-bg);
+                padding: 12px;
+                border-radius: var(--border-radius);
+                word-break: break-all;
+                font-family: monospace;
+                color: var(--text-color);
+                border: 1px solid var(--border-color);
+              ">${address}</div>
+            </div>
+            
+            <div style="
+              background: rgba(91, 134, 229, 0.1);
+              color: var(--text-color);
+              padding: 16px;
+              border-radius: var(--border-radius);
+              margin: 24px 0;
+              border: 1px solid var(--primary-color);
+            ">
+              <strong style="color: var(--primary-color);">Important:</strong> Send EXACTLY ₳ ${adaAmount} ADA along with ${boneAmount} BONE tokens.
+              This specific ADA amount helps us identify your payment.
+            </div>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+            <button class="modal-button secondary" style="
+              padding: 10px 20px;
+              border: 1px solid var(--border-color);
+              background: transparent;
+              color: var(--text-color);
+              border-radius: var(--border-radius);
+              cursor: pointer;
+              font-size: 14px;
+              transition: all 0.2s;
+            ">Cancel</button>
+            <button class="modal-button primary" style="
+              padding: 10px 20px;
+              border: none;
+              background: var(--primary-color);
+              color: white;
+              border-radius: var(--border-radius);
+              cursor: pointer;
+              font-size: 14px;
+              transition: all 0.2s;
+              box-shadow: 0 2px 8px rgba(91, 134, 229, 0.2);
+            ">Check Status</button>
+          </div>
+        `;
+        
+        // Add updated button handlers
+        const updatedCancelButton = modal.querySelector('.modal-button.secondary');
+        const checkButton = modal.querySelector('.modal-button.primary');
+
+        updatedCancelButton.onclick = () => modal.remove();
+        
+        checkButton.onclick = async () => {
+          const statusDiv = modal.querySelector('.payment-status');
+          statusDiv.textContent = 'Checking payment status...';
+
+          try {
+            const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
+            if (!response.ok) throw new Error('Failed to verify payment');
+            const { verified, used } = await response.json();
+
+            if (verified) {
+              if (used) {
+                showError('This payment has already been used.');
+                modal.remove();
+                return;
+              }
+
+              statusDiv.textContent = 'Payment verified!';
+              const { availableSlots } = await chrome.storage.sync.get('availableSlots');
+              await chrome.storage.sync.set({
+                availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
+              });
+              await updateStorageUsage();
+
+              showSuccess('Payment verified! Your slots have been added and synced across all your devices.');
+              
+              // Close modal after 2 seconds
+              setTimeout(() => {
+                modal.remove();
+                updateUI();
+              }, 2000);
+            } else {
+              statusDiv.textContent = 'Payment not detected yet. Try again in a few moments.';
+            }
+          } catch (error) {
+            console.error('Error checking payment:', error);
+            statusDiv.textContent = 'Error checking payment status';
+          }
+        };
+
+        // Add copy button handler
+        const copyButton = modal.querySelector('#copyAdaButton');
+        if (copyButton) {
+          copyButton.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+              await navigator.clipboard.writeText(adaAmount);
+              const originalHTML = copyButton.innerHTML;
+              copyButton.innerHTML = '<i class="fas fa-check"></i> Copied!';
+              copyButton.style.background = 'rgba(46, 204, 113, 0.2)';
+              setTimeout(() => {
+                copyButton.innerHTML = originalHTML;
+                copyButton.style.background = 'rgba(52, 152, 219, 0.2)';
+              }, 2000);
+            } catch (err) {
+              console.error('Failed to copy:', err);
+              copyButton.innerHTML = '<i class="fas fa-times"></i> Failed';
+              copyButton.style.background = 'rgba(231, 76, 60, 0.2)';
+              setTimeout(() => {
+                copyButton.innerHTML = '<i class="fas fa-copy"></i> Copy';
+                copyButton.style.background = 'rgba(52, 152, 219, 0.2)';
+              }, 2000);
+            }
+          });
+        }
       } catch (error) {
-        console.error('Error handling buy slots:', error);
-        showError('Failed to show payment modal');
+        console.error('Payment error:', error);
+        showError(error.message || 'Failed to initiate payment');
+        modal.remove();
       }
     });
   } else {
-    console.error('Buy slots button not found in DOM!');
+    console.error('Buy button not found in DOM!');
     // Let's check the entire document for the button
     console.log('Searching for button in document:');
     console.log(document.querySelector('.buy-slots-button'));
@@ -2065,17 +2408,8 @@ function setupEventListeners() {
 }
 
 // Try both DOMContentLoaded and window.onload
-document.addEventListener('DOMContentLoaded', () => {
-  console.log('DOMContentLoaded fired');
-  setupEventListeners(); // Setup listeners first
-  initializePage();
-});
-
-window.onload = () => {
-  console.log('window.onload fired');
-  setupEventListeners(); // Setup listeners again in case DOMContentLoaded missed it
-  initializePage();
-};
+document.addEventListener('DOMContentLoaded', initializePage);
+window.addEventListener('load', initializePage);
 
 // Call this in init()
 async function init() {
@@ -2303,7 +2637,7 @@ async function initiatePayment() {
     `);
 
     document.body.appendChild(modal);
-
+    
     // Add button handlers
     const cancelButton = modal.querySelector('.modal-button.secondary');
     const checkButton = modal.querySelector('.modal-button.primary');
@@ -2329,13 +2663,13 @@ async function initiatePayment() {
           }
 
           statusDiv.textContent = 'Payment verified!';
-          const { availableSlots } = await chrome.storage.local.get('availableSlots');
-          await chrome.storage.local.set({
+          const { availableSlots } = await chrome.storage.sync.get('availableSlots');
+          await chrome.storage.sync.set({
             availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
           });
           await updateStorageUsage();
 
-          showSuccess('Payment verified! Your slots have been added.');
+          showSuccess('Payment verified! Your slots have been added and synced across all your devices.');
           
           // Close modal after 2 seconds
           setTimeout(() => {
@@ -2440,13 +2774,13 @@ function pollPaymentStatus(paymentId, modal) {
         statusDiv.className = 'payment-status success';
       }
       
-      const { availableSlots } = await chrome.storage.local.get('availableSlots');
-      await chrome.storage.local.set({
+      const { availableSlots } = await chrome.storage.sync.get('availableSlots');
+      await chrome.storage.sync.set({
         availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
       });
       await updateStorageUsage();
 
-      showSuccess('Payment verified! Your slots have been added.');
+      showSuccess('Payment verified! Your slots have been added and synced across all your devices.');
       
       // Close modal after 2 seconds
       setTimeout(() => {

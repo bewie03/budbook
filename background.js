@@ -10,14 +10,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+// Initialize slots if not already set
+chrome.runtime.onInstalled.addListener(async () => {
+  const { availableSlots } = await chrome.storage.sync.get('availableSlots');
+  if (typeof availableSlots === 'undefined') {
+    await chrome.storage.sync.set({ availableSlots: MAX_FREE_SLOTS });
+  }
+});
+
 // Listen for storage changes to keep UI in sync
 chrome.storage.onChanged.addListener(async (changes, namespace) => {
   // If wallet index changes, notify any open tabs
-  if (namespace === 'sync' && (changes.wallet_index || changes.unlockedSlots)) {
+  if (namespace === 'sync' && (changes.wallet_index || changes.unlockedSlots || changes.availableSlots)) {
     const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
     tabs.forEach(tab => {
       chrome.tabs.sendMessage(tab.id, { type: 'RELOAD_WALLETS' });
     });
+  }
+  if (namespace === 'sync' && changes.availableSlots) {
+    console.log('Slots updated:', changes.availableSlots.newValue);
   }
 });
 
