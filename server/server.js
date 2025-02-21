@@ -654,8 +654,8 @@ app.post('/webhook', express.json(), async (req, res) => {
 
     // Extract transaction details
     const tx = payload.payload;
-    if (!tx || !tx.outputs) {
-      console.error('Invalid webhook payload - missing tx or outputs');
+    if (!tx || !tx.outputs || !tx.block_time) {
+      console.error('Invalid webhook payload - missing tx, outputs, or block_time');
       return res.status(400).json({ error: 'Invalid payload' });
     }
 
@@ -697,10 +697,17 @@ app.post('/webhook', express.json(), async (req, res) => {
       console.log('Checking payment:', key, payment);
       
       if (payment && !payment.verified) {
+        // Check if transaction happened after payment was initiated
+        if (tx.block_time * 1000 < payment.timestamp) {
+          console.log('Transaction is older than payment request, skipping');
+          continue;
+        }
+
         // Verify both ADA and BONE amounts match exactly
         if (adaAmount === payment.adaAmount && boneAmount === payment.boneAmount) {
           payment.verified = true;
           payment.txHash = tx.hash;
+          payment.verifiedAt = Date.now();
           await setInCache(key, payment);
           const paymentId = key.split(':')[1];
           console.log('Payment verified for ID:', paymentId);
@@ -711,7 +718,11 @@ app.post('/webhook', express.json(), async (req, res) => {
             for (const [clientId, client] of global.clients) {
               if (client.paymentId === paymentId) {
                 try {
-                  client.res.write(`data: ${JSON.stringify({ verified: true, used: false })}\n\n`);
+                  client.res.write(`data: ${JSON.stringify({ 
+                    verified: true, 
+                    used: false,
+                    message: 'Payment verified! Your slots will be updated.' 
+                  })}\n\n`);
                   console.log('Notified client:', clientId);
                 } catch (error) {
                   console.error('Error notifying client:', error);

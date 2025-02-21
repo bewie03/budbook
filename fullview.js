@@ -1886,7 +1886,7 @@ function setupBuyButton() {
                     Copy
                   </button>
                 </div>
-                <span style="color: var(--text-secondary)"></span>
+                <span style="color: var(--text-secondary)">ADA</span>
               </div>
             </div>
             
@@ -1954,7 +1954,7 @@ function setupBuyButton() {
           try {
             const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
             if (!response.ok) throw new Error('Failed to verify payment');
-            const { verified, used } = await response.json();
+            const { verified, used, message } = await response.json();
 
             if (verified) {
               if (used) {
@@ -1963,7 +1963,7 @@ function setupBuyButton() {
                 return;
               }
 
-              statusDiv.textContent = 'Payment verified!';
+              statusDiv.textContent = message || 'Payment verified!';
               const { availableSlots } = await chrome.storage.sync.get('availableSlots');
               await chrome.storage.sync.set({
                 availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
@@ -2283,7 +2283,7 @@ function setupEventListeners() {
           try {
             const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
             if (!response.ok) throw new Error('Failed to verify payment');
-            const { verified, used } = await response.json();
+            const { verified, used, message } = await response.json();
 
             if (verified) {
               if (used) {
@@ -2292,7 +2292,7 @@ function setupEventListeners() {
                 return;
               }
 
-              statusDiv.textContent = 'Payment verified!';
+              statusDiv.textContent = message || 'Payment verified!';
               const { availableSlots } = await chrome.storage.sync.get('availableSlots');
               await chrome.storage.sync.set({
                 availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
@@ -2653,7 +2653,7 @@ async function initiatePayment() {
       try {
         const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
         if (!response.ok) throw new Error('Failed to verify payment');
-        const { verified, used } = await response.json();
+        const { verified, used, message } = await response.json();
 
         if (verified) {
           if (used) {
@@ -2662,7 +2662,7 @@ async function initiatePayment() {
             return;
           }
 
-          statusDiv.textContent = 'Payment verified!';
+          statusDiv.textContent = message || 'Payment verified!';
           const { availableSlots } = await chrome.storage.sync.get('availableSlots');
           await chrome.storage.sync.set({
             availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
@@ -2750,7 +2750,7 @@ function createModal(html) {
   return modal;
 }
 
-function pollPaymentStatus(paymentId, modal) {
+async function pollPaymentStatus(paymentId, modal) {
   let attempts = 0;
   const maxAttempts = 36; // 3 minutes total with increasing intervals
   
@@ -2758,7 +2758,7 @@ function pollPaymentStatus(paymentId, modal) {
     attempts++;
     const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
     if (!response.ok) throw new Error('Failed to verify payment');
-    const { verified, used } = await response.json();
+    const { verified, used, message } = await response.json();
 
     if (verified) {
       if (used) {
@@ -2770,7 +2770,7 @@ function pollPaymentStatus(paymentId, modal) {
       // Update status and add slots
       const statusDiv = modal.querySelector('.payment-status');
       if (statusDiv) {
-        statusDiv.textContent = 'Payment verified!';
+        statusDiv.textContent = message || 'Payment verified!';
         statusDiv.className = 'payment-status success';
       }
       
