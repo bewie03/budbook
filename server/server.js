@@ -31,10 +31,13 @@ const cache = new NodeCache({ stdTTL: 3600 });
 
 // Helper functions for Cache
 function getFromCache(key) {
-    return cache.get(key);
+    const value = cache.get(key);
+    console.log('Getting from cache:', { key, value });
+    return value;
 }
 
 function setInCache(key, value, ttl = 3600) {
+    console.log('Setting in cache:', { key, value });
     return cache.set(key, value, ttl);
 }
 
@@ -138,6 +141,13 @@ function formatAmount(quantity, decimals) {
   try {
     console.log('Formatting amount:', { quantity, decimals });
     
+    // Ensure decimals is a number
+    decimals = Number(decimals);
+    if (isNaN(decimals)) {
+      console.log('Invalid decimals, defaulting to 0');
+      decimals = 0;
+    }
+
     // For NFTs just return 1
     if (quantity === '1' && decimals === 0) {
       return '1';
@@ -161,7 +171,16 @@ function formatAmount(quantity, decimals) {
       }
     }
     
-    console.log('Formatted result:', result);
+    console.log('Formatted result:', {
+      input: { quantity, decimals },
+      calculations: {
+        rawAmount: rawAmount.toString(),
+        divisor: divisor.toString(),
+        wholePart: wholePart.toString(),
+        fractionalPart: fractionalPart.toString()
+      },
+      result
+    });
     return result;
   } catch (error) {
     console.error('Error formatting amount:', error);
@@ -238,7 +257,7 @@ app.get('/api/wallet/:address', async (req, res) => {
             try {
                 console.log('Processing asset:', amount.unit);
                 
-                // Get asset details from cache or Blockfrost
+                // Get asset details from Blockfrost
                 const cacheKey = `asset_${address}_${amount.unit}`;
                 let assetInfo = forceRefresh ? null : await getFromCache(cacheKey);
                 
@@ -246,19 +265,25 @@ app.get('/api/wallet/:address', async (req, res) => {
                     console.log('Cache miss for asset:', amount.unit);
                     // Fetch from Blockfrost if not in cache
                     assetInfo = await fetchBlockfrost(`/assets/${amount.unit}`, 'fetch asset data');
-                    console.log('Raw Blockfrost response:', assetInfo);
-                    console.log('Asset decimals:', assetInfo.decimals);
+                    console.log('Raw Blockfrost response:', JSON.stringify(assetInfo, null, 2));
                     // Cache forever since Cardano assets are immutable
                     await setInCache(cacheKey, assetInfo);
                 } else {
                     console.log('Cache hit for asset:', amount.unit);
-                    console.log('Cached asset info:', assetInfo);
+                    console.log('Cached asset info:', JSON.stringify(assetInfo, null, 2));
                 }
 
                 // Process metadata like the Discord bot
                 const onchainMetadata = assetInfo.onchain_metadata || {};
                 const metadata = assetInfo.metadata || {};
-                const decimals = assetInfo.decimals || 0;
+                
+                // Get decimals directly from Blockfrost response
+                let decimals = assetInfo.decimals;
+                if (decimals === undefined || decimals === null) {
+                    console.log('No decimals in asset info, checking metadata');
+                    decimals = metadata.decimals || onchainMetadata.decimals;
+                }
+                console.log('Using decimals:', decimals);
 
                 // Get image URL
                 let imageUrl = null;
@@ -285,7 +310,9 @@ app.get('/api/wallet/:address', async (req, res) => {
 
                 console.log('Pre-formatting quantity:', {
                     raw: amount.quantity,
-                    decimals: decimals
+                    decimals: decimals,
+                    metadata: metadata.decimals,
+                    onchainMetadata: onchainMetadata.decimals
                 });
 
                 // Structure the asset data
@@ -306,6 +333,7 @@ app.get('/api/wallet/:address', async (req, res) => {
                     unit: asset.unit,
                     name: asset.name,
                     quantity: asset.quantity,
+                    decimals: decimals,
                     is_nft: asset.is_nft
                 });
 
