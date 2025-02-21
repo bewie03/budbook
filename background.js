@@ -11,7 +11,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // Initialize slots if not already set
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason === 'install') {
+    // Set initial free slots
+    chrome.storage.sync.set({ availableSlots: 5 });
+  }
   const { availableSlots } = await chrome.storage.sync.get('availableSlots');
   if (typeof availableSlots === 'undefined') {
     await chrome.storage.sync.set({ availableSlots: MAX_FREE_SLOTS });
@@ -47,3 +51,76 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
   }
 });
+
+// Listen for messages from the server
+chrome.runtime.onMessageExternal.addListener(async (message, sender, sendResponse) => {
+  try {
+    if (message.type === 'payment_verified') {
+      console.log('Received payment verification:', message);
+      
+      // Store verification in local storage
+      await chrome.storage.local.set({
+        [`payment_${message.paymentId}`]: {
+          verified: true,
+          message: message.message,
+          txHash: message.txHash,
+          timestamp: Date.now()
+        }
+      });
+
+      // Forward the message to all tabs
+      const tabs = await chrome.tabs.query({});
+      tabs.forEach(tab => {
+        chrome.tabs.sendMessage(tab.id, message).catch(err => {
+          console.error('Error sending message to tab:', err);
+        });
+      });
+    }
+  } catch (error) {
+    console.error('Error handling external message:', error);
+  }
+});
+
+// Listen for webhook notifications from our server
+chrome.runtime.onMessageExternal.addListener(
+  async function(request, sender, sendResponse) {
+    console.log('Received external message:', request, 'from:', sender.url);
+    
+    if (sender.url.startsWith('https://budbook-2410440cbb61.herokuapp.com')) {
+      if (request.type === 'payment_verified') {
+        const { paymentId, txHash, message } = request;
+        
+        console.log('Payment verified:', paymentId, txHash);
+        
+        try {
+          // Store the verification
+          await chrome.storage.local.set({
+            [`payment_${paymentId}`]: {
+              verified: true,
+              message,
+              txHash,
+              timestamp: Date.now()
+            }
+          });
+
+          // Notify all extension views
+          chrome.runtime.sendMessage({
+            type: 'payment_verified',
+            paymentId,
+            txHash,
+            message
+          });
+          
+          // Send response back to server
+          sendResponse({ success: true });
+        } catch (error) {
+          console.error('Error handling payment verification:', error);
+          sendResponse({ success: false, error: error.message });
+        }
+        
+        // Return true to indicate we'll send response asynchronously
+        return true;
+      }
+    }
+  }
+);
