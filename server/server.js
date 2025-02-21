@@ -159,8 +159,10 @@ function formatAmount(quantity, decimals) {
     const wholePart = rawAmount / divisor;
     const fractionalPart = rawAmount % divisor;
     
-    // Convert to string with proper decimal places
-    let result = wholePart.toString();
+    // Format whole part with commas
+    let result = wholePart.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    
+    // Add fractional part if exists
     if (fractionalPart > 0) {
       // Pad with leading zeros if needed
       let fractionalStr = fractionalPart.toString().padStart(decimals, '0');
@@ -184,7 +186,7 @@ function formatAmount(quantity, decimals) {
     return result;
   } catch (error) {
     console.error('Error formatting amount:', error);
-    return quantity.toString();
+    return quantity.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   }
 }
 
