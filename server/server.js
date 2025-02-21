@@ -248,7 +248,7 @@ app.get('/api/wallet/:address', async (req, res) => {
             });
         
         // Process top 200 assets
-        const assetsToProcess = sortedAmounts.slice(0,5000);
+        const assetsToProcess = sortedAmounts.slice(0,1000);
         console.log('Processing top 250 assets out of:', sortedAmounts.length);
         
         for (const amount of assetsToProcess) {
