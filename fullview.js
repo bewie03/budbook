@@ -1264,8 +1264,8 @@ async function addWallet() {
 
     // Add wallet to list first to show loading state
     wallets.push(newWallet);
-    await renderWallets(); // Show loading state immediately
-    
+    await renderWallets();
+
     // Fetch wallet data
     const data = await fetchWalletData(address, true);
     
@@ -1384,71 +1384,224 @@ async function refreshWallet(index) {
   }
 }
 
-async function deleteWallet(index) {
-  try {
-    const walletToDelete = wallets[index];
-    if (!walletToDelete) {
-      throw new Error('Wallet not found');
+function createAssetModal() {
+  const modalOverlay = document.createElement('div');
+  modalOverlay.className = 'asset-modal-overlay';
+  modalOverlay.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: ${MODAL_Z_INDEX};
+    backdrop-filter: blur(5px);
+  `;
+
+  const modalContent = document.createElement('div');
+  modalContent.className = 'asset-modal-content';
+  modalContent.style.cssText = `
+    background: var(--bg-secondary);
+    padding: 25px;
+    border-radius: 16px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    overflow-y: auto;
+  `;
+
+  const closeButton = document.createElement('button');
+  closeButton.innerHTML = '×';
+  closeButton.style.cssText = `
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: background 0.2s;
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
     }
+  `;
 
-    // Get the wallet element
-    const walletElement = document.querySelector(`.wallet-item[data-index="${index}"]`);
-    if (!walletElement) {
-      throw new Error('Wallet element not found');
-    }
+  const imageContainer = document.createElement('div');
+  imageContainer.className = 'asset-modal-image-container';
+  imageContainer.style.cssText = `
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 150px;
+    max-height: 50vh;
+    overflow: hidden;
+    border-radius: 8px;
+  `;
 
-    // Hide the delete confirmation immediately
-    const deleteConfirm = walletElement.querySelector('.delete-confirm');
-    deleteConfirm.classList.remove('show');
+  const assetInfo = document.createElement('div');
+  assetInfo.style.cssText = `
+    color: var(--text-primary);
+    font-size: 14px;
+  `;
 
-    // Add deleting class to trigger animation
-    walletElement.classList.add('deleting');
+  modalContent.appendChild(closeButton);
+  modalContent.appendChild(imageContainer);
+  modalContent.appendChild(assetInfo);
+  modalOverlay.appendChild(modalContent);
+  document.body.appendChild(modalOverlay);
 
-    // Wait for animation to complete
-    await new Promise(resolve => setTimeout(resolve, 400));
-
-    // Remove custom icon if exists
-    if (walletToDelete.walletType === 'Custom') {
-      await chrome.storage.local.remove(`wallet_icon_${walletToDelete.address}`);
-    }
-
-    // Remove from array
-    wallets.splice(index, 1);
-    
-    // Save changes
-    await saveWallets();
-    
-    // Re-render UI
-    await renderWallets();
-  } catch (error) {
-    console.error('Error deleting wallet:', error);
-  }
-}
-
-function renderAssetsList(walletIndex, tabType) {
-  const wallet = wallets[walletIndex];
-  if (!wallet || !wallet.assets) return;
-
-  const assetsContainer = document.querySelector('.assets-list');
-  if (!assetsContainer) return;
-
-  // Clear existing assets
-  assetsContainer.innerHTML = '';
-
-  // Filter assets based on tab type
-  const filteredAssets = wallet.assets.filter(asset => {
-    if (tabType === 'all') return true;
-    if (tabType === 'nfts') return isNFT(asset);
-    if (tabType === 'tokens') return !isNFT(asset);
-    return true;
+  closeButton.addEventListener('click', () => {
+    modalOverlay.style.display = 'none';
   });
 
-  // Render filtered assets
-  filteredAssets.forEach(asset => {
-    const assetCard = createAssetCard(asset);
-    assetsContainer.appendChild(assetCard);
+  modalOverlay.addEventListener('click', (e) => {
+    if (e.target === modalOverlay) {
+      modalOverlay.style.display = 'none';
+    }
   });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modalOverlay.style.display === 'flex') {
+      modalOverlay.style.display = 'none';
+    }
+  });
+
+  return {
+    show: (asset) => {
+      imageContainer.innerHTML = '';
+      
+      const imageUrl = getAssetImage(asset);
+      
+      if (imageUrl) {
+        const img = document.createElement('img');
+        img.src = imageUrl;
+        img.alt = asset.name || asset.unit;
+        img.style.cssText = `
+          width: 300px;
+          height: 300px;
+          object-fit: contain;
+          border-radius: 8px;
+        `;
+        imageContainer.appendChild(img);
+      } else {
+        const placeholder = document.createElement('div');
+        placeholder.style.cssText = `
+          width: 300px;
+          height: 300px;
+          background-color: ${getRandomColor(asset.name)};
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 72px;
+          color: white;
+        `;
+        placeholder.textContent = getFirstLetter(asset.name || asset.unit);
+        imageContainer.appendChild(placeholder);
+      }
+
+      // Format the asset information
+      const quantity = asset.quantity;
+      const ticker = asset.ticker ? ` (${asset.ticker})` : '';
+      const displayName = asset.name || 'Unnamed Asset';
+      
+      // Create a truncated version of long IDs
+      const truncateId = (id) => {
+        if (!id) return '';
+        if (id.length <= 20) return id;
+        return `${id.slice(0, 8)}...${id.slice(-8)}`;
+      };
+
+      assetInfo.innerHTML = `
+        <div style="
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+          padding-bottom: 15px;
+          margin-bottom: 15px;
+        ">
+          <div style="font-size: 20px; font-weight: 600; margin-bottom: 5px;">
+            ${displayName}${ticker}
+          </div>
+          <div style="font-size: 16px; color: var(--text-secondary);">
+            Quantity: ${quantity}
+          </div>
+        </div>
+        
+        <div style="
+          display: grid;
+          gap: 12px;
+          font-family: monospace;
+          background: rgba(0, 0, 0, 0.2);
+          padding: 15px;
+          border-radius: 8px;
+        ">
+          ${asset.fingerprint ? `
+            <div>
+              <div style="color: var(--text-secondary); font-size: 12px;">Fingerprint</div>
+              <div class="copyable-text" data-copy="${asset.fingerprint}" style="word-break: break-all; cursor: pointer;">${asset.fingerprint}</div>
+            </div>
+          ` : ''}
+          
+          <div>
+            <div style="color: var(--text-secondary); font-size: 12px;">Policy ID</div>
+            <div class="copyable-text" data-copy="${asset.unit}" style="word-break: break-all; cursor: pointer;">${asset.unit}</div>
+          </div>
+          
+          ${asset.policy ? `
+            <div>
+              <div style="color: var(--text-secondary); font-size: 12px;">Policy ID</div>
+              <div class="copyable-text" data-copy="${asset.policy}" style="word-break: break-all; cursor: pointer;">${asset.policy}</div>
+            </div>
+          ` : ''}
+        </div>
+        
+        ${asset.description ? `
+          <div style="margin-top: 15px; color: var(--text-secondary);">
+            ${asset.description}
+          </div>
+        ` : ''}
+      `;
+
+      // Add click handlers for copyable text elements
+      const copyableElements = assetInfo.querySelectorAll('.copyable-text');
+      copyableElements.forEach(element => {
+        element.addEventListener('click', async () => {
+          const textToCopy = element.getAttribute('data-copy');
+          await navigator.clipboard.writeText(textToCopy);
+          
+          // Visual feedback
+          const originalText = element.textContent;
+          element.textContent = 'Copied!';
+          element.style.color = '#00b894';
+          
+          setTimeout(() => {
+            element.textContent = originalText;
+            element.style.color = '';
+          }, 1000);
+        });
+      });
+
+      modalOverlay.style.display = 'flex';
+    }
+  };
 }
+
+let assetModal = createAssetModal();
 
 // Modal elements
 let modal;
@@ -1694,47 +1847,7 @@ function setupBuyButton() {
               border-radius: var(--border-radius);
             ">
               <div style="font-size: 1.6em; margin: 10px 0; color: var(--primary-color);">${boneAmount} BONE</div>
-              <div style="
-                font-size: 1.4em;
-                margin: 10px 0;
-                color: var(--text-color);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                gap: 10px;
-              ">
-                <div style="
-                  background: rgba(52, 152, 219, 0.1);
-                  padding: 8px 16px;
-                  border-radius: 8px;
-                  border: 1px solid rgba(52, 152, 219, 0.2);
-                  display: flex;
-                  align-items: center;
-                  gap: 8px;
-                ">
-                  <span>₳ ${adaAmount}</span>
-                  <button 
-                    id="copyAdaButton"
-                    style="
-                      background: rgba(52, 152, 219, 0.2);
-                      border: none;
-                      color: var(--text-color);
-                      padding: 4px 8px;
-                      border-radius: 4px;
-                      cursor: pointer;
-                      font-size: 12px;
-                      display: flex;
-                      align-items: center;
-                      gap: 4px;
-                      transition: all 0.2s ease;
-                    "
-                  >
-                    <i class="fas fa-copy"></i>
-                    Copy
-                  </button>
-                </div>
-                <span style="color: var(--text-secondary)">ADA</span>
-              </div>
+              <div style="font-size: 1.4em; margin: 10px 0; color: var(--text-color);">₳ ${adaAmount} ADA</div>
             </div>
             
             <div style="margin: 24px 0;">
@@ -1800,61 +1913,39 @@ function setupBuyButton() {
 
           try {
             const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-            if (!response.ok) {
-              const errorData = await response.json();
-              throw new Error(errorData.error || 'Failed to verify payment');
-            }
-            
-            const { verified, used, message } = await response.json();
+            if (!response.ok) throw new Error('Failed to verify payment');
+            const { verified, used } = await response.json();
 
             if (verified) {
               if (used) {
-                statusDiv.textContent = 'This payment has already been used.';
                 showError('This payment has already been used.');
-                setTimeout(() => modal.remove(), 2000);
+                modal.remove();
                 return;
               }
 
-              statusDiv.textContent = 'Payment verified! Processing...';
+              statusDiv.textContent = 'Payment verified!';
+              const { availableSlots } = await chrome.storage.local.get('availableSlots');
+              await chrome.storage.local.set({
+                availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
+              });
+              await updateStorageUsage();
+
+              showSuccess('Payment verified! Your slots have been added.');
+              
+              // Close modal after 2 seconds
+              setTimeout(() => {
+                modal.remove();
+                updateUI();
+              }, 2000);
             } else {
               statusDiv.textContent = 'Payment not detected yet. Try again in a few moments.';
             }
           } catch (error) {
             console.error('Error checking payment:', error);
-            statusDiv.innerHTML = `
-              <div style="color: var(--error-color);">
-                <i class="fas fa-exclamation-circle"></i> ${error.message}
-              </div>
-            `;
+            statusDiv.textContent = 'Error checking payment status';
           }
         };
 
-        // Add copy button handler
-        const copyButton = modal.querySelector('#copyAdaButton');
-        if (copyButton) {
-          copyButton.addEventListener('click', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            try {
-              await navigator.clipboard.writeText(adaAmount);
-              const originalHTML = copyButton.innerHTML;
-              copyButton.innerHTML = '<i class="fas fa-check"></i> Copied!';
-              copyButton.style.background = 'rgba(46, 204, 113, 0.2)';
-              setTimeout(() => {
-                copyButton.innerHTML = originalHTML;
-                copyButton.style.background = 'rgba(52, 152, 219, 0.2)';
-              }, 2000);
-            } catch (err) {
-              console.error('Failed to copy:', err);
-              copyButton.innerHTML = '<i class="fas fa-times"></i> Failed';
-              copyButton.style.background = 'rgba(231, 76, 60, 0.2)';
-              setTimeout(() => {
-                copyButton.innerHTML = '<i class="fas fa-copy"></i> Copy';
-                copyButton.style.background = 'rgba(52, 152, 219, 0.2)';
-              }, 2000);
-            }
-          });
-        }
       } catch (error) {
         console.error('Payment error:', error);
         showError(error.message || 'Failed to initiate payment');
@@ -1887,8 +1978,6 @@ async function initializePage() {
   console.log('Starting initialization...');
   initialized = true;
   await init();
-  setupEventListeners();
-  setupBuyButton();
 }
 
 // Setup event listeners first
@@ -1905,289 +1994,18 @@ function setupEventListeners() {
   
   if (buySlots) {
     console.log('Adding click handler to button');
-    buySlots.addEventListener('click', async (e) => {
-      e.preventDefault();
-      console.log('Button clicked! Creating modal...');
-      
-      // Create and show modal
-      const modal = document.createElement('div');
-      modal.className = 'payment-modal';
-      modal.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(26, 27, 31, 0.95);
-        backdrop-filter: blur(5px);
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        z-index: 9999;
-      `;
-      
-      modal.innerHTML = `
-        <div class="modal-content" style="
-          background: var(--card-bg);
-          color: var(--text-color);
-          padding: 24px;
-          border-radius: var(--border-radius);
-          width: 90%;
-          max-width: 500px;
-          position: relative;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-          border: 1px solid var(--border-color);
-        ">
-          <div class="modal-header" style="margin-bottom: 24px;">
-            <h2 style="margin: 0; color: var(--text-color); font-size: 24px;">Buy More Slots</h2>
-            <div class="payment-status" style="
-              margin-top: 12px;
-              padding: 8px 16px;
-              border-radius: 20px;
-              background: rgba(255, 255, 255, 0.1);
-              font-size: 14px;
-              color: var(--text-secondary);
-            ">Initializing payment...</div>
-          </div>
-          
-          <div class="payment-details">
-            <div style="text-align: center; margin: 24px 0;">
-              <div style="font-size: 1.4em; margin: 10px 0; color: var(--text-color);">Processing...</div>
-            </div>
-          </div>
-
-          <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
-            <button class="modal-button secondary" style="
-              padding: 10px 20px;
-              border: 1px solid var(--border-color);
-              background: transparent;
-              color: var(--text-color);
-              border-radius: var(--border-radius);
-              cursor: pointer;
-              font-size: 14px;
-              transition: all 0.2s;
-            ">Cancel</button>
-          </div>
-        </div>
-      `;
-
-      document.body.appendChild(modal);
-      
-      // Add initial button handler
-      const cancelButton = modal.querySelector('.modal-button.secondary');
-      cancelButton.onclick = () => modal.remove();
-
+    buySlots.addEventListener('click', async () => {
+      console.log('Buy slots button clicked!');
       try {
-        console.log('Starting payment process...');
-        const response = await fetch(`${API_BASE_URL}/api/initiate-payment`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            installId: chrome.runtime.id
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to initiate payment');
-        }
-
-        const { paymentId, address, adaAmount, boneAmount } = await response.json();
-        
-        // Update modal content with payment details
-        const modalContent = modal.querySelector('.modal-content');
-        modalContent.innerHTML = `
-          <div class="modal-header" style="margin-bottom: 24px;">
-            <h2 style="margin: 0; color: var(--text-color); font-size: 24px;">Buy More Slots</h2>
-            <div class="payment-status" style="
-              margin-top: 12px;
-              padding: 8px 16px;
-              border-radius: 20px;
-              background: rgba(255, 255, 255, 0.1);
-              font-size: 14px;
-              color: var(--text-secondary);
-            ">Waiting for payment...</div>
-          </div>
-          
-          <div class="payment-details">
-            <div style="
-              text-align: center;
-              margin: 24px 0;
-              padding: 20px;
-              background: rgba(91, 134, 229, 0.1);
-              border-radius: var(--border-radius);
-            ">
-              <div style="font-size: 1.6em; margin: 10px 0; color: var(--primary-color);">${boneAmount} BONE</div>
-              <div style="
-                font-size: 1.4em;
-                margin: 10px 0;
-                color: var(--text-color);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                gap: 10px;
-              ">
-                <div style="
-                  background: rgba(52, 152, 219, 0.1);
-                  padding: 8px 16px;
-                  border-radius: 8px;
-                  border: 1px solid rgba(52, 152, 219, 0.2);
-                  display: flex;
-                  align-items: center;
-                  gap: 8px;
-                ">
-                  <span>₳ ${adaAmount}</span>
-                  <button 
-                    id="copyAdaButton"
-                    style="
-                      background: rgba(52, 152, 219, 0.2);
-                      border: none;
-                      color: var(--text-color);
-                      padding: 4px 8px;
-                      border-radius: 4px;
-                      cursor: pointer;
-                      font-size: 12px;
-                      display: flex;
-                      align-items: center;
-                      gap: 4px;
-                      transition: all 0.2s ease;
-                    "
-                  >
-                    <i class="fas fa-copy"></i>
-                    Copy
-                  </button>
-                </div>
-                <span style="color: var(--text-secondary)">ADA</span>
-              </div>
-            </div>
-            
-            <div style="margin: 24px 0;">
-              <div style="margin-bottom: 8px; color: var(--text-secondary);">Send to:</div>
-              <div style="
-                background: var(--input-bg);
-                padding: 12px;
-                border-radius: var(--border-radius);
-                word-break: break-all;
-                font-family: monospace;
-                color: var(--text-color);
-                border: 1px solid var(--border-color);
-              ">${address}</div>
-            </div>
-            
-            <div style="
-              background: rgba(91, 134, 229, 0.1);
-              color: var(--text-color);
-              padding: 16px;
-              border-radius: var(--border-radius);
-              margin: 24px 0;
-              border: 1px solid var(--primary-color);
-            ">
-              <strong style="color: var(--primary-color);">Important:</strong> Send EXACTLY ₳ ${adaAmount} ADA along with ${boneAmount} BONE tokens.
-              This specific ADA amount helps us identify your payment.
-            </div>
-          </div>
-
-          <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
-            <button class="modal-button secondary" style="
-              padding: 10px 20px;
-              border: 1px solid var(--border-color);
-              background: transparent;
-              color: var(--text-color);
-              border-radius: var(--border-radius);
-              cursor: pointer;
-              font-size: 14px;
-              transition: all 0.2s;
-            ">Cancel</button>
-            <button class="modal-button primary" style="
-              padding: 10px 20px;
-              border: none;
-              background: var(--primary-color);
-              color: white;
-              border-radius: var(--border-radius);
-              cursor: pointer;
-              font-size: 14px;
-              transition: all 0.2s;
-              box-shadow: 0 2px 8px rgba(91, 134, 229, 0.2);
-            ">Check Status</button>
-          </div>
-        `;
-        
-        // Add updated button handlers
-        const updatedCancelButton = modal.querySelector('.modal-button.secondary');
-        const checkButton = modal.querySelector('.modal-button.primary');
-
-        updatedCancelButton.onclick = () => modal.remove();
-        
-        checkButton.onclick = async () => {
-          const statusDiv = modal.querySelector('.payment-status');
-          statusDiv.textContent = 'Checking payment status...';
-
-          try {
-            const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-            if (!response.ok) {
-              const errorData = await response.json();
-              throw new Error(errorData.error || 'Failed to verify payment');
-            }
-            
-            const { verified, used, message } = await response.json();
-
-            if (verified) {
-              if (used) {
-                statusDiv.textContent = 'This payment has already been used.';
-                showError('This payment has already been used.');
-                setTimeout(() => modal.remove(), 2000);
-                return;
-              }
-
-              statusDiv.textContent = 'Payment verified! Processing...';
-            } else {
-              statusDiv.textContent = 'Payment not detected yet. Try again in a few moments.';
-            }
-          } catch (error) {
-            console.error('Error checking payment:', error);
-            statusDiv.innerHTML = `
-              <div style="color: var(--error-color);">
-                <i class="fas fa-exclamation-circle"></i> ${error.message}
-              </div>
-            `;
-          }
-        };
-
-        // Add copy button handler
-        const copyButton = modal.querySelector('#copyAdaButton');
-        if (copyButton) {
-          copyButton.addEventListener('click', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            try {
-              await navigator.clipboard.writeText(adaAmount);
-              const originalHTML = copyButton.innerHTML;
-              copyButton.innerHTML = '<i class="fas fa-check"></i> Copied!';
-              copyButton.style.background = 'rgba(46, 204, 113, 0.2)';
-              setTimeout(() => {
-                copyButton.innerHTML = originalHTML;
-                copyButton.style.background = 'rgba(52, 152, 219, 0.2)';
-              }, 2000);
-            } catch (err) {
-              console.error('Failed to copy:', err);
-              copyButton.innerHTML = '<i class="fas fa-times"></i> Failed';
-              copyButton.style.background = 'rgba(231, 76, 60, 0.2)';
-              setTimeout(() => {
-                copyButton.innerHTML = '<i class="fas fa-copy"></i> Copy';
-                copyButton.style.background = 'rgba(52, 152, 219, 0.2)';
-              }, 2000);
-            }
-          });
-        }
+        console.log('Initiating payment...');
+        await initiatePayment();
       } catch (error) {
-        console.error('Payment error:', error);
-        showError(error.message || 'Failed to initiate payment');
-        modal.remove();
+        console.error('Error handling buy slots:', error);
+        showError('Failed to show payment modal');
       }
     });
   } else {
-    console.error('Buy button not found in DOM!');
+    console.error('Buy slots button not found in DOM!');
     // Let's check the entire document for the button
     console.log('Searching for button in document:');
     console.log(document.querySelector('.buy-slots-button'));
@@ -2247,8 +2065,17 @@ function setupEventListeners() {
 }
 
 // Try both DOMContentLoaded and window.onload
-document.addEventListener('DOMContentLoaded', initializePage);
-window.addEventListener('load', initializePage);
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('DOMContentLoaded fired');
+  setupEventListeners(); // Setup listeners first
+  initializePage();
+});
+
+window.onload = () => {
+  console.log('window.onload fired');
+  setupEventListeners(); // Setup listeners again in case DOMContentLoaded missed it
+  initializePage();
+};
 
 // Call this in init()
 async function init() {
@@ -2409,6 +2236,7 @@ async function rateLimitRequest() {
 
 async function initiatePayment() {
   try {
+    // Check if enough time has passed since last attempt
     const now = Date.now();
     const timeSinceLastAttempt = now - lastPaymentAttempt;
     
@@ -2419,12 +2247,19 @@ async function initiatePayment() {
     }
     
     lastPaymentAttempt = now;
+    
+    // Get extension's installation ID
     const installId = chrome.runtime.id;
     
+    // Get payment details from server
     const response = await fetch(`${API_BASE_URL}/api/initiate-payment`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ installId })
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        installId
+      })
     });
 
     if (!response.ok) {
@@ -2436,31 +2271,30 @@ async function initiatePayment() {
     
     const { paymentId, address, adaAmount, boneAmount } = await response.json();
     
+    // Show payment details modal
     const modal = createModal(`
       <div class="modal-content">
         <div class="modal-header">
           <h2>Buy More Slots</h2>
           <div class="payment-status">Waiting for payment...</div>
         </div>
+        
         <div class="payment-details">
           <div class="amount-display">
             <div class="payment-amount">${boneAmount} BONE</div>
             <div class="payment-amount">₳ ${adaAmount} ADA</div>
           </div>
+          
           <div class="address-container">
             <span class="label">Send to:</span>
-            <div class="address-box">
-              ${address}
-              <button class="copy-button" title="Copy address">
-                <i class="fas fa-copy"></i>
-              </button>
-            </div>
+            <div class="address-box">${address}</div>
           </div>
           <div class="payment-note">
             Important: Send EXACTLY ₳ ${adaAmount} ADA along with ${boneAmount} BONE tokens.
             This specific ADA amount helps us identify your payment.
           </div>
         </div>
+
         <div class="modal-buttons">
           <button class="modal-button secondary">Cancel</button>
           <button class="modal-button primary">Check Status</button>
@@ -2469,110 +2303,177 @@ async function initiatePayment() {
     `);
 
     document.body.appendChild(modal);
-    
-    // Set up webhook message listener
-    const messageListener = async (message) => {
-      if (message.type === 'payment_verified' && message.paymentId === paymentId) {
-        const statusDiv = modal.querySelector('.payment-status');
-        statusDiv.innerHTML = `
-          <div style="color: var(--success-color);">
-            <i class="fas fa-check-circle"></i> ${message.message || 'Payment verified!'}
-          </div>
-          ${message.txHash ? `
-          <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary); word-break: break-all;">
-            Transaction: ${message.txHash}
-          </div>
-          ` : ''}
-        `;
-        
-        const { availableSlots } = await chrome.storage.sync.get('availableSlots');
-        await chrome.storage.sync.set({
-          availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
-        });
-        await updateStorageUsage();
 
-        showSuccess('Payment verified! Your slots have been added and synced across all your devices.');
-        setTimeout(() => {
-          modal.remove();
-          updateUI();
-        }, 3000);
-        
-        chrome.runtime.onMessage.removeListener(messageListener);
-      }
-    };
-    
-    chrome.runtime.onMessage.addListener(messageListener);
-
+    // Add button handlers
     const cancelButton = modal.querySelector('.modal-button.secondary');
     const checkButton = modal.querySelector('.modal-button.primary');
-    const copyButton = modal.querySelector('.copy-button');
-    const addressBox = modal.querySelector('.address-box');
 
     cancelButton.addEventListener('click', () => {
-      chrome.runtime.onMessage.removeListener(messageListener);
       modal.remove();
-    });
-
-    copyButton.addEventListener('click', () => {
-      copyToClipboard(address, addressBox);
     });
 
     checkButton.addEventListener('click', async () => {
       const statusDiv = modal.querySelector('.payment-status');
       statusDiv.textContent = 'Checking payment status...';
-      checkButton.disabled = true;
-      
-      try {
-        const savedPayment = await checkSavedPayment(paymentId);
-        if (savedPayment) {
-          statusDiv.innerHTML = `
-            <div style="color: var(--success-color);">
-              <i class="fas fa-check-circle"></i> ${savedPayment.message || 'Payment verified!'}
-            </div>
-            ${savedPayment.txHash ? `
-            <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary); word-break: break-all;">
-              Transaction: ${savedPayment.txHash}
-            </div>
-            ` : ''}
-          `;
-          setTimeout(() => modal.remove(), 3000);
-          return;
-        }
 
+      try {
         const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to verify payment');
-        }
-        
-        const { verified, used, message } = await response.json();
+        if (!response.ok) throw new Error('Failed to verify payment');
+        const { verified, used } = await response.json();
 
         if (verified) {
           if (used) {
-            statusDiv.textContent = 'This payment has already been used.';
             showError('This payment has already been used.');
-            setTimeout(() => modal.remove(), 2000);
+            modal.remove();
             return;
           }
-          statusDiv.textContent = 'Payment verified! Processing...';
+
+          statusDiv.textContent = 'Payment verified!';
+          const { availableSlots } = await chrome.storage.local.get('availableSlots');
+          await chrome.storage.local.set({
+            availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
+          });
+          await updateStorageUsage();
+
+          showSuccess('Payment verified! Your slots have been added.');
+          
+          // Close modal after 2 seconds
+          setTimeout(() => {
+            modal.remove();
+            updateUI();
+          }, 2000);
         } else {
-          statusDiv.textContent = 'Payment not detected yet. Please wait for confirmation.';
+          statusDiv.textContent = 'Payment not detected yet. Try again in a few moments.';
         }
       } catch (error) {
         console.error('Error checking payment:', error);
-        statusDiv.innerHTML = `
-          <div style="color: var(--error-color);">
-            <i class="fas fa-exclamation-circle"></i> ${error.message}
-          </div>
-        `;
-      } finally {
-        checkButton.disabled = false;
+        statusDiv.textContent = 'Error checking payment status';
       }
     });
+
+    // Start polling for payment status
+    pollPaymentStatus(paymentId, modal);
+
   } catch (error) {
-    console.error('Payment error:', error);
-    showError(error.message || 'Failed to initiate payment');
+    console.error('Payment initiation error:', error);
+    showError(error.message || 'Failed to initiate payment. Please try again.');
   }
+}
+
+function formatBalance(balance) {
+  // Convert null/undefined to 0
+  const rawBalance = balance || 0;
+  
+  // Convert from lovelace to ADA (1 ADA = 1,000,000 lovelace)
+  const adaValue = parseFloat(rawBalance) / 1000000;
+  
+  // Format with 2 decimal places
+  return `₳ ${adaValue.toLocaleString(undefined, { 
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+}
+
+function updateSlotCount() {
+  const slotCountElement = document.getElementById('slotCount');
+  const maxSlots = MAX_FREE_SLOTS;
+  const currentSlots = wallets ? wallets.length : 0;
+  
+  if (slotCountElement) {
+    slotCountElement.textContent = `${currentSlots}/${maxSlots}`;
+  }
+}
+
+function createModal(html) {
+  // Remove any existing modals
+  const existingModals = document.querySelectorAll('.modal');
+  existingModals.forEach(modal => modal.remove());
+  
+  // Create new modal
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.innerHTML = html;
+  
+  // Add click handler to close on background click
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.remove();
+    }
+  });
+  
+  // Add to document
+  document.body.appendChild(modal);
+  
+  // Add keydown handler for Escape key
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      modal.remove();
+      document.removeEventListener('keydown', escHandler);
+    }
+  };
+  document.addEventListener('keydown', escHandler);
+  
+  return modal;
+}
+
+function pollPaymentStatus(paymentId, modal) {
+  let attempts = 0;
+  const maxAttempts = 36; // 3 minutes total with increasing intervals
+  
+  const checkStatus = async () => {
+    attempts++;
+    const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
+    if (!response.ok) throw new Error('Failed to verify payment');
+    const { verified, used } = await response.json();
+
+    if (verified) {
+      if (used) {
+        showError('This payment has already been used.');
+        modal.remove();
+        return true;
+      }
+
+      // Update status and add slots
+      const statusDiv = modal.querySelector('.payment-status');
+      if (statusDiv) {
+        statusDiv.textContent = 'Payment verified!';
+        statusDiv.className = 'payment-status success';
+      }
+      
+      const { availableSlots } = await chrome.storage.local.get('availableSlots');
+      await chrome.storage.local.set({
+        availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
+      });
+      await updateStorageUsage();
+
+      showSuccess('Payment verified! Your slots have been added.');
+      
+      // Close modal after 2 seconds
+      setTimeout(() => {
+        modal.remove();
+        updateUI();
+      }, 2000);
+      
+      return true;
+    }
+    
+    if (attempts >= maxAttempts) {
+      const statusDiv = modal.querySelector('.payment-status');
+      if (statusDiv) {
+        statusDiv.textContent = 'Verification timeout';
+        statusDiv.className = 'payment-status error';
+      }
+      return true;
+    }
+    
+    // Calculate next delay with exponential backoff
+    const nextDelay = Math.min(2000 * Math.pow(1.2, attempts), 10000); // Cap at 10 seconds
+    setTimeout(checkStatus, nextDelay);
+    
+    return false;
+  };
+  
+  checkStatus();
 }
 
 function formatTokenQuantity(amount, decimals = 0) {
@@ -2618,6 +2519,223 @@ function setupTabSwitching() {
     const sections = walletBox.querySelectorAll('.wallet-section');
     sections.forEach(s => {
       s.classList.toggle('active', s.getAttribute('data-section') === section);
+    });
+  });
+}
+
+async function deleteWallet(index) {
+  try {
+    const walletToDelete = wallets[index];
+    if (!walletToDelete) {
+      throw new Error('Wallet not found');
+    }
+
+    // Get the wallet element
+    const walletElement = document.querySelector(`.wallet-item[data-index="${index}"]`);
+    if (!walletElement) {
+      throw new Error('Wallet element not found');
+    }
+
+    // Hide the delete confirmation immediately
+    const deleteConfirm = walletElement.querySelector('.delete-confirm');
+    deleteConfirm.classList.remove('show');
+
+    // Add deleting class to trigger animation
+    walletElement.classList.add('deleting');
+
+    // Wait for animation to complete
+    await new Promise(resolve => setTimeout(resolve, 400));
+
+    // Remove custom icon if exists
+    if (walletToDelete.walletType === 'Custom') {
+      await chrome.storage.local.remove(`wallet_icon_${walletToDelete.address}`);
+    }
+
+    // Remove from array
+    wallets.splice(index, 1);
+    
+    // Save changes
+    await saveWallets();
+    
+    // Re-render UI
+    await renderWallets();
+  } catch (error) {
+    console.error('Error deleting wallet:', error);
+  }
+}
+
+function startCacheRefreshMonitor() {
+  const CACHE_CHECK_INTERVAL = 60000; // Check cache every 60 seconds
+  const CACHE_REFRESH_THRESHOLD = 0; // Removed early refresh trigger
+  
+  // Initialize progress bar
+  const refreshBar = document.querySelector('.refresh-bar');
+  const refreshTimeText = document.getElementById('refreshTime');
+  let startTime = Date.now();
+  let nextRefreshTime = startTime + CACHE_DURATION;
+
+  // Update progress bar every second
+  const updateProgressBar = () => {
+    const now = Date.now();
+    const remaining = nextRefreshTime - now;
+    const progress = Math.max(0, remaining / CACHE_DURATION); // Calculate remaining percentage
+    
+    // Update progress bar with smooth transition
+    refreshBar.style.transition = 'transform 1s linear';
+    refreshBar.style.transform = `scaleX(${progress})`;
+    
+    // Update time text
+    const secondsRemaining = Math.max(0, Math.ceil(remaining / 1000));
+    const minutes = Math.floor(secondsRemaining / 60);
+    const seconds = secondsRemaining % 60;
+    refreshTimeText.textContent = `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+    
+    // If time's up, refresh all wallets
+    if (remaining <= 0) {
+      refreshAllWallets();
+      startTime = Date.now();
+      nextRefreshTime = startTime + CACHE_DURATION;
+    }
+    
+    // Schedule next update
+    requestAnimationFrame(updateProgressBar);
+  };
+
+  // Function to refresh all wallets
+  const refreshAllWallets = async () => {
+    console.log('Cache duration reached, refreshing all wallets');
+    
+    if (!wallets || wallets.length === 0) {
+      return;
+    }
+
+    // Start refresh animations for all wallets
+    wallets.forEach((_, index) => {
+      const button = document.querySelector(`[data-index="${index}"] .refresh-btn i`);
+      if (button) button.classList.add('rotating');
+    });
+
+    try {
+      // Refresh all wallets in parallel
+      const refreshResults = await Promise.all(
+        wallets.map((_, index) => refreshWallet(index))
+      );
+
+      // If any wallet was updated, save and re-render
+      if (refreshResults.some(result => result)) {
+        await saveWallets();
+        await renderWallets();
+      }
+    } catch (error) {
+      console.error('Error refreshing all wallets:', error);
+    }
+  };
+
+  // Start progress bar animation
+  updateProgressBar();
+
+  // Check for wallets that need immediate refresh
+  setInterval(async () => {
+    try {
+      if (!wallets || wallets.length === 0) return;
+
+      const now = Date.now();
+      const timeUntilNextRefresh = nextRefreshTime - now;
+      
+      // Only trigger refresh if we're within 1 second of the scheduled time
+      // This prevents any drift that might occur from setTimeout/setInterval inaccuracies
+      if (timeUntilNextRefresh <= 1000) {
+        refreshAllWallets();
+        startTime = now;
+        nextRefreshTime = startTime + CACHE_DURATION;
+      }
+    } catch (error) {
+      console.error('Error in cache refresh monitor:', error);
+    }
+  }, CACHE_CHECK_INTERVAL);
+}
+
+function renderAssetsList(walletIndex, tabType) {
+  const wallet = wallets[walletIndex];
+  if (!wallet || !wallet.assets) return;
+
+  const assetsContainer = document.querySelector('.assets-list');
+  if (!assetsContainer) return;
+
+  // Clear existing assets
+  assetsContainer.innerHTML = '';
+
+  // Filter assets based on tab type
+  const filteredAssets = wallet.assets.filter(asset => {
+    if (tabType === 'all') return true;
+    if (tabType === 'nfts') return isNFT(asset);
+    if (tabType === 'tokens') return !isNFT(asset);
+    return true;
+  });
+
+  // Render filtered assets
+  filteredAssets.forEach(asset => {
+    const assetCard = createAssetCard(asset);
+    assetsContainer.appendChild(assetCard);
+  });
+}
+
+function setupAssetsPanelListeners() {
+  const panel = document.querySelector('.assets-panel');
+  if (!panel) return; // Exit if panel doesn't exist
+
+  const closeBtn = panel.querySelector('.close-assets');
+  const tabs = panel.querySelectorAll('.assets-tab');
+  
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      panel.classList.remove('expanded');
+    });
+  }
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const currentWallet = panel.dataset.walletIndex;
+      const tabType = tab.dataset.tab;
+      
+      // Update button styles
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      
+      // Render assets for the selected tab
+      renderAssetsList(currentWallet, tabType);
+    });
+  });
+}
+
+// Add global tab functionality
+function setupGlobalTabs() {
+  const globalTabs = document.querySelectorAll('.global-tab-btn');
+  
+  globalTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      // Update active state of global tabs
+      globalTabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      
+      // Get all wallet sections
+      const walletItems = document.querySelectorAll('.wallet-item');
+      
+      walletItems.forEach(wallet => {
+        // Get all sections in this wallet
+        const sections = wallet.querySelectorAll('.wallet-section');
+        const buttons = wallet.querySelectorAll('.wallet-nav-button');
+        
+        // Update sections visibility
+        sections.forEach(s => {
+          s.classList.toggle('active', s.getAttribute('data-section') === tab.dataset.section);
+        });
+        
+        // Update nav buttons state
+        buttons.forEach(btn => {
+          btn.classList.toggle('active', btn.getAttribute('data-section') === tab.dataset.section);
+        });
+      });
     });
   });
 }
@@ -2802,1058 +2920,4 @@ async function handleDrop(e) {
 
   // Re-render wallets
   renderWallets();
-}
-
-// Add global tab functionality
-function setupGlobalTabs() {
-  const globalTabs = document.querySelectorAll('.global-tab-btn');
-  
-  globalTabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      // Update active state of global tabs
-      globalTabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      
-      // Get all wallet sections
-      const walletItems = document.querySelectorAll('.wallet-item');
-      
-      walletItems.forEach(wallet => {
-        // Get all sections in this wallet
-        const sections = wallet.querySelectorAll('.wallet-section');
-        const buttons = wallet.querySelectorAll('.wallet-nav-button');
-        
-        // Update sections visibility
-        sections.forEach(s => {
-          s.classList.toggle('active', s.getAttribute('data-section') === tab.dataset.section);
-        });
-        
-        // Update nav buttons state
-        buttons.forEach(btn => {
-          btn.classList.toggle('active', btn.getAttribute('data-section') === tab.dataset.section);
-        });
-      });
-    });
-  });
-}
-
-function setupAssetsPanelListeners() {
-  const panel = document.querySelector('.assets-panel');
-  if (!panel) return; // Exit if panel doesn't exist
-
-  const closeBtn = panel.querySelector('.close-assets');
-  const tabs = panel.querySelectorAll('.assets-tab');
-  
-  if (closeBtn) {
-    closeBtn.addEventListener('click', () => {
-      panel.classList.remove('expanded');
-    });
-  }
-
-  tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const currentWallet = panel.dataset.walletIndex;
-      const tabType = tab.dataset.tab;
-      
-      // Update button styles
-      tabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      
-      // Render assets for the selected tab
-      renderAssetsList(currentWallet, tabType);
-    });
-  });
-}
-
-function startCacheRefreshMonitor() {
-  const CACHE_CHECK_INTERVAL = 60000; // Check cache every 60 seconds
-  const CACHE_REFRESH_THRESHOLD = 0; // Removed early refresh trigger
-  
-  // Initialize progress bar
-  const refreshBar = document.querySelector('.refresh-bar');
-  const refreshTimeText = document.getElementById('refreshTime');
-  let startTime = Date.now();
-  let nextRefreshTime = startTime + CACHE_DURATION;
-
-  // Update progress bar every second
-  const updateProgressBar = () => {
-    const now = Date.now();
-    const remaining = nextRefreshTime - now;
-    const progress = Math.max(0, remaining / CACHE_DURATION); // Calculate remaining percentage
-    
-    // Update progress bar with smooth transition
-    refreshBar.style.transition = 'transform 1s linear';
-    refreshBar.style.transform = `scaleX(${progress})`;
-    
-    // Update time text
-    const secondsRemaining = Math.max(0, Math.ceil(remaining / 1000));
-    const minutes = Math.floor(secondsRemaining / 60);
-    const seconds = secondsRemaining % 60;
-    refreshTimeText.textContent = `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
-    
-    // If time's up, refresh all wallets
-    if (remaining <= 0) {
-      refreshAllWallets();
-      startTime = Date.now();
-      nextRefreshTime = startTime + CACHE_DURATION;
-    }
-    
-    // Schedule next update
-    requestAnimationFrame(updateProgressBar);
-  };
-
-  // Function to refresh all wallets
-  const refreshAllWallets = async () => {
-    console.log('Cache duration reached, refreshing all wallets');
-    
-    if (!wallets || wallets.length === 0) {
-      return;
-    }
-
-    // Start refresh animations for all wallets
-    wallets.forEach((_, index) => {
-      const button = document.querySelector(`[data-index="${index}"] .refresh-btn i`);
-      if (button) button.classList.add('rotating');
-    });
-
-    try {
-      // Refresh all wallets in parallel
-      const refreshResults = await Promise.all(
-        wallets.map((_, index) => refreshWallet(index))
-      );
-
-      // If any wallet was updated, save and re-render
-      if (refreshResults.some(result => result)) {
-        await saveWallets();
-        await renderWallets();
-      }
-    } catch (error) {
-      console.error('Error refreshing all wallets:', error);
-    }
-  };
-
-  // Start progress bar animation
-  updateProgressBar();
-
-  // Check for wallets that need immediate refresh
-  setInterval(async () => {
-    try {
-      if (!wallets || wallets.length === 0) return;
-
-      const now = Date.now();
-      const timeUntilNextRefresh = nextRefreshTime - now;
-      
-      // Only trigger refresh if we're within 1 second of the scheduled time
-      // This prevents any drift that might occur from setTimeout/setInterval inaccuracies
-      if (timeUntilNextRefresh <= 1000) {
-        refreshAllWallets();
-        startTime = now;
-        nextRefreshTime = startTime + CACHE_DURATION;
-      }
-    } catch (error) {
-      console.error('Error in cache refresh monitor:', error);
-    }
-  }, CACHE_CHECK_INTERVAL);
-}
-
-// Payment verification constants
-const PAYMENT_POLL_INITIAL_DELAY = 1000; // Start polling every 1 second
-const PAYMENT_POLL_MAX_DELAY = 15000; // Maximum 15 seconds between polls
-const PAYMENT_POLL_MAX_TIME = 15 * 60 * 1000; // 15 minutes total polling time
-const PAYMENT_POLL_BACKOFF_FACTOR = 1.2; // Increase delay by 20% each time
-
-async function pollPaymentStatus(paymentId, modal) {
-  let attempts = 0;
-  const startTime = Date.now();
-  
-  const checkStatus = async () => {
-    attempts++;
-    
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Server error (${response.status})`);
-      }
-      
-      const { verified, used, message, txHash } = await response.json();
-      const statusDiv = modal.querySelector('.payment-status');
-
-      if (verified) {
-        if (used) {
-          showError('This payment has already been used.');
-          modal.remove();
-          return true;
-        }
-
-        // Store verification in local storage so we can resume if needed
-        await chrome.storage.local.set({
-          [`payment_${paymentId}`]: {
-            verified: true,
-            message,
-            txHash,
-            timestamp: Date.now()
-          }
-        });
-
-        // Update status and add slots
-        if (statusDiv) {
-          statusDiv.innerHTML = `
-            <div style="color: var(--success-color);">
-              <i class="fas fa-check-circle"></i> ${message || 'Payment verified!'}
-            </div>
-            ${txHash ? `
-            <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary); word-break: break-all;">
-              Transaction: ${txHash}
-            </div>
-            ` : ''}
-          `;
-          statusDiv.className = 'payment-status success';
-        }
-        
-        const { availableSlots } = await chrome.storage.sync.get('availableSlots');
-        await chrome.storage.sync.set({
-          availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
-        });
-        await updateStorageUsage();
-
-        showSuccess('Payment verified! Your slots have been added and synced across all your devices.');
-        
-        // Close modal after success
-        setTimeout(() => {
-          modal.remove();
-          updateUI();
-        }, 3000);
-        
-        return true;
-      }
-      
-      // Check if we've exceeded max polling time
-      if (Date.now() - startTime >= PAYMENT_POLL_MAX_TIME) {
-        if (statusDiv) {
-          statusDiv.innerHTML = `
-            <div style="color: var(--error-color);">
-              <i class="fas fa-exclamation-circle"></i> Verification timeout
-            </div>
-            <div style="margin-top: 8px; font-size: 12px;">
-              You can close this window and check again later using the "Check Payment" button.
-            </div>
-          `;
-          statusDiv.className = 'payment-status error';
-        }
-        return true;
-      }
-      
-      // Update status message with attempt count
-      if (statusDiv) {
-        statusDiv.textContent = `Checking payment status (attempt ${attempts})...`;
-      }
-      
-      // Calculate next delay with exponential backoff
-      const nextDelay = Math.min(
-        PAYMENT_POLL_INITIAL_DELAY * Math.pow(PAYMENT_POLL_BACKOFF_FACTOR, attempts),
-        PAYMENT_POLL_MAX_DELAY
-      );
-      
-      setTimeout(checkStatus, nextDelay);
-      return false;
-    } catch (error) {
-      console.error('Error checking payment status:', error);
-      const statusDiv = modal.querySelector('.payment-status');
-      if (statusDiv) {
-        statusDiv.innerHTML = `
-          <div style="color: var(--error-color);">
-            <i class="fas fa-exclamation-circle"></i> ${error.message}
-          </div>
-          <div style="margin-top: 8px; font-size: 12px;">
-            Will retry in a few seconds...
-          </div>
-        `;
-      }
-      
-      // Retry after a delay on error
-      setTimeout(checkStatus, 5000);
-      return false;
-    }
-  };
-  
-  checkStatus();
-}
-
-// Add function to check saved payment status
-async function checkSavedPayment(paymentId) {
-  try {
-    const data = await chrome.storage.local.get(`payment_${paymentId}`);
-    const paymentData = data[`payment_${paymentId}`];
-    
-    if (paymentData && paymentData.verified) {
-      return {
-        verified: true,
-        message: paymentData.message,
-        txHash: paymentData.txHash,
-        timestamp: paymentData.timestamp
-      };
-    }
-  } catch (error) {
-    console.error('Error checking saved payment:', error);
-  }
-  return null;
-}
-
-function formatTokenQuantity(amount, decimals = 0) {
-  try {
-    // For NFTs just return 1
-    if (amount === '1' && decimals === 0) {
-      return '1';
-    }
-
-    // Convert to float and apply decimals
-    const floatAmount = parseFloat(amount) / (10 ** decimals);
-    
-    // Format with 6 decimal places and remove trailing zeros
-    const formatted = floatAmount.toFixed(6).replace(/\.?0+$/, '');
-    console.log('Formatting token:', { amount, decimals, result: formatted });
-    return formatted;
-  } catch (error) {
-    console.error('Error formatting token quantity:', error);
-    return amount.toString();
-  }
-}
-
-// Update initiatePayment to include a "Check Payment" button
-async function initiatePayment() {
-  try {
-    // Check if enough time has passed since last attempt
-    const now = Date.now();
-    const timeSinceLastAttempt = now - lastPaymentAttempt;
-    
-    if (timeSinceLastAttempt < PAYMENT_COOLDOWN) {
-      const waitTime = Math.ceil((PAYMENT_COOLDOWN - timeSinceLastAttempt) / 1000);
-      showError(`Please wait ${waitTime} seconds before trying again`);
-      return;
-    }
-    
-    lastPaymentAttempt = now;
-    
-    // Get extension's installation ID
-    const installId = chrome.runtime.id;
-    
-    // Get payment details from server
-    const response = await fetch(`${API_BASE_URL}/api/initiate-payment`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        installId
-      })
-    });
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        throw new Error('Rate limit exceeded. Please wait a moment before trying again.');
-      }
-      throw new Error('Failed to initiate payment');
-    }
-    
-    const { paymentId, address, adaAmount, boneAmount } = await response.json();
-    
-    // Show payment details modal
-    const modal = createModal(`
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Buy More Slots</h2>
-          <div class="payment-status">Waiting for payment...</div>
-        </div>
-        
-        <div class="payment-details">
-          <div class="amount-display">
-            <div class="payment-amount">${boneAmount} BONE</div>
-            <div class="payment-amount">₳ ${adaAmount} ADA</div>
-          </div>
-          
-          <div class="address-container">
-            <span class="label">Send to:</span>
-            <div class="address-box">
-              ${address}
-              <button class="copy-button" title="Copy address">
-                <i class="fas fa-copy"></i>
-              </button>
-            </div>
-          </div>
-          <div class="payment-note">
-            Important: Send EXACTLY ₳ ${adaAmount} ADA along with ${boneAmount} BONE tokens.
-            This specific ADA amount helps us identify your payment.
-          </div>
-        </div>
-
-        <div class="modal-buttons">
-          <button class="modal-button secondary">Cancel</button>
-          <button class="modal-button primary">Check Status</button>
-        </div>
-      </div>
-    `);
-
-    document.body.appendChild(modal);
-    
-    // Set up webhook message listener
-    const messageListener = async (message) => {
-      if (message.type === 'payment_verified' && message.paymentId === paymentId) {
-        const statusDiv = modal.querySelector('.payment-status');
-        statusDiv.innerHTML = `
-          <div style="color: var(--success-color);">
-            <i class="fas fa-check-circle"></i> ${message.message || 'Payment verified!'}
-          </div>
-          ${message.txHash ? `
-          <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary); word-break: break-all;">
-            Transaction: ${message.txHash}
-          </div>
-          ` : ''}
-        `;
-        
-        const { availableSlots } = await chrome.storage.sync.get('availableSlots');
-        await chrome.storage.sync.set({
-          availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
-        });
-        await updateStorageUsage();
-
-        showSuccess('Payment verified! Your slots have been added and synced across all your devices.');
-        setTimeout(() => {
-          modal.remove();
-          updateUI();
-        }, 3000);
-        
-        chrome.runtime.onMessage.removeListener(messageListener);
-      }
-    };
-    
-    chrome.runtime.onMessage.addListener(messageListener);
-
-    const cancelButton = modal.querySelector('.modal-button.secondary');
-    const checkButton = modal.querySelector('.modal-button.primary');
-    const copyButton = modal.querySelector('.copy-button');
-    const addressBox = modal.querySelector('.address-box');
-
-    cancelButton.addEventListener('click', () => {
-      chrome.runtime.onMessage.removeListener(messageListener);
-      modal.remove();
-    });
-
-    copyButton.addEventListener('click', () => {
-      copyToClipboard(address, addressBox);
-    });
-
-    checkButton.addEventListener('click', async () => {
-      const statusDiv = modal.querySelector('.payment-status');
-      statusDiv.textContent = 'Checking payment status...';
-      checkButton.disabled = true;
-      
-      try {
-        const savedPayment = await checkSavedPayment(paymentId);
-        if (savedPayment) {
-          statusDiv.innerHTML = `
-            <div style="color: var(--success-color);">
-              <i class="fas fa-check-circle"></i> ${savedPayment.message || 'Payment verified!'}
-            </div>
-            ${savedPayment.txHash ? `
-            <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary); word-break: break-all;">
-              Transaction: ${savedPayment.txHash}
-            </div>
-            ` : ''}
-          `;
-          setTimeout(() => modal.remove(), 3000);
-          return;
-        }
-
-        const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to verify payment');
-        }
-        
-        const { verified, used, message } = await response.json();
-
-        if (verified) {
-          if (used) {
-            statusDiv.textContent = 'This payment has already been used.';
-            showError('This payment has already been used.');
-            setTimeout(() => modal.remove(), 2000);
-            return;
-          }
-          statusDiv.textContent = 'Payment verified! Processing...';
-        } else {
-          statusDiv.textContent = 'Payment not detected yet. Please wait for confirmation.';
-        }
-      } catch (error) {
-        console.error('Error checking payment:', error);
-        statusDiv.innerHTML = `
-          <div style="color: var(--error-color);">
-            <i class="fas fa-exclamation-circle"></i> ${error.message}
-          </div>
-        `;
-      } finally {
-        checkButton.disabled = false;
-      }
-    });
-  } catch (error) {
-    console.error('Payment error:', error);
-    showError(error.message || 'Failed to initiate payment');
-  }
-}
-
-function formatBalance(balance) {
-  // Convert null/undefined to 0
-  const rawBalance = balance || 0;
-  
-  // Convert from lovelace to ADA (1 ADA = 1,000,000 lovelace)
-  const adaValue = parseFloat(rawBalance) / 1000000;
-  
-  // Format with 2 decimal places
-  return `₳ ${adaValue.toLocaleString(undefined, { 
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })}`;
-}
-
-function updateSlotCount() {
-  const slotCountElement = document.getElementById('slotCount');
-  const maxSlots = MAX_FREE_SLOTS;
-  const currentSlots = wallets ? wallets.length : 0;
-  
-  if (slotCountElement) {
-    slotCountElement.textContent = `${currentSlots}/${maxSlots}`;
-  }
-}
-
-function createModal(html) {
-  // Remove any existing modals
-  const existingModals = document.querySelectorAll('.modal');
-  existingModals.forEach(modal => modal.remove());
-  
-  // Create new modal
-  const modal = document.createElement('div');
-  modal.className = 'modal';
-  modal.innerHTML = html;
-  
-  // Add click handler to close on background click
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) {
-      modal.remove();
-    }
-  });
-  
-  window.onclick = (event) => {
-    if (event.target === modal) {
-      modal.style.display = 'none';
-    }
-  };
-  
-  // Add to document
-  document.body.appendChild(modal);
-  
-  // Add keydown handler for Escape key
-  const escHandler = (e) => {
-    if (e.key === 'Escape') {
-      modal.remove();
-      document.removeEventListener('keydown', escHandler);
-    }
-  };
-  document.addEventListener('keydown', escHandler);
-  
-  return modal;
-}
-
-async function pollPaymentStatus(paymentId, modal) {
-  let attempts = 0;
-  const startTime = Date.now();
-  
-  const checkStatus = async () => {
-    attempts++;
-    
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Server error (${response.status})`);
-      }
-      
-      const { verified, used, message, txHash } = await response.json();
-      const statusDiv = modal.querySelector('.payment-status');
-
-      if (verified) {
-        if (used) {
-          showError('This payment has already been used.');
-          modal.remove();
-          return true;
-        }
-
-        // Store verification in local storage so we can resume if needed
-        await chrome.storage.local.set({
-          [`payment_${paymentId}`]: {
-            verified: true,
-            message,
-            txHash,
-            timestamp: Date.now()
-          }
-        });
-
-        // Update status and add slots
-        if (statusDiv) {
-          statusDiv.innerHTML = `
-            <div style="color: var(--success-color);">
-              <i class="fas fa-check-circle"></i> ${message || 'Payment verified!'}
-            </div>
-            ${txHash ? `
-            <div style="margin-top: 8px; font-size: 12px; color: var(--text-secondary); word-break: break-all;">
-              Transaction: ${txHash}
-            </div>
-            ` : ''}
-          `;
-          statusDiv.className = 'payment-status success';
-        }
-        
-        const { availableSlots } = await chrome.storage.sync.get('availableSlots');
-        await chrome.storage.sync.set({
-          availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
-        });
-        await updateStorageUsage();
-
-        showSuccess('Payment verified! Your slots have been added and synced across all your devices.');
-        
-        // Close modal after success
-        setTimeout(() => {
-          modal.remove();
-          updateUI();
-        }, 3000);
-        
-        return true;
-      }
-      
-      // Check if we've exceeded max polling time
-      if (Date.now() - startTime >= PAYMENT_POLL_MAX_TIME) {
-        if (statusDiv) {
-          statusDiv.innerHTML = `
-            <div style="color: var(--error-color);">
-              <i class="fas fa-exclamation-circle"></i> Verification timeout
-            </div>
-            <div style="margin-top: 8px; font-size: 12px;">
-              You can close this window and check again later using the "Check Payment" button.
-            </div>
-          `;
-          statusDiv.className = 'payment-status error';
-        }
-        return true;
-      }
-      
-      // Update status message with attempt count
-      if (statusDiv) {
-        statusDiv.textContent = `Checking payment status (attempt ${attempts})...`;
-      }
-      
-      // Calculate next delay with exponential backoff
-      const nextDelay = Math.min(
-        PAYMENT_POLL_INITIAL_DELAY * Math.pow(PAYMENT_POLL_BACKOFF_FACTOR, attempts),
-        PAYMENT_POLL_MAX_DELAY
-      );
-      
-      setTimeout(checkStatus, nextDelay);
-      return false;
-    } catch (error) {
-      console.error('Error checking payment status:', error);
-      const statusDiv = modal.querySelector('.payment-status');
-      if (statusDiv) {
-        statusDiv.innerHTML = `
-          <div style="color: var(--error-color);">
-            <i class="fas fa-exclamation-circle"></i> ${error.message}
-          </div>
-          <div style="margin-top: 8px; font-size: 12px;">
-            Will retry in a few seconds...
-          </div>
-        `;
-      }
-      
-      // Retry after a delay on error
-      setTimeout(checkStatus, 5000);
-      return false;
-    }
-  };
-  
-  checkStatus();
-}
-
-function formatTokenQuantity(amount, decimals = 0) {
-  try {
-    // For NFTs just return 1
-    if (amount === '1' && decimals === 0) {
-      return '1';
-    }
-
-    // Convert to float and apply decimals
-    const floatAmount = parseFloat(amount) / (10 ** decimals);
-    
-    // Format with 6 decimal places and remove trailing zeros
-    const formatted = floatAmount.toFixed(6).replace(/\.?0+$/, '');
-    console.log('Formatting token:', { amount, decimals, result: formatted });
-    return formatted;
-  } catch (error) {
-    console.error('Error formatting token quantity:', error);
-    return amount.toString();
-  }
-}
-
-// Add event listener for tab switching
-function setupTabSwitching() {
-  document.addEventListener('click', (e) => {
-    const button = e.target.closest('.wallet-nav-button');
-    if (!button) return;
-
-    const walletBox = button.closest('.wallet-item');
-    if (!walletBox) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-    
-    const section = button.getAttribute('data-section');
-
-    // Update button states
-    const navButtons = walletBox.querySelectorAll('.wallet-nav-button');
-    navButtons.forEach(btn => btn.classList.remove('active'));
-    button.classList.add('active');
-
-    // Update section visibility
-    const sections = walletBox.querySelectorAll('.wallet-section');
-    sections.forEach(s => {
-      s.classList.toggle('active', s.getAttribute('data-section') === section);
-    });
-  });
-}
-
-// Add asset search functionality
-function setupAssetSearch() {
-  const searchInput = document.getElementById('assetSearch');
-  if (!searchInput) return;
-
-  let searchTimeout;
-
-  searchInput.addEventListener('input', (e) => {
-    clearTimeout(searchTimeout);
-    
-    searchTimeout = setTimeout(() => {
-      const searchTerm = e.target.value.toLowerCase().trim();
-      console.log('Searching for:', searchTerm);
-      
-      const walletItems = document.querySelectorAll('.wallet-item');
-      let hasVisibleWallets = false;
-
-      walletItems.forEach(walletItem => {
-        const walletIndex = walletItem.getAttribute('data-index');
-        const wallet = wallets[walletIndex];
-        
-        if (!wallet || !wallet.assets) {
-          walletItem.classList.add('hidden');
-          return;
-        }
-
-        // Filter the wallet's assets
-        const matchingAssets = wallet.assets.filter(asset => {
-          const assetName = (asset.name || '').toLowerCase();
-          const assetUnit = (asset.unit || '').toLowerCase();
-          const assetPolicy = (asset.policyId || '').toLowerCase();
-          const assetFingerprint = (asset.fingerprint || '').toLowerCase();
-          
-          return assetName.includes(searchTerm) || 
-                 assetUnit.includes(searchTerm) || 
-                 assetPolicy.includes(searchTerm) ||
-                 assetFingerprint.includes(searchTerm);
-        });
-
-        const hasMatchingAsset = matchingAssets.length > 0;
-
-        if (searchTerm === '') {
-          walletItem.classList.remove('hidden');
-          hasVisibleWallets = true;
-          
-          // Reset asset visibility
-          walletItem.querySelectorAll('.asset-thumbnail').forEach(asset => {
-            asset.classList.remove('hidden');
-          });
-        } else if (hasMatchingAsset) {
-          walletItem.classList.remove('hidden');
-          hasVisibleWallets = true;
-          
-          // Switch to assets tab for this wallet
-          const sections = walletItem.querySelectorAll('.wallet-section');
-          const buttons = walletItem.querySelectorAll('.wallet-nav-button');
-          
-          sections.forEach(s => {
-            s.classList.toggle('active', s.getAttribute('data-section') === 'assets');
-          });
-          
-          buttons.forEach(btn => {
-            btn.classList.toggle('active', btn.getAttribute('data-section') === 'assets');
-          });
-
-          // Switch global tab to assets
-          const globalTabs = document.querySelectorAll('.global-tab-btn');
-          globalTabs.forEach(tab => {
-            tab.classList.toggle('active', tab.getAttribute('data-section') === 'assets');
-          });
-
-          // Show/hide individual assets based on search
-          walletItem.querySelectorAll('.asset-thumbnail').forEach((assetThumb, i) => {
-            const asset = wallet.assets[i];
-            if (asset) {
-              const assetName = (asset.name || '').toLowerCase();
-              const assetUnit = (asset.unit || '').toLowerCase();
-              const assetPolicy = (asset.policyId || '').toLowerCase();
-              const assetFingerprint = (asset.fingerprint || '').toLowerCase();
-              
-              const matches = assetName.includes(searchTerm) || 
-                            assetUnit.includes(searchTerm) || 
-                            assetPolicy.includes(searchTerm) ||
-                            assetFingerprint.includes(searchTerm);
-              
-              assetThumb.classList.toggle('hidden', !matches);
-            }
-          });
-        } else {
-          walletItem.classList.add('hidden');
-        }
-      });
-
-      // Show/hide no results message
-      let noResultsMsg = document.getElementById('noResultsMsg');
-      if (!hasVisibleWallets && searchTerm !== '') {
-        if (!noResultsMsg) {
-          noResultsMsg = document.createElement('div');
-          noResultsMsg.id = 'noResultsMsg';
-          noResultsMsg.className = 'no-results-message';
-          noResultsMsg.textContent = 'No wallets found with matching assets';
-          document.getElementById('walletList').appendChild(noResultsMsg);
-        }
-      } else if (noResultsMsg) {
-        noResultsMsg.remove();
-      }
-    }, 300);
-  });
-
-  // Clear search when switching global tabs
-  document.querySelectorAll('.global-tab-btn').forEach(tab => {
-    tab.addEventListener('click', () => {
-      if (searchInput.value) {
-        searchInput.value = '';
-        searchInput.dispatchEvent(new Event('input'));
-      }
-    });
-  });
-}
-
-
-function handleDragStart(e) {
-  isDragging = true;
-  draggedItem = this;
-  this.classList.add('dragging');
-  e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', this.getAttribute('data-index'));
-}
-
-function handleDragEnd(e) {
-  isDragging = false;
-  this.classList.remove('dragging');
-  document.querySelectorAll('.wallet-item').forEach(item => {
-    item.classList.remove('drag-over');
-  });
-  draggedItem = null;
-}
-
-function handleDragOver(e) {
-  if (e.preventDefault) {
-    e.preventDefault();
-  }
-  e.dataTransfer.dropEffect = 'move';
-  return false;
-}
-
-function handleDragEnter(e) {
-  this.classList.add('drag-over');
-}
-
-function handleDragLeave(e) {
-  this.classList.remove('drag-over');
-}
-
-async function handleDrop(e) {
-  e.stopPropagation();
-  e.preventDefault();
-  
-  if (draggedItem === this) return;
-  
-  this.classList.remove('drag-over');
-  
-  const fromIndex = parseInt(draggedItem.getAttribute('data-index'));
-  const toIndex = parseInt(this.getAttribute('data-index'));
-  
-  if (isNaN(fromIndex) || isNaN(toIndex)) return;
-  
-  // Reorder wallets array
-  const [movedWallet] = wallets.splice(fromIndex, 1);
-  wallets.splice(toIndex, 0, movedWallet);
-  
-  // Save the new order to chrome storage
-  const walletOrder = wallets.map(w => w.address);
-  chrome.storage.sync.set({ wallet_order: walletOrder });
-  await updateStorageUsage();
-
-  // Re-render wallets
-  renderWallets();
-}
-
-// Add global tab functionality
-function setupGlobalTabs() {
-  const globalTabs = document.querySelectorAll('.global-tab-btn');
-  
-  globalTabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      // Update active state of global tabs
-      globalTabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      
-      // Get all wallet sections
-      const walletItems = document.querySelectorAll('.wallet-item');
-      
-      walletItems.forEach(wallet => {
-        // Get all sections in this wallet
-        const sections = wallet.querySelectorAll('.wallet-section');
-        const buttons = wallet.querySelectorAll('.wallet-nav-button');
-        
-        // Update sections visibility
-        sections.forEach(s => {
-          s.classList.toggle('active', s.getAttribute('data-section') === tab.dataset.section);
-        });
-        
-        // Update nav buttons state
-        buttons.forEach(btn => {
-          btn.classList.toggle('active', btn.getAttribute('data-section') === tab.dataset.section);
-        });
-      });
-    });
-  });
-}
-
-function setupAssetsPanelListeners() {
-  const panel = document.querySelector('.assets-panel');
-  if (!panel) return; // Exit if panel doesn't exist
-
-  const closeBtn = panel.querySelector('.close-assets');
-  const tabs = panel.querySelectorAll('.assets-tab');
-  
-  if (closeBtn) {
-    closeBtn.addEventListener('click', () => {
-      panel.classList.remove('expanded');
-    });
-  }
-
-  tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const currentWallet = panel.dataset.walletIndex;
-      const tabType = tab.dataset.tab;
-      
-      // Update button styles
-      tabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      
-      // Render assets for the selected tab
-      renderAssetsList(currentWallet, tabType);
-    });
-  });
-}
-
-function startCacheRefreshMonitor() {
-  const CACHE_CHECK_INTERVAL = 60000; // Check cache every 60 seconds
-  const CACHE_REFRESH_THRESHOLD = 0; // Removed early refresh trigger
-  
-  // Initialize progress bar
-  const refreshBar = document.querySelector('.refresh-bar');
-  const refreshTimeText = document.getElementById('refreshTime');
-  let startTime = Date.now();
-  let nextRefreshTime = startTime + CACHE_DURATION;
-
-  // Update progress bar every second
-  const updateProgressBar = () => {
-    const now = Date.now();
-    const remaining = nextRefreshTime - now;
-    const progress = Math.max(0, remaining / CACHE_DURATION); // Calculate remaining percentage
-    
-    // Update progress bar with smooth transition
-    refreshBar.style.transition = 'transform 1s linear';
-    refreshBar.style.transform = `scaleX(${progress})`;
-    
-    // Update time text
-    const secondsRemaining = Math.max(0, Math.ceil(remaining / 1000));
-    const minutes = Math.floor(secondsRemaining / 60);
-    const seconds = secondsRemaining % 60;
-    refreshTimeText.textContent = `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
-    
-    // If time's up, refresh all wallets
-    if (remaining <= 0) {
-      refreshAllWallets();
-      startTime = Date.now();
-      nextRefreshTime = startTime + CACHE_DURATION;
-    }
-    
-    // Schedule next update
-    requestAnimationFrame(updateProgressBar);
-  };
-
-  // Function to refresh all wallets
-  const refreshAllWallets = async () => {
-    console.log('Cache duration reached, refreshing all wallets');
-    
-    if (!wallets || wallets.length === 0) {
-      return;
-    }
-
-    // Start refresh animations for all wallets
-    wallets.forEach((_, index) => {
-      const button = document.querySelector(`[data-index="${index}"] .refresh-btn i`);
-      if (button) button.classList.add('rotating');
-    });
-
-    try {
-      // Refresh all wallets in parallel
-      const refreshResults = await Promise.all(
-        wallets.map((_, index) => refreshWallet(index))
-      );
-
-      // If any wallet was updated, save and re-render
-      if (refreshResults.some(result => result)) {
-        await saveWallets();
-        await renderWallets();
-      }
-    } catch (error) {
-      console.error('Error refreshing all wallets:', error);
-    }
-  };
-
-  // Start progress bar animation
-  updateProgressBar();
-
-  // Check for wallets that need immediate refresh
-  setInterval(async () => {
-    try {
-      if (!wallets || wallets.length === 0) return;
-
-      const now = Date.now();
-      const timeUntilNextRefresh = nextRefreshTime - now;
-      
-      // Only trigger refresh if we're within 1 second of the scheduled time
-      // This prevents any drift that might occur from setTimeout/setInterval inaccuracies
-      if (timeUntilNextRefresh <= 1000) {
-        refreshAllWallets();
-        startTime = now;
-        nextRefreshTime = startTime + CACHE_DURATION;
-      }
-    } catch (error) {
-      console.error('Error in cache refresh monitor:', error);
-    }
-  }, CACHE_CHECK_INTERVAL);
 }

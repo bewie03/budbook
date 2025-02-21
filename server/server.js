@@ -121,24 +121,14 @@ function isValidCardanoAddress(address) {
   // Basic validation - let Blockfrost API handle detailed validation
   if (!address || typeof address !== 'string') return false;
   
-  // Check if it starts with a valid mainnet prefix
-  const validMainnetPrefixes = ['addr1'];
-  const hasValidPrefix = validMainnetPrefixes.some(prefix => address.startsWith(prefix));
+  // Just check if it starts with a valid prefix
+  const validPrefixes = ['addr1', 'Ae2', 'DdzFF', 'stake1'];
+  const hasValidPrefix = validPrefixes.some(prefix => address.startsWith(prefix));
   
   // Minimum length check (reasonable minimum for any Cardano address)
   const hasValidLength = address.length >= 50;
 
-  const isValid = hasValidPrefix && hasValidLength;
-  if (!isValid) {
-    console.error('Invalid address format:', {
-      address,
-      hasValidPrefix,
-      hasValidLength,
-      length: address?.length
-    });
-  }
-
-  return isValid;
+  return hasValidPrefix && hasValidLength;
 }
 
 // Helper to safely format token amounts
@@ -382,12 +372,6 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
     
     if (!installId) {
       return res.status(400).json({ error: 'Installation ID is required' });
-    }
-
-    // Validate payment address
-    if (!PAYMENT_ADDRESS || !isValidCardanoAddress(PAYMENT_ADDRESS)) {
-      console.error('Invalid payment address:', PAYMENT_ADDRESS);
-      return res.status(500).json({ error: 'Payment address not properly configured' });
     }
 
     const paymentId = crypto.randomUUID();
@@ -654,43 +638,24 @@ app.post('/webhook', express.json(), async (req, res) => {
 
     // Extract transaction details
     const tx = payload.payload;
-    if (!tx || !tx.outputs || !tx.block_time) {
-      console.error('Invalid webhook payload - missing tx, outputs, or block_time');
+    if (!tx || !tx.outputs) {
+      console.error('Invalid webhook payload - missing tx or outputs');
       return res.status(400).json({ error: 'Invalid payload' });
     }
 
-    // Convert block_time to milliseconds and validate it's not too old
-    const txTimestamp = tx.block_time * 1000;
-    const currentTime = Date.now();
-    const maxAgeMs = 24 * 60 * 60 * 1000; // 24 hours
-    
-    if (currentTime - txTimestamp > maxAgeMs) {
-      console.log('Transaction is too old:', {
-        txTime: new Date(txTimestamp).toISOString(),
-        currentTime: new Date(currentTime).toISOString(),
-        maxAge: '24 hours'
-      });
-      return res.status(200).json({ success: true });
-    }
-
-    // Find the output to our payment address with both ADA and BONE tokens
+    // Find the output to our payment address with BONE tokens
     const paymentOutput = tx.outputs.find(output => 
       output.address === PAYMENT_ADDRESS && 
       output.amount && 
       output.amount.length > 0 &&
-      output.amount.some(asset => asset.unit === 'lovelace') &&
       output.amount.some(asset => asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)
     );
 
     if (!paymentOutput) {
-      console.log('No valid payment output found in transaction');
-      return res.status(200).json({ success: true });
+      console.error('No valid BONE payment to verification address found');
+      console.log('Available outputs:', JSON.stringify(tx.outputs, null, 2));
+      return res.status(400).json({ error: 'No relevant payment found' });
     }
-
-    // Get ADA amount
-    const adaAsset = paymentOutput.amount.find(asset => asset.unit === 'lovelace');
-    const adaAmount = parseInt(adaAsset.quantity);
-    console.log('ADA payment received:', adaAmount / 1000000, 'ADA');
 
     // Get BONE token amount
     const boneAsset = paymentOutput.amount.find(asset => 
@@ -710,37 +675,13 @@ app.post('/webhook', express.json(), async (req, res) => {
       console.log('Checking payment:', key, payment);
       
       if (payment && !payment.verified) {
-        // Check if transaction happened after payment was initiated
-        if (txTimestamp < payment.timestamp) {
-          console.log('Transaction is older than payment request:', {
-            txTime: new Date(txTimestamp).toISOString(),
-            paymentTime: new Date(payment.timestamp).toISOString()
-          });
-          continue;
-        }
-
-        // Check if transaction is too far in the future (potential clock skew)
-        if (txTimestamp > payment.timestamp + maxAgeMs) {
-          console.log('Transaction is too far in the future:', {
-            txTime: new Date(txTimestamp).toISOString(),
-            paymentTime: new Date(payment.timestamp).toISOString(),
-            maxAge: '24 hours'
-          });
-          continue;
-        }
-
-        // Verify both ADA and BONE amounts match exactly
-        if (adaAmount === payment.adaAmount && boneAmount === payment.boneAmount) {
+        // Verify if received amount is at least 100 BONE
+        if (boneAmount >= REQUIRED_BONE_PAYMENT) {
           payment.verified = true;
           payment.txHash = tx.hash;
-          payment.verifiedAt = Date.now();
           await setInCache(key, payment);
           const paymentId = key.split(':')[1];
-          console.log('Payment verified:', {
-            paymentId,
-            txHash: tx.hash,
-            verifiedAt: new Date(payment.verifiedAt).toISOString()
-          });
+          console.log('Payment verified for ID:', paymentId);
           verifiedPayment = true;
           
           // Notify all clients watching this payment
@@ -748,14 +689,10 @@ app.post('/webhook', express.json(), async (req, res) => {
             for (const [clientId, client] of global.clients) {
               if (client.paymentId === paymentId) {
                 try {
-                  client.res.write(`data: ${JSON.stringify({ 
-                    type: 'payment_verified',
-                    message: 'Your payment has been verified! Your slots will be updated shortly.',
-                    paymentId,
-                    txHash: tx.hash
-                  })}\n\n`);
-                } catch (err) {
-                  console.error('Error sending SSE notification:', err);
+                  client.res.write(`data: ${JSON.stringify({ verified: true, used: false })}\n\n`);
+                  console.log('Notified client:', clientId);
+                } catch (error) {
+                  console.error('Error notifying client:', error);
                 }
               }
             }
@@ -766,7 +703,7 @@ app.post('/webhook', express.json(), async (req, res) => {
     }
 
     if (!verifiedPayment) {
-      console.log('No matching unverified payment found for transaction');
+      console.log('No pending payment requests found for this transaction');
     }
 
     res.status(200).json({ success: true });

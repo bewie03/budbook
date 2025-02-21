@@ -36,8 +36,5 @@
       "resources": ["fullview.html", "fullview.js", "styles.css", "icons/*"],
       "matches": ["<all_urls>"]
     }
-  ],
-  "externally_connectable": {
-    "matches": ["https://budbook-2410440cbb61.herokuapp.com/*", "https://api.budbook.io/*"]
-  }
+  ]
 }
