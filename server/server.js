@@ -266,8 +266,7 @@ app.get('/api/wallet/:address', async (req, res) => {
                 // Structure the asset data
                 const asset = {
                     unit: amount.unit,
-                    quantity: formatAmount(amount.quantity, assetInfo.decimals || 0),
-                    decimals: assetInfo.decimals || 0,
+                    quantity: formatAmount(amount.quantity, assetInfo.decimals || 0), 
                     name: metadata.name || onchainMetadata.name || assetInfo.asset_name || amount.unit,
                     ticker: metadata.ticker || onchainMetadata.ticker || null,
                     description: metadata.description || onchainMetadata.description || null,
@@ -282,7 +281,6 @@ app.get('/api/wallet/:address', async (req, res) => {
                     unit: asset.unit,
                     name: asset.name,
                     quantity: asset.quantity,
-                    decimals: asset.decimals,
                     is_nft: asset.is_nft
                 });
 

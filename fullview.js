@@ -1265,7 +1265,7 @@ function createAssetModal() {
       }
 
       // Format the asset information
-      const quantity = formatTokenQuantity(asset.quantity, asset.decimals || 0);
+      const quantity = asset.quantity;
       const ticker = asset.ticker ? ` (${asset.ticker})` : '';
       const displayName = asset.name || 'Unnamed Asset';
       
@@ -1399,8 +1399,7 @@ function showAssetModal(asset) {
   
   // Set name and quantity
   modalName.textContent = asset.name || asset.unit;
-  const quantity = formatTokenQuantity(asset.quantity, asset.decimals || 0);
-  modalAmount.textContent = `Quantity: ${quantity}`;
+  modalAmount.textContent = `Quantity: ${asset.quantity}`;
   
   // Set policy ID
   if (modalPolicy) {
@@ -1431,7 +1430,7 @@ function createAssetCard(asset) {
   
   const amount = document.createElement('div');
   amount.className = 'asset-amount';
-  amount.textContent = formatTokenQuantity(asset.quantity, asset.decimals || 0);
+  amount.textContent = asset.quantity;
   
   info.appendChild(name);
   info.appendChild(amount);
