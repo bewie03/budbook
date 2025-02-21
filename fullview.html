@@ -21,27 +21,107 @@
       flex-direction: column;
       align-items: center;
       gap: 16px;
+      padding: 20px;
+      width: 100%;
+    }
+    .loading-text {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
     }
 
-    .loading-spinner {
-      width: 40px;
-      height: 40px;
-      border: 3px solid rgba(52, 152, 219, 0.1);
-      border-radius: 50%;
-      border-top-color: #3498db;
-      animation: spin 1s linear infinite;
-    }
-
-    @keyframes spin {
-      to {
-        transform: rotate(360deg);
-      }
-    }
-
-    .loading-container p {
+    .loading-text p {
       color: #3498db;
       font-size: 14px;
       margin: 0;
+    }
+
+    .loading-details {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      width: 100%;
+    }
+
+    .shimmer-text {
+      height: 12px;
+      background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+      background-size: 200% 100%;
+      animation: shimmer 2s infinite;
+      border-radius: 4px;
+    }
+
+    .shimmer-text:first-child {
+      width: 70%;
+    }
+
+    .shimmer-text:last-child {
+      width: 40%;
+    }
+
+    @keyframes shimmer {
+      0% {
+        background-position: -200% 0;
+      }
+      100% {
+        background-position: 200% 0;
+      }
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .wallet-item.loading {
+      opacity: 0.9;
+    }
+
+    .wallet-item.loading .wallet-content {
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .loading-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      width: 100%;
+      padding: 40px 0;
+      min-height: 150px;
+    }
+
+    .loading-text {
+      color: #3498db;
+      font-size: 14px;
+      text-align: center;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .wallet-item.loading .wallet-header {
+      opacity: 0.8;
+    }
+
+    .wallet-item.loading .wallet-text {
+      pointer-events: none;
+    }
+
+    .wallet-item.loading .wallet-content {
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    .wallet-item.loading .wallet-header {
+      opacity: 0.9;
     }
 
     .modal {
@@ -596,34 +676,147 @@
     }
 
     /* Loading states */
-    .loading-spinner {
-      display: inline-block;
-      width: 20px;
-      height: 20px;
-      border: 2px solid #f3f3f3;
-      border-top: 2px solid #3498db;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
+    .wallet-item .balance-value.loading {
+      opacity: 0.6;
+      pointer-events: none;
     }
 
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
+    .wallet-item.loading .balance-value {
+      opacity: 0.6;
+      pointer-events: none;
     }
 
     .wallet-box.loading {
       opacity: 0.8;
-      pointer-events: none;
     }
 
-    .wallet-box.loading .balance-display {
+    .wallet-nav {
       display: flex;
-      align-items: center;
       justify-content: center;
+      gap: 8px;
+      padding: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .wallet-nav-button {
+      background: transparent;
+      border: none;
+      color: var(--text-color);
+      opacity: 0.6;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .wallet-nav-button:hover {
+      opacity: 0.8;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .wallet-nav-button.active {
+      opacity: 1;
+      background: rgba(255, 255, 255, 0.1);
     }
 
     .hidden {
       display: none !important;
+    }
+
+    /* Wallet deletion animation */
+    @keyframes fadeOutShrink {
+      0% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+        margin-bottom: 16px;
+      }
+      100% {
+        opacity: 0;
+        transform: scale(0.8) translateY(-20px);
+        margin-bottom: -100%;
+      }
+    }
+
+    .wallet-item.deleting {
+      animation: fadeOutShrink 0.4s ease-out forwards;
+      pointer-events: none;
+    }
+
+    /* Delete confirmation styles */
+    .wallet-item .delete-confirm {
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(40, 44, 52, 0.95);
+      backdrop-filter: blur(4px);
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 10;
+      border-radius: 8px;
+      opacity: 0;
+      transform: scale(0.95);
+      transition: all 0.2s ease-out;
+    }
+
+    .wallet-item .delete-confirm.show {
+      display: flex;
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    .wallet-item .delete-confirm .confirm-text {
+      color: white;
+      font-size: 15px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+
+    .wallet-item .delete-confirm .buttons {
+      display: flex;
+      gap: 8px;
+    }
+
+    .wallet-item .delete-confirm button {
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 14px;
+      transition: all 0.2s;
+      min-width: 80px;
+    }
+
+    .wallet-item .delete-confirm .confirm-delete {
+      background: #ff4757;
+      color: white;
+      box-shadow: 0 2px 4px rgba(255, 71, 87, 0.2);
+    }
+
+    .wallet-item .delete-confirm .confirm-delete:hover {
+      background: #ff6b81;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(255, 71, 87, 0.3);
+    }
+
+    .wallet-item .delete-confirm .cancel-delete {
+      background: rgba(255, 255, 255, 0.1);
+      color: white;
+      backdrop-filter: blur(8px);
+    }
+
+    .wallet-item .delete-confirm .cancel-delete:hover {
+      background: rgba(255, 255, 255, 0.2);
+      transform: translateY(-1px);
+    }
+
+    .wallet-item {
+      position: relative;
     }
   </style>
 </head>
@@ -655,7 +848,7 @@
               <span id="slotCount">0/5</span>
             </div>
             <div class="storage-info">
-              <i class="fas fa-database"></i>Storage: <span id="storageUsed">0%</span>
+              <i class="fas fa-database"></i><span id="storageUsed">0%</span>
             </div>
           </div>
         </div>

@@ -52,6 +52,19 @@ async function fetchWalletData(address) {
     
     const data = await response.json();
     console.log('Received wallet data:', data);
+
+    // Fetch staking info if we have a stake address
+    if (data.stake_address) {
+      try {
+        const stakingResponse = await fetch(`${API_BASE_URL}/api/accounts/${data.stake_address}`);
+        if (stakingResponse.ok) {
+          data.stakingInfo = await stakingResponse.json();
+        }
+      } catch (error) {
+        console.error('Error fetching staking info:', error);
+      }
+    }
+
     return data;
   } catch (error) {
     console.error('Error fetching wallet data:', error);
@@ -181,6 +194,7 @@ async function loadWallets() {
                 address,
                 name: storedData.name || 'Unnamed Wallet',
                 walletType: storedData.walletType || 'None',
+                customIcon: storedData.customIcon,
                 balance: walletData.balance,
                 assets: walletData.assets,
                 stakingInfo: walletData.stakingInfo
@@ -230,7 +244,8 @@ async function saveWallets() {
         new Promise((resolve, reject) => {
           const syncData = {
             name: wallet.name,
-            walletType: wallet.walletType
+            walletType: wallet.walletType,
+            customIcon: wallet.customIcon
           };
 
           chrome.storage.sync.set({ 
@@ -849,91 +864,54 @@ async function addWallet() {
   showMessage('Adding wallet...', 'info');
 
   try {
-    // Add temporary wallet to the list immediately
-    const tempWallet = {
+    // Create the wallet object
+    const newWallet = {
       name,
       address,
       walletType,
-      isLoading: true,
-      balance: '0',
-      assets: []
+      customIcon: walletType === 'Custom' ? customIconData : undefined
     };
-    
-    wallets.push(tempWallet);
-    await saveWallets();
 
-    // Notify fullview to show loading state
+    // First notify fullview that we're adding a wallet
     const fullviewTabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
+    
+    // Send WALLET_ADDED message
     if (fullviewTabs.length > 0) {
-      chrome.tabs.sendMessage(fullviewTabs[0].id, { 
+      await chrome.tabs.sendMessage(fullviewTabs[0].id, {
         type: 'WALLET_ADDED',
-        wallet: {
-          name,
-          address,
-          walletType,
-          isLoading: true,
-          customIcon: walletType === 'Custom' ? customIconData : undefined
-        }
+        wallet: newWallet
       });
     }
 
     // Fetch wallet data
     const data = await fetchWalletData(address);
     
-    // Update the wallet with real data
-    const walletIndex = wallets.findIndex(w => w.address === address);
-    if (walletIndex !== -1) {
-      wallets[walletIndex] = {
-        name,
-        address,
-        walletType,
-        isLoading: false,
-        ...data
-      };
+    // Update wallet with fetched data
+    const completeWallet = {
+      ...newWallet,
+      ...data
+    };
+
+    // Add to wallets array
+    wallets.push(completeWallet);
+    await saveWallets();
+
+    // Send WALLET_UPDATED message
+    if (fullviewTabs.length > 0) {
+      await chrome.tabs.sendMessage(fullviewTabs[0].id, {
+        type: 'WALLET_UPDATED',
+        wallet: completeWallet
+      });
     }
 
-    // Save wallets
-    await saveWallets();
-    
-    // Clear inputs
+    // Clear inputs and show success
     addressInput.value = '';
     nameInput.value = '';
     walletTypeSelect.value = 'None';
-    
-    // Notify fullview to refresh with complete data
-    if (fullviewTabs.length > 0) {
-      chrome.tabs.sendMessage(fullviewTabs[0].id, { 
-        type: 'WALLET_UPDATED',
-        wallet: wallets[walletIndex]
-      });
-    }
-
-    // Show success message
     showMessage('Wallet added successfully!', 'success');
     updateUI();
 
-    // Refresh fullview with complete data
-    if (fullviewTabs.length > 0) {
-      chrome.tabs.sendMessage(fullviewTabs[0].id, { 
-        action: 'walletLoaded',
-        wallet: wallets[walletIndex]
-      });
-    }
-
-    // Save custom icon if present
-    if (walletType === 'Custom' && customIconData) {
-      await chrome.storage.local.set({
-        [`wallet_icon_${address}`]: customIconData
-      });
-      wallets[walletIndex].customIcon = customIconData;
-    }
   } catch (error) {
-    // Remove temporary wallet if it exists
-    const walletIndex = wallets.findIndex(w => w.address === address);
-    if (walletIndex !== -1) {
-      wallets.splice(walletIndex, 1);
-      await saveWallets();
-    }
     showMessage(error.message || 'Failed to add wallet', 'error');
   } finally {
     addWalletBtn.disabled = false;
