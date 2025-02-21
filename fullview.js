@@ -1325,6 +1325,12 @@ function createAssetModal() {
         ` : ''}
       `;
 
+      console.log('Displaying asset in modal:', {
+        name: asset.name,
+        quantity: asset.quantity,
+        raw: asset
+      });
+
       modalOverlay.style.display = 'flex';
     }
   };
@@ -1399,6 +1405,11 @@ function showAssetModal(asset) {
   
   // Set name and quantity
   modalName.textContent = asset.name || asset.unit;
+  console.log('Displaying asset in modal:', {
+    name: asset.name,
+    quantity: asset.quantity,
+    raw: asset
+  });
   modalAmount.textContent = `Quantity: ${asset.quantity}`;
   
   // Set policy ID

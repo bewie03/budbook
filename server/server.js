@@ -143,11 +143,24 @@ function formatAmount(quantity, decimals) {
       return '1';
     }
 
-    // Convert to float and apply decimals
-    const floatAmount = parseFloat(quantity) / (10 ** decimals);
+    // Convert to BigInt and divide by 10^decimals
+    const rawAmount = BigInt(quantity);
+    const divisor = BigInt(10 ** decimals);
+    const wholePart = rawAmount / divisor;
+    const fractionalPart = rawAmount % divisor;
     
-    // Format with 6 decimal places and remove trailing zeros
-    const result = floatAmount.toFixed(6).replace(/\.?0+$/, '');
+    // Convert to string with proper decimal places
+    let result = wholePart.toString();
+    if (fractionalPart > 0) {
+      // Pad with leading zeros if needed
+      let fractionalStr = fractionalPart.toString().padStart(decimals, '0');
+      // Remove trailing zeros
+      fractionalStr = fractionalStr.replace(/0+$/, '');
+      if (fractionalStr.length > 0) {
+        result += '.' + fractionalStr;
+      }
+    }
+    
     console.log('Formatted result:', result);
     return result;
   } catch (error) {
@@ -233,11 +246,13 @@ app.get('/api/wallet/:address', async (req, res) => {
                     console.log('Cache miss for asset:', amount.unit);
                     // Fetch from Blockfrost if not in cache
                     assetInfo = await fetchBlockfrost(`/assets/${amount.unit}`, 'fetch asset data');
-                    console.log('Asset info from Blockfrost:', assetInfo);
+                    console.log('Raw Blockfrost response:', assetInfo);
+                    console.log('Asset decimals:', assetInfo.decimals);
                     // Cache forever since Cardano assets are immutable
                     await setInCache(cacheKey, assetInfo);
                 } else {
                     console.log('Cache hit for asset:', amount.unit);
+                    console.log('Cached asset info:', assetInfo);
                 }
 
                 // Process metadata like the Discord bot
@@ -267,10 +282,15 @@ app.get('/api/wallet/:address', async (req, res) => {
                     }
                 }
 
+                console.log('Pre-formatting quantity:', {
+                    raw: amount.quantity,
+                    decimals: assetInfo.decimals || 0
+                });
+
                 // Structure the asset data
                 const asset = {
                     unit: amount.unit,
-                    quantity: formatAmount(amount.quantity, assetInfo.decimals || 0), 
+                    quantity: formatAmount(amount.quantity, assetInfo.decimals || 0),
                     name: metadata.name || onchainMetadata.name || assetInfo.asset_name || amount.unit,
                     ticker: metadata.ticker || onchainMetadata.ticker || null,
                     description: metadata.description || onchainMetadata.description || null,
@@ -281,10 +301,11 @@ app.get('/api/wallet/:address', async (req, res) => {
                     is_nft: amount.quantity === '1' || onchainMetadata?.type === 'NFT'
                 };
 
-                console.log('Processed asset:', {
+                console.log('Final asset data:', {
                     unit: asset.unit,
                     name: asset.name,
                     quantity: asset.quantity,
+                    decimals: assetInfo.decimals,
                     is_nft: asset.is_nft
                 });
 
