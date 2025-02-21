@@ -136,6 +136,8 @@ function isValidCardanoAddress(address) {
 // Helper to safely format token amounts
 function formatAmount(quantity, decimals) {
   try {
+    console.log('Formatting amount:', { quantity, decimals });
+    
     // For NFTs just return 1
     if (quantity === '1' && decimals === 0) {
       return '1';
@@ -145,7 +147,9 @@ function formatAmount(quantity, decimals) {
     const floatAmount = parseFloat(quantity) / (10 ** decimals);
     
     // Format with 6 decimal places and remove trailing zeros
-    return floatAmount.toFixed(6).replace(/\.?0+$/, '');
+    const result = floatAmount.toFixed(6).replace(/\.?0+$/, '');
+    console.log('Formatted result:', result);
+    return result;
   } catch (error) {
     console.error('Error formatting amount:', error);
     return quantity.toString();
@@ -290,9 +294,8 @@ app.get('/api/wallet/:address', async (req, res) => {
                 // Add minimal asset data if processing fails
                 assets.push({
                     unit: amount.unit,
-                    quantity: amount.quantity,
+                    quantity: formatAmount(amount.quantity, 0), // Format quantity even in error case
                     name: amount.unit.slice(-amount.unit.length + 56), // Get asset name from unit
-                    decimals: 0,
                     is_nft: amount.quantity === '1'
                 });
             }
