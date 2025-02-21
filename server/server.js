@@ -19,12 +19,11 @@ const port = process.env.PORT || 3000;
 const BLOCKFROST_API_KEY = process.env.BLOCKFROST_API_KEY;
 const BLOCKFROST_BASE_URL = 'https://cardano-mainnet.blockfrost.io/api/v0';
 const PAYMENT_ADDRESS = process.env.PAYMENT_ADDRESS;
-const REQUIRED_PAYMENT = 2000000; // 2 ADA in lovelace
+const REQUIRED_BONE_PAYMENT = parseInt(process.env.REQUIRED_BONE_PAYMENT || 1);
 const BLOCKFROST_WEBHOOK_ID = process.env.BLOCKFROST_WEBHOOK_ID;
 const BLOCKFROST_WEBHOOK_TOKEN = process.env.BLOCKFROST_WEBHOOK_TOKEN;
 const BONE_POLICY_ID = process.env.BONE_POLICY_ID;
 const BONE_ASSET_NAME = process.env.BONE_ASSET_NAME;
-const REQUIRED_BONE_PAYMENT = parseInt(process.env.REQUIRED_BONE_PAYMENT || 1);
 
 // Initialize cache with 1 hour TTL
 const cache = new NodeCache({ stdTTL: 3600 });
@@ -122,14 +121,24 @@ function isValidCardanoAddress(address) {
   // Basic validation - let Blockfrost API handle detailed validation
   if (!address || typeof address !== 'string') return false;
   
-  // Just check if it starts with a valid prefix
-  const validPrefixes = ['addr1', 'Ae2', 'DdzFF', 'stake1'];
-  const hasValidPrefix = validPrefixes.some(prefix => address.startsWith(prefix));
+  // Check if it starts with a valid mainnet prefix
+  const validMainnetPrefixes = ['addr1'];
+  const hasValidPrefix = validMainnetPrefixes.some(prefix => address.startsWith(prefix));
   
   // Minimum length check (reasonable minimum for any Cardano address)
   const hasValidLength = address.length >= 50;
 
-  return hasValidPrefix && hasValidLength;
+  const isValid = hasValidPrefix && hasValidLength;
+  if (!isValid) {
+    console.error('Invalid address format:', {
+      address,
+      hasValidPrefix,
+      hasValidLength,
+      length: address?.length
+    });
+  }
+
+  return isValid;
 }
 
 // Helper to safely format token amounts
@@ -247,9 +256,9 @@ app.get('/api/wallet/:address', async (req, res) => {
                 return 0;
             });
         
-        // Process top 500 assets
+        // Process top 250 assets
         const assetsToProcess = sortedAmounts.slice(0,250);
-        console.log('Processing top 500 assets out of:', sortedAmounts.length);
+        console.log('Processing top 250 assets out of:', sortedAmounts.length);
         
         for (const amount of assetsToProcess) {
             try {
@@ -375,13 +384,24 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
       return res.status(400).json({ error: 'Installation ID is required' });
     }
 
+    // Validate payment address
+    if (!PAYMENT_ADDRESS || !isValidCardanoAddress(PAYMENT_ADDRESS)) {
+      console.error('Invalid payment address:', PAYMENT_ADDRESS);
+      return res.status(500).json({ error: 'Payment address not properly configured' });
+    }
+
     const paymentId = crypto.randomUUID();
+    
+    // Generate random ADA amount between 1.9 and 2.1
+    const adaAmount = (Math.random() * (2.1 - 1.9) + 1.9).toFixed(6);
+    const lovelaceAmount = Math.floor(adaAmount * 1000000); // Convert to lovelace
     
     // Store payment details with installation ID
     const payment = {
       paymentId,
       installId,
-      amount: REQUIRED_BONE_PAYMENT,
+      boneAmount: REQUIRED_BONE_PAYMENT,
+      adaAmount: lovelaceAmount,
       timestamp: Date.now(),
       verified: false,
       used: false
@@ -395,7 +415,9 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
     
     res.json({
       paymentId,
-      address: PAYMENT_ADDRESS
+      address: PAYMENT_ADDRESS,
+      adaAmount: adaAmount,
+      boneAmount: REQUIRED_BONE_PAYMENT
     });
   } catch (error) {
     console.error('Error initiating payment:', error);
@@ -423,6 +445,26 @@ async function verifyPayment(txHash, installId) {
             return false;
         }
 
+        // Get payment details from cache
+        const paymentId = await getFromCache(`install_payment:${installId}`);
+        if (!paymentId) {
+            console.log('No payment ID found for install ID');
+            return false;
+        }
+
+        const payment = await getFromCache(`payment:${paymentId}`);
+        if (!payment) {
+            console.log('No payment details found');
+            return false;
+        }
+
+        // Check ADA amount matches exactly
+        const adaReceived = parseInt(paymentOutput.amount[0].quantity);
+        if (adaReceived !== payment.adaAmount) {
+            console.log('ADA amount mismatch:', { expected: payment.adaAmount, received: adaReceived });
+            return false;
+        }
+
         // Check for BONE token payment
         const boneAsset = paymentOutput.amount.find(asset => 
             asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
@@ -436,7 +478,7 @@ async function verifyPayment(txHash, installId) {
         const boneAmount = parseInt(boneAsset.quantity);
         console.log('BONE payment received:', boneAmount, 'BONE');
 
-        if (boneAmount < REQUIRED_BONE_PAYMENT) {
+        if (boneAmount < payment.boneAmount) {
             console.log('Insufficient BONE payment');
             return false;
         }
@@ -447,27 +489,17 @@ async function verifyPayment(txHash, installId) {
         
         // Check each payment for matching tx hash
         for (const key of keys) {
-            const payment = await getFromCache(key);
-            if (payment && payment.txHash === txHash) {
+            const existingPayment = await getFromCache(key);
+            if (existingPayment && existingPayment.txHash === txHash) {
                 console.log('Payment already processed');
                 return false;
             }
         }
 
-        // Create new payment record
-        const paymentId = crypto.randomBytes(16).toString('hex');
-        const payment = {
-            id: paymentId,
-            txHash,
-            installId,
-            amount: boneAmount,
-            timestamp: Date.now(),
-            used: false
-        };
-
-        // Store payment
+        // Update payment record with tx hash
+        payment.txHash = txHash;
+        payment.verified = true;
         await setInCache(`payment:${paymentId}`, payment, 24 * 60 * 60); // 24 hour TTL
-        await setInCache(`install_payment:${installId}`, paymentId, 24 * 60 * 60);
 
         return true;
     } catch (error) {
@@ -480,13 +512,17 @@ async function verifyPayment(txHash, installId) {
 app.get('/api/verify-payment/:paymentId', async (req, res) => {
   try {
     const { paymentId } = req.params;
+    console.log('Manual verification request for payment:', paymentId);
+    
     const payment = await getFromCache(`payment:${paymentId}`);
 
     if (!payment) {
+      console.log('Payment not found or expired');
       return res.status(404).json({ error: 'Payment request not found or expired' });
     }
 
     if (payment.verified) {
+      console.log('Payment already verified');
       if (payment.used) {
         return res.json({ verified: true, used: true });
       }
@@ -510,15 +546,15 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
 
         // Find output to our address
         const output = txDetails.outputs.find(o => 
-            o.address === PAYMENT_ADDRESS && 
-            o.amount.some(a => a.unit === 'lovelace')
+          o.address === PAYMENT_ADDRESS && 
+          o.amount.some(a => a.unit === 'lovelace')
         );
 
         if (output) {
           const amountAda = parseInt(output.amount.find(a => a.unit === 'lovelace').quantity) / 1000000;
           console.log('Found payment:', amountAda, 'ADA');
 
-          if (amountAda >= parseFloat(payment.amount)) {
+          if (amountAda >= parseFloat(payment.adaAmount / 1000000)) {
             payment.verified = true;
             await setInCache(`payment:${paymentId}`, payment);
             console.log('Payment verified through blockchain check');
@@ -739,7 +775,7 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
           const amountAda = parseInt(output.amount.find(a => a.unit === 'lovelace').quantity) / 1000000;
           console.log('Found payment:', amountAda, 'ADA');
 
-          if (amountAda >= parseFloat(payment.amount)) {
+          if (amountAda >= parseFloat(payment.adaAmount / 1000000)) {
             payment.verified = true;
             await setInCache(`payment:${paymentId}`, payment);
             console.log('Payment verified through blockchain check');
