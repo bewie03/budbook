@@ -35,12 +35,14 @@ let wallets = [];
 let unlockedSlots = 0;
 let selectedCurrency = 'ADA';
 
+const MODAL_Z_INDEX = 999999;
+
 // Cache management
 const ASSET_CACHE_KEY = 'walletpup_asset_cache';
 
 async function getAssetCache() {
   try {
-    const cache = await chrome.storage.sync.get(ASSET_CACHE_KEY);
+    const cache = await chrome.storage.local.get(ASSET_CACHE_KEY);
     return cache[ASSET_CACHE_KEY] || {};
   } catch (error) {
     console.error('Error reading asset cache:', error);
@@ -53,9 +55,9 @@ async function setAssetCache(assetId, data) {
     const cache = await getAssetCache();
     cache[assetId] = {
       data,
-      timestamp: Date.now() // Keep timestamp for debugging purposes
+      timestamp: Date.now()
     };
-    await chrome.storage.sync.set({ [ASSET_CACHE_KEY]: cache });
+    await chrome.storage.local.set({ [ASSET_CACHE_KEY]: cache });
   } catch (error) {
     console.error('Error writing to asset cache:', error);
   }
@@ -157,62 +159,67 @@ async function loadWallets() {
       unlockedSlots = data.unlockedSlots;
     }
 
-    // Load wallets
+    // Load wallets with metadata and cached data
     const tempWallets = {};
+    const walletsNeedingRefresh = [];
+
     for (const address of walletIndex) {
       try {
-        // Load stored metadata first
+        // Load stored metadata
         const storedData = await new Promise((resolve) => {
           chrome.storage.sync.get(`wallet_${address}`, (result) => {
             resolve(result[`wallet_${address}`] || {});
           });
         });
 
-        // Fetch fresh data
-        console.log('Fetching fresh data for wallet:', address);
-        const walletData = await fetchWalletData(address);
-        console.log('Received wallet data:', walletData);
+        // Check local storage cache
+        const cacheKey = `wallet_data_${address}`;
+        const cache = await chrome.storage.local.get(cacheKey);
+        const now = Date.now();
+        
+        let needsRefresh = true;
+        let walletData = {
+          balance: '0',
+          assets: [],
+          stakingInfo: null
+        };
+        
+        if (cache[cacheKey]) {
+          if (now - cache[cacheKey].timestamp < CACHE_DURATION) {
+            // Cache exists and is fresh
+            console.log('Using cached data for', address);
+            walletData = cache[cacheKey].data;
+            needsRefresh = false;
+          } else {
+            // Cache exists but is expired
+            console.log('Cache expired for', address);
+            await chrome.storage.local.remove(cacheKey);
+          }
+        } else {
+          // No cache exists
+          console.log('No cache found for', address);
+        }
 
-        // Store wallet data in temporary object
+        // Initialize wallet with metadata and any cached data
         tempWallets[address] = {
           address,
           name: storedData.name || 'Unnamed Wallet',
           walletType: storedData.walletType || 'None',
-          balance: walletData.balance || 0,
-          assets: (walletData.assets || []).map(asset => ({
-            unit: asset.unit,
-            name: asset.name,
-            fingerprint: asset.fingerprint,
-            quantity: asset.quantity,
-            decimals: asset.decimals,
-            isNFT: isNFT(asset),
-            metadata: asset.metadata,
-            onchainMetadata: asset.onchainMetadata,
-            image: asset.image
-          })),
+          balance: walletData.balance,
+          assets: walletData.assets,
           stakingInfo: walletData.stakingInfo
         };
+
+        if (needsRefresh) {
+          walletsNeedingRefresh.push(address);
+        }
       } catch (error) {
         console.error(`Error loading wallet ${address}:`, error);
-        // Add placeholder with stored metadata
-        const storedData = await new Promise((resolve) => {
-          chrome.storage.sync.get(`wallet_${address}`, (result) => {
-            resolve(result[`wallet_${address}`] || {});
-          });
-        });
-
-        tempWallets[address] = {
-          address,
-          name: storedData.name || 'Unnamed Wallet',
-          walletType: storedData.walletType || 'None',
-          balance: 0,
-          assets: [],
-          error: true
-        };
+        walletsNeedingRefresh.push(address);
       }
     }
 
-    // Order wallets based on saved order, falling back to wallet_index for any new wallets
+    // Order wallets based on saved order
     wallets = [];
     
     // First add wallets in saved order
@@ -223,7 +230,7 @@ async function loadWallets() {
       }
     }
     
-    // Then add any remaining wallets that weren't in the saved order
+    // Then add any remaining wallets
     for (const address of walletIndex) {
       if (tempWallets[address]) {
         wallets.push(tempWallets[address]);
@@ -231,36 +238,45 @@ async function loadWallets() {
     }
 
     console.log('Loaded wallets:', wallets);
-    await renderWallets();
-    await updateStorageUsage();
+    console.log('Wallets needing refresh:', walletsNeedingRefresh);
+    return walletsNeedingRefresh;
   } catch (error) {
     console.error('Error loading wallets:', error);
     showError('Failed to load wallets');
+    return null;
   }
 }
 
 async function saveWallets() {
   try {
-    // Save wallet index (list of addresses)
+    // Save wallet index and order first (these are essential)
     const walletIndex = wallets.map(w => w.address);
-    await chrome.storage.sync.set({ wallet_index: walletIndex });
-
-    // Save wallet order
     const walletOrder = wallets.map(w => w.address);
-    await chrome.storage.sync.set({ wallet_order: walletOrder });
+    
+    await chrome.storage.sync.set({ 
+      wallet_index: walletIndex,
+      wallet_order: walletOrder 
+    });
 
-    // Save only essential metadata for each wallet
-    const savePromises = wallets.map(wallet => {
+    // Save metadata for each wallet with longer delay to avoid quota
+    for (const wallet of wallets) {
       const metadata = {
         name: wallet.name,
         walletType: wallet.walletType,
         address: wallet.address,
         lastUpdated: Date.now()
       };
-      return chrome.storage.sync.set({ [`wallet_${wallet.address}`]: metadata });
-    });
+      
+      try {
+        await chrome.storage.sync.set({ [`wallet_${wallet.address}`]: metadata });
+        // Add a longer delay between writes to avoid hitting quota
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        console.warn(`Failed to save metadata for wallet ${wallet.address}:`, error);
+        // Continue with other wallets even if one fails
+      }
+    }
 
-    await Promise.all(savePromises);
     await updateStorageUsage();
     return true;
   } catch (error) {
@@ -270,17 +286,20 @@ async function saveWallets() {
   }
 }
 
-async function fetchWalletData(address) {
+async function fetchWalletData(address, forceFresh = false) {
   try {
-    // Check cache first
-    const cacheKey = `wallet_data_${address}`;
-    const now = Date.now();
-    const cache = await chrome.storage.local.get(cacheKey);
-    
-    // If we have cached data and it's not expired, use it
-    if (cache[cacheKey] && now - cache[cacheKey].timestamp < CACHE_DURATION) {
-      console.log('Using cached data for', address);
-      return cache[cacheKey].data;
+    // Check cache first (unless forceFresh is true)
+    if (!forceFresh) {
+      const cacheKey = `wallet_data_${address}`;
+      const cache = await chrome.storage.local.get(cacheKey);
+      
+      if (cache[cacheKey]) {
+        const now = Date.now();
+        if (now - cache[cacheKey].timestamp < CACHE_DURATION) {
+          console.log('Using cached data for', address);
+          return cache[cacheKey].data;
+        }
+      }
     }
 
     // If server is not running, return empty data
@@ -316,8 +335,8 @@ async function fetchWalletData(address) {
     }
     
     const walletData = {
-      balance: data.balance,
-      assets: data.assets.map(asset => ({
+      balance: data.balance || '0',
+      assets: (data.assets || []).map(asset => ({
         unit: asset.unit,
         name: asset.name,
         fingerprint: asset.fingerprint,
@@ -332,24 +351,18 @@ async function fetchWalletData(address) {
     };
 
     // Cache the fresh data
+    const cacheKey = `wallet_data_${address}`;
     await chrome.storage.local.set({
       [cacheKey]: {
         data: walletData,
-        timestamp: now
+        timestamp: Date.now()
       }
     });
 
     return walletData;
-
   } catch (error) {
     console.error('Error fetching wallet data:', error);
-    // Return empty data structure on error
-    return {
-      balance: '0',
-      assets: [],
-      stakingInfo: null,
-      error: error.message
-    };
+    throw error;
   }
 }
 
@@ -761,12 +774,17 @@ async function createWalletBox(wallet, index) {
   wallet.assets.forEach(asset => {
     const assetThumbnail = document.createElement('div');
     assetThumbnail.className = `asset-thumbnail ${isNFT(asset) ? 'nft' : 'token'}`;
+    assetThumbnail.style.cursor = 'pointer';
     const imageUrl = getAssetImage(asset);
     assetThumbnail.innerHTML = imageUrl ? `
       <img src="${imageUrl}" alt="${asset.name || asset.unit}">
     ` : `
       <span style="background-color: ${getRandomColor(asset.name)}">${getFirstLetter(asset.name || asset.unit)}</span>
     `;
+    assetThumbnail.addEventListener('click', (e) => {
+      e.stopPropagation();
+      assetModal.show(asset);
+    });
     assetsGrid.appendChild(assetThumbnail);
   });
 
@@ -1045,7 +1063,13 @@ function needsRefresh(wallet) {
 async function refreshWallet(index) {
   try {
     const wallet = wallets[index];
-    if (!wallet) return;
+    if (!wallet) return false;
+
+    // Find and trigger the refresh button animation
+    const refreshButton = document.querySelector(`[data-index="${index}"] .refresh-btn i`);
+    if (refreshButton) {
+      refreshButton.classList.add('rotating');
+    }
 
     // Add loading state
     const walletBox = document.querySelector(`[data-index="${index}"]`);
@@ -1055,149 +1079,292 @@ async function refreshWallet(index) {
 
     // Clear all caches for this wallet
     const walletCacheKey = `wallet_data_${wallet.address}`;
-    const assetCachePattern = `asset_${wallet.address}_*`;
-    
-    // Clear wallet data cache
     await chrome.storage.local.remove(walletCacheKey);
     
-    // Clear asset caches
-    const storage = await chrome.storage.local.get(null);
-    const keysToRemove = Object.keys(storage).filter(key => 
+    // Clear all asset caches
+    const localStorage = await chrome.storage.local.get(null);
+    const keysToRemove = Object.keys(localStorage).filter(key => 
       key.startsWith(`asset_${wallet.address}_`) || 
-      key.startsWith(`metadata_${wallet.address}_`)
+      key.startsWith(`metadata_${wallet.address}_`) ||
+      (key === ASSET_CACHE_KEY && localStorage[key]?.[wallet.address])
     );
     if (keysToRemove.length > 0) {
       await chrome.storage.local.remove(keysToRemove);
     }
 
-    // Fetch data with retry
-    let retries = 3;
-    let error;
-    
-    while (retries > 0) {
-      try {
-        // Fetch wallet data
-        const data = await fetchWalletData(wallet.address);
-        
-        // If we have a stake address, fetch staking info too
-        if (data.stake_address) {
-          try {
-            const stakingInfo = await fetchStakingInfo(data.stake_address);
-            data.stakingInfo = stakingInfo;
-          } catch (e) {
-            console.error('Error fetching staking info:', e);
-          }
-        }
-        
-        // Preserve metadata while updating with new data
-        Object.assign(wallet, {
-          ...data,
-          name: wallet.name
-        });
-        
-        await saveWallets();
-        await renderWallets();
-        return;
-      } catch (error) {
-        error = error;
-        retries--;
-        if (retries > 0 && error.message.includes('Too many requests')) {
-          await wait(1000 * (3 - retries)); // Exponential backoff
-        }
-      }
+    // Force fresh data fetch
+    const data = await fetchWalletData(wallet.address, true);
+    if (!data) {
+      throw new Error('Failed to fetch wallet data');
     }
     
-    throw error;
+    // Update wallet with new data
+    Object.assign(wallet, {
+      balance: data.balance || '0',
+      assets: data.assets || [],
+      stakingInfo: data.stakingInfo,
+      name: wallet.name, // Preserve name
+      walletType: wallet.walletType, // Preserve type
+      lastUpdated: Date.now() // Add timestamp
+    });
+
+    // Save to storage and update UI
+    await saveWallets();
+    await renderWallets();
+    
+    return true;
   } catch (error) {
     console.error('Error refreshing wallet:', error);
     showError(error.message || 'Failed to refresh wallet');
+    return false;
   } finally {
-    // Remove loading state
+    // Remove loading states
     const walletBox = document.querySelector(`[data-index="${index}"]`);
+    const refreshButton = document.querySelector(`[data-index="${index}"] .refresh-btn i`);
     if (walletBox) {
       walletBox.classList.remove('loading');
     }
+    if (refreshButton) {
+      refreshButton.classList.remove('rotating');
+    }
   }
 }
 
-// Rate limiting
-const API_DELAY = 500; // ms between requests
-let lastRequestTime = 0;
+function createAssetModal() {
+  const modalOverlay = document.createElement('div');
+  modalOverlay.className = 'asset-modal-overlay';
+  modalOverlay.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: ${MODAL_Z_INDEX};
+    backdrop-filter: blur(5px);
+  `;
 
-async function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+  const modalContent = document.createElement('div');
+  modalContent.className = 'asset-modal-content';
+  modalContent.style.cssText = `
+    background: var(--bg-secondary);
+    padding: 25px;
+    border-radius: 16px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    overflow-y: auto;
+  `;
 
-async function rateLimitRequest() {
-  const now = Date.now();
-  const timeSinceLastRequest = now - lastRequestTime;
-  if (timeSinceLastRequest < API_DELAY) {
-    await wait(API_DELAY - timeSinceLastRequest);
-  }
-  lastRequestTime = Date.now();
-}
+  const closeButton = document.createElement('button');
+  closeButton.innerHTML = '×';
+  closeButton.style.cssText = `
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: background 0.2s;
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+  `;
 
-// Listen for messages from background script and popup
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'RELOAD_WALLETS') {
-    console.log('Reloading wallets due to update');
-    loadWallets().then(async () => {
-      await updateUI();
-    });
-  }
-  else if (message.action === 'walletLoading') {
-    // Add loading wallet box immediately
-    const wallet = message.wallet;
-    const walletContainer = document.getElementById('walletList');
-    
-    if (walletContainer) {
-      const walletBox = document.createElement('div');
-      walletBox.className = 'wallet-box loading';
-      walletBox.id = `wallet-${wallet.address}`;
+  const imageContainer = document.createElement('div');
+  imageContainer.className = 'asset-modal-image-container';
+  imageContainer.style.cssText = `
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 150px;
+    max-height: 50vh;
+    overflow: hidden;
+    border-radius: 8px;
+  `;
+
+  const assetInfo = document.createElement('div');
+  assetInfo.style.cssText = `
+    color: var(--text-primary);
+    font-size: 14px;
+  `;
+
+  modalContent.appendChild(closeButton);
+  modalContent.appendChild(imageContainer);
+  modalContent.appendChild(assetInfo);
+  modalOverlay.appendChild(modalContent);
+  document.body.appendChild(modalOverlay);
+
+  closeButton.addEventListener('click', () => {
+    modalOverlay.style.display = 'none';
+  });
+
+  modalOverlay.addEventListener('click', (e) => {
+    if (e.target === modalOverlay) {
+      modalOverlay.style.display = 'none';
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modalOverlay.style.display === 'flex') {
+      modalOverlay.style.display = 'none';
+    }
+  });
+
+  return {
+    show: (asset) => {
+      imageContainer.innerHTML = '';
       
-      // Get icon source - handle custom icons
-      let iconSrc = '';
-      if (wallet.walletType === 'Custom' && wallet.customIcon) {
-        iconSrc = wallet.customIcon;
+      const imageUrl = getAssetImage(asset);
+      
+      if (imageUrl) {
+        const img = document.createElement('img');
+        img.src = imageUrl;
+        img.alt = asset.name || asset.unit;
+        img.style.cssText = `
+          max-width: 100%;
+          max-height: 50vh;
+          object-fit: contain;
+          border-radius: 8px;
+        `;
+        imageContainer.appendChild(img);
       } else {
-        iconSrc = WALLET_LOGOS[wallet.walletType] || '';
+        const placeholder = document.createElement('div');
+        placeholder.style.cssText = `
+          width: 150px;
+          height: 150px;
+          background-color: ${getRandomColor(asset.name)};
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 48px;
+          color: white;
+        `;
+        placeholder.textContent = getFirstLetter(asset.name || asset.unit);
+        imageContainer.appendChild(placeholder);
       }
+
+      // Format the asset information
+      const quantity = formatTokenQuantity(asset.quantity, asset.decimals);
+      const ticker = asset.ticker ? ` (${asset.ticker})` : '';
+      const displayName = asset.name || 'Unnamed Asset';
       
-      walletBox.innerHTML = `
-        <div class="wallet-header">
-          <div class="wallet-info">
-            ${iconSrc ? `
-              <img src="${iconSrc}" alt="${wallet.walletType}" class="wallet-icon">
-            ` : ''}
-            <div class="wallet-text">
-              <div class="wallet-name">${wallet.name}</div>
-              <div class="wallet-address">${truncateAddress(wallet.address)}</div>
-            </div>
+      // Create a truncated version of long IDs
+      const truncateId = (id) => {
+        if (!id) return '';
+        if (id.length <= 20) return id;
+        return `${id.slice(0, 8)}...${id.slice(-8)}`;
+      };
+
+      assetInfo.innerHTML = `
+        <div style="
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+          padding-bottom: 15px;
+          margin-bottom: 15px;
+        ">
+          <div style="font-size: 20px; font-weight: 600; margin-bottom: 5px;">
+            ${displayName}${ticker}
+          </div>
+          <div style="font-size: 16px; color: var(--text-secondary);">
+            Quantity: ${quantity}
           </div>
         </div>
-        <p>Fetching wallet data...</p>
+        
+        <div style="
+          display: grid;
+          gap: 12px;
+          font-family: monospace;
+          background: rgba(0, 0, 0, 0.2);
+          padding: 15px;
+          border-radius: 8px;
+        ">
+          ${asset.fingerprint ? `
+            <div>
+              <div style="color: var(--text-secondary); font-size: 12px;">Fingerprint</div>
+              <div style="word-break: break-all">${asset.fingerprint}</div>
+            </div>
+          ` : ''}
+          
+          <div>
+            <div style="color: var(--text-secondary); font-size: 12px;">Asset ID</div>
+            <div style="word-break: break-all">${asset.unit}</div>
+          </div>
+          
+          ${asset.policy ? `
+            <div>
+              <div style="color: var(--text-secondary); font-size: 12px;">Policy ID</div>
+              <div style="word-break: break-all">${asset.policy}</div>
+            </div>
+          ` : ''}
+        </div>
+        
+        ${asset.description ? `
+          <div style="margin-top: 15px; color: var(--text-secondary);">
+            ${asset.description}
+          </div>
+        ` : ''}
       `;
-      
-      walletContainer.appendChild(walletBox);
+
+      modalOverlay.style.display = 'flex';
     }
-  } 
-  else if (message.action === 'walletLoaded') {
-    // Update the loading box with complete data
-    const wallet = message.wallet;
-    const walletBox = document.getElementById(`wallet-${wallet.address}`);
-    if (walletBox) {
-      createWalletBox(wallet, wallets.findIndex(w => w.address === wallet.address))
-        .then(newWalletBox => {
-          walletBox.replaceWith(newWalletBox);
-        });
+  };
+}
+
+// Add this helper function for formatting token quantities
+function formatTokenQuantity(quantity, decimals = 0) {
+  try {
+    if (!quantity) return '0';
+    
+    // Convert to BigInt for precise handling
+    const bigQuantity = BigInt(quantity);
+    
+    // If no decimals or quantity is 1 (NFT), return as is
+    if (decimals === 0 || quantity === '1') {
+      return bigQuantity.toLocaleString();
     }
+    
+    // Calculate divisor (e.g., for 6 decimals: 1000000)
+    const divisor = BigInt(10 ** decimals);
+    
+    // Get whole and decimal parts
+    const wholePart = (bigQuantity / divisor).toString();
+    const decimalPart = (bigQuantity % divisor).toString().padStart(decimals, '0');
+    
+    // Trim trailing zeros in decimal part
+    const trimmedDecimal = decimalPart.replace(/0+$/, '');
+    
+    // Format whole part with commas
+    const formattedWhole = BigInt(wholePart).toLocaleString();
+    
+    // Return formatted number
+    return trimmedDecimal 
+      ? `${formattedWhole}.${trimmedDecimal}`
+      : formattedWhole;
+  } catch (error) {
+    console.error('Error formatting token quantity:', error);
+    return quantity;
   }
-  else if (message.action === 'refresh') {
-    loadWallets().then(async () => {
-      await updateUI();
-    });
-  }
-});
+}
+
+let assetModal = createAssetModal();
 
 // Modal elements
 let modal;
@@ -1300,20 +1467,114 @@ function handleDragEnd(e) {
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     initializeModal(); // Initialize modal first
-    await loadWallets();
     
-    // Auto-refresh all wallets
-    console.log('Auto-refreshing all wallets...');
-    for (let i = 0; i < wallets.length; i++) {
-      await refreshWallet(i);
+    // Load wallets and get list of ones needing refresh
+    const walletsNeedingRefresh = await loadWallets();
+    if (walletsNeedingRefresh === null) return;
+    
+    // Render wallets with any cached data we have
+    await renderWallets();
+    
+    // Find all refresh buttons after rendering
+    const refreshButtons = document.querySelectorAll('.refresh-btn');
+    
+    // Only refresh wallets that need it
+    if (walletsNeedingRefresh.length > 0) {
+      console.log('Refreshing wallets with expired/no cache:', walletsNeedingRefresh);
+      
+      // Start spinning only buttons for wallets being refreshed
+      wallets.forEach((wallet, index) => {
+        if (walletsNeedingRefresh.includes(wallet.address)) {
+          const button = refreshButtons[index];
+          if (button) {
+            const icon = button.querySelector('i');
+            if (icon) icon.classList.add('rotating');
+          }
+        }
+      });
+      
+      // Refresh only the wallets that need it
+      const refreshResults = await Promise.all(
+        wallets.map((wallet, index) => 
+          walletsNeedingRefresh.includes(wallet.address) 
+            ? refreshWallet(index) 
+            : Promise.resolve(false)
+        )
+      );
+      
+      // Save and render if any wallet was updated
+      if (refreshResults.some(result => result)) {
+        await saveWallets();
+        await renderWallets();
+      }
+    } else {
+      console.log('All wallets have valid cache, no refresh needed');
     }
     
+    // Setup remaining UI elements
     setupEventListeners();
     setupAssetsPanelListeners();
     updateUI();
     updateStorageUsage();
+
+    // Start the cache refresh monitor
+    const CACHE_CHECK_INTERVAL = 30000; // Check cache every 30 seconds
+    const CACHE_REFRESH_THRESHOLD = 60000; // Refresh if less than 1 minute left
+    async function startCacheRefreshMonitor() {
+      setInterval(async () => {
+        try {
+          // Skip if no wallets
+          if (!wallets || wallets.length === 0) return;
+
+          const now = Date.now();
+          const walletsToRefresh = [];
+
+          // Check each wallet's cache
+          for (const [index, wallet] of wallets.entries()) {
+            const cacheKey = `wallet_data_${wallet.address}`;
+            const cache = await chrome.storage.local.get(cacheKey);
+
+            if (cache[cacheKey]) {
+              const timeLeft = (cache[cacheKey].timestamp + CACHE_DURATION) - now;
+              
+              // If cache will expire soon, add to refresh list
+              if (timeLeft <= CACHE_REFRESH_THRESHOLD) {
+                console.log(`Cache expiring soon for wallet ${wallet.address}, scheduling refresh`);
+                walletsToRefresh.push(index);
+              }
+            }
+          }
+
+          // Refresh wallets that need it
+          if (walletsToRefresh.length > 0) {
+            console.log('Auto-refreshing wallets with expiring cache:', walletsToRefresh);
+            
+            // Start refresh animations
+            walletsToRefresh.forEach(index => {
+              const button = document.querySelector(`[data-index="${index}"] .refresh-btn i`);
+              if (button) button.classList.add('rotating');
+            });
+
+            // Refresh all expiring wallets in parallel
+            const refreshResults = await Promise.all(
+              walletsToRefresh.map(index => refreshWallet(index))
+            );
+
+            // If any wallet was updated, save and re-render
+            if (refreshResults.some(result => result)) {
+              await saveWallets();
+              await renderWallets();
+            }
+          }
+        } catch (error) {
+          console.error('Error in cache refresh monitor:', error);
+        }
+      }, CACHE_CHECK_INTERVAL);
+    }
+    startCacheRefreshMonitor();
   } catch (error) {
     console.error('Error during initial load:', error);
+    showError('Failed to load wallets');
   }
 });
 
@@ -1782,4 +2043,21 @@ async function updateStorageUsage() {
   } catch (error) {
     console.error('Error updating storage usage:', error);
   }
+}
+
+// Rate limiting
+const API_DELAY = 500; // ms between requests
+let lastRequestTime = 0;
+
+async function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function rateLimitRequest() {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  if (timeSinceLastRequest < API_DELAY) {
+    await wait(API_DELAY - timeSinceLastRequest);
+  }
+  lastRequestTime = Date.now();
 }
