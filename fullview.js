@@ -341,7 +341,6 @@ async function fetchWalletData(address, forceFresh = false) {
         name: asset.name,
         fingerprint: asset.fingerprint,
         quantity: asset.quantity,
-        decimals: asset.decimals,
         isNFT: isNFT(asset),
         metadata: asset.metadata,
         onchainMetadata: asset.onchainMetadata,
