@@ -563,8 +563,21 @@ async function verifyPayment(txHash) {
                 paymentId: key.split(':')[1]
             });
 
-            // Verify the received amount meets or exceeds expected (allow overpayment)
-            if (lovelaceAmount >= payment.adaAmount && boneAmount >= payment.boneAmount) {
+            // Calculate tolerance range (0.1%)
+            const tolerance = Math.floor(payment.adaAmount * 0.001); // 0.1% tolerance
+            const minAcceptableAmount = payment.adaAmount - tolerance;
+            const maxAcceptableAmount = payment.adaAmount + tolerance;
+
+            console.log(' Payment tolerance:', {
+                expected: payment.adaAmount,
+                tolerance,
+                minAcceptable: minAcceptableAmount,
+                maxAcceptable: maxAcceptableAmount,
+                received: lovelaceAmount
+            });
+
+            // Verify the received amount is within tolerance range
+            if (lovelaceAmount >= minAcceptableAmount && lovelaceAmount <= maxAcceptableAmount && boneAmount >= payment.boneAmount) {
                 console.log(' Payment amounts verified:', {
                     adaReceived: lovelaceAmount,
                     adaExpected: payment.adaAmount,
@@ -837,8 +850,21 @@ app.post('/', express.json({
           paymentId: key.split(':')[1]
         });
 
+        // Calculate tolerance range (0.1%)
+        const tolerance = Math.floor(payment.adaAmount * 0.001); // 0.1% tolerance
+        const minAcceptableAmount = payment.adaAmount - tolerance;
+        const maxAcceptableAmount = payment.adaAmount + tolerance;
+
+        console.log(' Payment tolerance:', {
+          expected: payment.adaAmount,
+          tolerance,
+          minAcceptable: minAcceptableAmount,
+          maxAcceptable: maxAcceptableAmount,
+          received: lovelaceAmount
+        });
+
         // Verify the received amount meets or exceeds expected (allow overpayment)
-        if (lovelaceAmount >= payment.adaAmount) {
+        if (lovelaceAmount >= minAcceptableAmount && lovelaceAmount <= maxAcceptableAmount) {
           // Check BONE amount
           const boneAmount = parseInt(paymentOutput.amount.find(asset => 
             asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
