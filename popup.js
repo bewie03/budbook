@@ -467,31 +467,17 @@ function updateUI() {
   }
 }
 
-async function updateSlotDisplay() {
-  try {
-    const slotDisplay = document.getElementById('slotDisplay');
-    if (slotDisplay) {
-      // Get fresh slot count from storage
-      const data = await chrome.storage.sync.get(['unlockedSlots']);
-      unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
-      
-      const usedSlots = wallets.length;
-      slotDisplay.textContent = `${usedSlots}/${unlockedSlots}`;
-      
-      // Update slot warning visibility
-      const slotWarning = document.getElementById('slotWarning');
-      if (slotWarning) {
-        slotWarning.style.display = usedSlots >= unlockedSlots ? 'block' : 'none';
-      }
-
-      // Update Wallets text in header if it exists
-      const walletsHeader = document.querySelector('.wallets-header');
-      if (walletsHeader) {
-        walletsHeader.textContent = `Wallets: ${usedSlots}/${unlockedSlots}`;
-      }
+function updateSlotDisplay() {
+  const slotDisplay = document.getElementById('slotDisplay');
+  if (slotDisplay) {
+    const usedSlots = wallets.length;
+    slotDisplay.textContent = `${usedSlots}/${unlockedSlots}`;
+    
+    // Update slot warning visibility
+    const slotWarning = document.getElementById('slotWarning');
+    if (slotWarning) {
+      slotWarning.style.display = usedSlots >= unlockedSlots ? 'block' : 'none';
     }
-  } catch (error) {
-    console.error('Error updating slot display:', error);
   }
 }
 
@@ -793,39 +779,21 @@ window.addEventListener('unload', cleanup);
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    // Get initial slot count
+    // Get unlocked slots from storage first
+    console.log('Loading unlocked slots...');
     const data = await chrome.storage.sync.get(['unlockedSlots']);
+    console.log('Raw storage data:', data);
     unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
+    console.log('Loaded unlocked slots:', unlockedSlots);
     
-    // Load wallets from storage first
+    // Then initialize everything else
     await loadWallets();
-    
-    // Setup UI
+    updateUI();
     setupEventListeners();
     setupCustomIconUpload();
-    updateUI();
-    updateSlotDisplay();
-    
-    // Add storage change listener
-    chrome.storage.onChanged.addListener((changes, namespace) => {
-      if (namespace === 'sync' && changes.unlockedSlots) {
-        console.log('Slots updated in storage:', changes.unlockedSlots);
-        unlockedSlots = changes.unlockedSlots.newValue || MAX_FREE_SLOTS;
-        updateSlotDisplay();
-      }
-    });
-    
-    // Add message listener for slot updates
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (message.action === 'SLOTS_UPDATED') {
-        console.log('Received slot update:', message.slots);
-        unlockedSlots = message.slots;
-        updateSlotDisplay();
-      }
-    });
   } catch (error) {
-    console.error('Error initializing popup:', error);
-    showError('Failed to initialize. Please try again.');
+    console.error('Error initializing extension:', error);
+    showError('Failed to initialize extension');
   }
 });
 

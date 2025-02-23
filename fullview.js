@@ -2297,48 +2297,91 @@ function setupEventListeners() {
 
 async function init() {
   try {
-    // Get initial slot count
+    console.log('Initializing modal...');
+    initializeModal(); // Initialize modal first
+    
+    console.log('Loading unlocked slots...');
     const data = await chrome.storage.sync.get(['unlockedSlots']);
+    console.log('Raw storage data:', data);
     unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
+    console.log('Loaded unlocked slots:', unlockedSlots);
     
-    // Load wallets and setup UI
-    await loadWallets();
-    renderWallets();
-    updateSlotCount();
+    // Force a clean update of slots in storage to ensure it's correct
+    await chrome.storage.sync.set({ unlockedSlots });
+    console.log('Updated storage with current slots:', unlockedSlots);
     
-    // Setup event handlers
-    setupEventListeners();
-    setupAssetsPanelListeners();
+    console.log('Loading wallets...');
+    // Load wallets and get list of ones needing refresh
+    const walletsNeedingRefresh = await loadWallets();
+    if (walletsNeedingRefresh === null) {
+      console.log('No wallets to refresh');
+      return;
+    }
+    
+    // Update slot UI
+    await updateSlotCount();
+    
+    console.log('Rendering wallets...');
+    // Render wallets with any cached data we have
+    await renderWallets();
+    
+    // Find all refresh buttons after rendering
+    const refreshButtons = document.querySelectorAll('.refresh-btn');
+    
+    // Only refresh wallets that need it
+    if (walletsNeedingRefresh.length > 0) {
+      console.log('Refreshing wallets with expired/no cache:', walletsNeedingRefresh);
+      
+      // Start spinning only buttons for wallets being refreshed
+      wallets.forEach((wallet, index) => {
+        if (walletsNeedingRefresh.includes(wallet.address)) {
+          const button = refreshButtons[index];
+          if (button) {
+            const icon = button.querySelector('i');
+            if (icon) icon.classList.add('rotating');
+          }
+        }
+      });
+      
+      // Refresh only the wallets that need it
+      const refreshResults = await Promise.all(
+        wallets.map((wallet, index) => 
+          walletsNeedingRefresh.includes(wallet.address) 
+            ? refreshWallet(index) 
+            : Promise.resolve(false)
+        )
+      );
+      
+      // Save and re-render if any wallet was updated
+      if (refreshResults.some(result => result)) {
+        await saveWallets();
+        await renderWallets();
+      }
+    } else {
+      console.log('All wallets have valid cache, no refresh needed');
+    }
+    
+    // Setup remaining UI elements
+    console.log('Setting up UI elements...');
     setupGlobalTabs();
     setupAssetSearch();
-    setupBuyButton();
-    
-    // Start cache monitor
     startCacheRefreshMonitor();
+    setupTabSwitching();
     
-    // Setup initial tab state
-    const urlParams = new URLSearchParams(window.location.search);
-    const initialTab = urlParams.get('tab') || 'general';
-    document.querySelector(`[data-tab="${initialTab}"]`)?.click();
+    // Add initial storage update with a small delay to ensure all data is loaded
+    setTimeout(async () => {
+      await updateStorageUsage();
+    }, 1000);
     
+    // Add periodic storage update (every 30 seconds)
+    setInterval(updateStorageUsage, 30000);
+    
+    console.log('Initialization complete!');
   } catch (error) {
-    console.error('Error initializing fullview:', error);
-    showError('Failed to initialize. Please try again.');
+    console.error('Error during initialization:', error);
+    showError('Failed to initialize application');
   }
 }
-
-// Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  console.log('DOMContentLoaded fired');
-  setupEventListeners(); // Setup listeners first
-  initializePage();
-});
-
-window.onload = () => {
-  console.log('window.onload fired');
-  setupEventListeners(); // Setup listeners again in case DOMContentLoaded missed it
-  initializePage();
-};
 
 async function updateSlotCount() {
   try {
@@ -2380,16 +2423,7 @@ async function updateSlotCount() {
 chrome.storage.onChanged.addListener((changes, namespace) => {
   if (namespace === 'sync' && changes.unlockedSlots) {
     console.log('Slots updated in storage:', changes.unlockedSlots);
-    // Update local variable with new value
-    unlockedSlots = changes.unlockedSlots.newValue || MAX_FREE_SLOTS;
     updateSlotCount();
-    
-    // Also refresh wallets to ensure UI is fully up to date
-    loadWallets().then(() => {
-      renderWallets();
-    }).catch(error => {
-      console.error('Error refreshing wallets after slot update:', error);
-    });
   }
 });
 
@@ -2566,20 +2600,11 @@ async function initiatePayment() {
             </div>
           `;
           
-          // Update local variable
+          // Update slots and refresh wallets
           unlockedSlots = paymentStatus.slots;
-          
-          // Refresh UI
           await loadWallets();
           renderWallets();
           updateSlotCount();
-          
-          // Notify other views (like popup) to refresh
-          chrome.runtime.sendMessage({
-            action: 'SLOTS_UPDATED',
-            slots: paymentStatus.slots
-          });
-          
         } catch (error) {
           console.error('Error updating storage or UI:', error);
           showError('Payment verified but there was an error updating your slots. Please refresh the page.');
