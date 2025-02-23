@@ -1794,7 +1794,7 @@ function setupBuyButton() {
     console.log('Adding click handler to button');
     newBuyButton.addEventListener('click', async () => {
       console.log('Button clicked! Creating modal...');
-      
+    
       // Create and show modal
       const modal = document.createElement('div');
       modal.className = 'payment-modal';
@@ -1877,7 +1877,7 @@ function setupBuyButton() {
           })
         });
 
-        if (!response.ok) {
+    if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
           if (response.status === 429) {
             throw new Error('Rate limit exceeded. Please wait a moment before trying again.');
@@ -2066,7 +2066,7 @@ function setupEventListeners() {
     console.log('Adding click handler to button');
     newBuyButton.addEventListener('click', async () => {
       console.log('Button clicked! Creating modal...');
-      
+    
       // Create and show modal
       const modal = document.createElement('div');
       modal.className = 'payment-modal';
@@ -2296,19 +2296,11 @@ function setupEventListeners() {
 }
 
 async function init() {
+  console.log('init() called');
+  
   try {
     console.log('Initializing modal...');
     initializeModal(); // Initialize modal first
-    
-    console.log('Loading unlocked slots...');
-    const data = await chrome.storage.sync.get(['unlockedSlots']);
-    console.log('Raw storage data:', data);
-    unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
-    console.log('Loaded unlocked slots:', unlockedSlots);
-    
-    // Force a clean update of slots in storage to ensure it's correct
-    await chrome.storage.sync.set({ unlockedSlots });
-    console.log('Updated storage with current slots:', unlockedSlots);
     
     console.log('Loading wallets...');
     // Load wallets and get list of ones needing refresh
@@ -2317,9 +2309,6 @@ async function init() {
       console.log('No wallets to refresh');
       return;
     }
-    
-    // Update slot UI
-    await updateSlotCount();
     
     console.log('Rendering wallets...');
     // Render wallets with any cached data we have
@@ -2342,7 +2331,7 @@ async function init() {
           }
         }
       });
-      
+    
       // Refresh only the wallets that need it
       const refreshResults = await Promise.all(
         wallets.map((wallet, index) => 
@@ -2408,14 +2397,11 @@ async function updateSlotCount() {
     usageElements.forEach(element => {
       element.textContent = `${walletCount}/${unlockedSlots}`;
     });
-
-    console.log('Updated slot UI:', {
-      unlockedSlots,
-      walletCount,
-      maxTotal: MAX_TOTAL_SLOTS
-    });
+    
+    return unlockedSlots;
   } catch (error) {
     console.error('Error updating slot count:', error);
+    return MAX_FREE_SLOTS;
   }
 }
 

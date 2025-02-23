@@ -443,27 +443,34 @@ async function refreshWallet(index) {
   }
 }
 
-function updateUI() {
-  const slotsDisplay = document.getElementById('availableSlots');
-  if (slotsDisplay) {
-    const usedSlots = wallets.length;
-    slotsDisplay.textContent = `${usedSlots} / ${unlockedSlots}`;
-  }
-
-  const addWalletBtn = document.getElementById('addWallet');
-  if (addWalletBtn) {
-    addWalletBtn.disabled = wallets.length >= unlockedSlots;
-  }
-
-  const walletTypeSelect = document.getElementById('walletType');
-  if (walletTypeSelect) {
-    walletTypeSelect.innerHTML = renderWalletSelector();
-  }
-
-  // Render wallet list
-  const walletList = document.getElementById('walletList');
-  if (walletList) {
-    walletList.innerHTML = renderWallets();
+async function updateUI() {
+  try {
+    // Get extension ID
+    const extensionId = chrome.runtime.id;
+    console.log('Getting slots for extension ID:', extensionId);
+    
+    // Fetch slots from server
+    const response = await fetch(`${API_BASE_URL}/api/slots/${extensionId}`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch slots');
+    }
+    
+    const data = await response.json();
+    console.log('Server returned slots:', data);
+    
+    // Update storage with new slot count
+    unlockedSlots = data.slots;
+    await chrome.storage.sync.set({ unlockedSlots: data.slots });
+    console.log('Updated storage with new slot count:', data.slots);
+    
+    // Update UI elements
+    const slotsDisplay = document.getElementById('availableSlots');
+    if (slotsDisplay) {
+      const usedSlots = wallets.length;
+      slotsDisplay.textContent = `${usedSlots} / ${unlockedSlots}`;
+    }
+  } catch (error) {
+    console.error('Error updating UI:', error);
   }
 }
 

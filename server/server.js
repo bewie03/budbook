@@ -644,11 +644,26 @@ async function verifyPayment(txHash) {
 app.get('/api/slots/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
+    console.log('Getting slots for user:', userId);
     const slots = await getUserSlots(userId);
+    console.log('Current slots for user:', { userId, slots });
     res.json({ slots });
   } catch (error) {
     console.error('Error getting slots:', error);
     res.status(500).json({ error: 'Failed to get slots' });
+  }
+});
+
+// Get current slot count endpoint
+app.get('/api/slot-count', async (req, res) => {
+  try {
+    const slots = await cache.keys('slots:*');
+    const slotCount = slots.length;
+    console.log('Current slot count:', slotCount);
+    res.json({ slotCount });
+  } catch (error) {
+    console.error('Error getting slot count:', error);
+    res.status(500).json({ error: 'Failed to get slot count' });
   }
 });
 
