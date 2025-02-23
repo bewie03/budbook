@@ -469,6 +469,24 @@ async function updateUI() {
       const usedSlots = wallets.length;
       slotsDisplay.textContent = `${usedSlots} / ${unlockedSlots}`;
     }
+
+    // Update add wallet button state
+    const addWalletBtn = document.getElementById('addWallet');
+    if (addWalletBtn) {
+      addWalletBtn.disabled = wallets.length >= unlockedSlots;
+    }
+
+    // Update wallet type selector
+    const walletTypeSelect = document.getElementById('walletType');
+    if (walletTypeSelect) {
+      walletTypeSelect.innerHTML = renderWalletSelector();
+    }
+
+    // Update wallet list
+    const walletList = document.getElementById('walletList');
+    if (walletList) {
+      walletList.innerHTML = renderWallets();
+    }
   } catch (error) {
     console.error('Error updating UI:', error);
   }
@@ -839,8 +857,12 @@ async function addWallet() {
       return;
     }
     
+    // Get latest unlocked slots from storage
+    const data = await chrome.storage.sync.get(['unlockedSlots']);
+    const currentUnlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
+    
     // Check if we have available slots
-    if (wallets.length >= unlockedSlots) {
+    if (wallets.length >= currentUnlockedSlots) {
       showError('No available slots. Please purchase more slots to add additional wallets.');
       return;
     }
@@ -883,9 +905,8 @@ async function addWallet() {
     customIconData = null;
     
     // Update UI
-    updateUI();
-    
-    showSuccess('Wallet added successfully!');
+    await updateUI();
+    showSuccess('Wallet added successfully');
 
     // Notify fullview to refresh
     chrome.tabs.query({}, function(tabs) {
@@ -896,6 +917,11 @@ async function addWallet() {
       });
     });
 
+    // Close add wallet form
+    const addWalletForm = document.getElementById('addWalletForm');
+    if (addWalletForm) {
+      addWalletForm.style.display = 'none';
+    }
   } catch (error) {
     console.error('Error adding wallet:', error);
     showError(error.message || 'Failed to add wallet');

@@ -660,7 +660,7 @@ async function renderWallets() {
   }
 
   // Update slot count after rendering wallets
-  updateSlotCount();
+  await updateSlotCount();
 }
 
 async function createWalletBox(wallet, index) {
@@ -1214,7 +1214,7 @@ async function messageListener(message, sender, sendResponse) {
         loadWallets().then(async (walletsNeedingRefresh) => {
           await loadWallets();
           renderWallets();
-          updateSlotCount();
+          await updateSlotCount();
           
           // Queue refresh requests for wallets that need it
           for (const address of walletsNeedingRefresh) {
@@ -1235,7 +1235,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('Refreshing all wallets...');
     loadWallets().then(async (walletsNeedingRefresh) => {
       // First load wallets from storage
-      const data = await chrome.storage.sync.get(['wallet_index']);
+      const data = await chrome.storage.sync.get(['wallet_index', 'unlockedSlots', 'slots_version', 'wallet_order']);
       const walletIndex = data.wallet_index || [];
 
       // Load each wallet's data
@@ -1264,7 +1264,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Update UI with new wallet data
       await loadWallets();
       renderWallets();
-      updateSlotCount();
+      await updateSlotCount();
       
       // Queue refresh requests for wallets that need it
       for (const address of walletsNeedingRefresh) {
@@ -1323,8 +1323,8 @@ async function addWallet() {
 
     // Add wallet to list first to show loading state
     wallets.push(newWallet);
-    await renderWallets();
-
+    await renderWallets(); // Show loading state immediately
+    
     // Fetch wallet data
     const data = await fetchWalletData(address, true);
     
@@ -2331,7 +2331,7 @@ async function init() {
           }
         }
       });
-    
+      
       // Refresh only the wallets that need it
       const refreshResults = await Promise.all(
         wallets.map((wallet, index) => 
@@ -2376,32 +2376,22 @@ async function updateSlotCount() {
   try {
     // Get current slots from storage
     const data = await chrome.storage.sync.get(['unlockedSlots']);
-    unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
-
-    // Update all slot count displays
-    const slotCountElements = document.querySelectorAll('.slot-count');
-    slotCountElements.forEach(element => {
-      element.textContent = `${unlockedSlots} slots`;
-    });
-
-    // Update progress bars if they exist
-    const progressBars = document.querySelectorAll('.slot-progress');
-    progressBars.forEach(bar => {
-      const percentage = (unlockedSlots / MAX_TOTAL_SLOTS) * 100;
-      bar.style.width = `${percentage}%`;
-    });
-
-    // Update any slot usage displays
-    const usageElements = document.querySelectorAll('.slot-usage');
-    const walletCount = wallets.length;
-    usageElements.forEach(element => {
-      element.textContent = `${walletCount}/${unlockedSlots}`;
-    });
+    const unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
     
-    return unlockedSlots;
+    // Update UI elements
+    const slotCountElement = document.getElementById('slotCount');
+    const slotProgressBar = document.getElementById('slotProgressBar');
+    
+    if (slotCountElement) {
+      slotCountElement.textContent = `${unlockedSlots} slots`;
+    }
+    
+    if (slotProgressBar) {
+      const percentage = (unlockedSlots / MAX_SLOTS) * 100;
+      slotProgressBar.style.width = `${percentage}%`;
+    }
   } catch (error) {
     console.error('Error updating slot count:', error);
-    return MAX_FREE_SLOTS;
   }
 }
 
@@ -2590,10 +2580,11 @@ async function initiatePayment() {
           unlockedSlots = paymentStatus.slots;
           await loadWallets();
           renderWallets();
-          updateSlotCount();
+          await updateSlotCount();
         } catch (error) {
           console.error('Error updating storage or UI:', error);
-          showError('Payment verified but there was an error updating your slots. Please refresh the page.');
+          // Fallback to polling
+          pollPaymentStatus(data.paymentId, modal);
         }
         
         // Close modal after 5 seconds
@@ -2654,7 +2645,7 @@ async function pollPaymentStatus(paymentId, modal) {
       unlockedSlots = data.slots;
       await loadWallets();
       renderWallets();
-      updateSlotCount();
+      await updateSlotCount();
       
       // Close modal after 2 seconds
       setTimeout(async () => {
@@ -2684,16 +2675,6 @@ function formatBalance(balance) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
-}
-
-function updateSlotCount() {
-  const slotCountElement = document.getElementById('slotCount');
-  const maxSlots = MAX_FREE_SLOTS;
-  const currentSlots = wallets ? wallets.length : 0;
-  
-  if (slotCountElement) {
-    slotCountElement.textContent = `${currentSlots}/${maxSlots}`;
-  }
 }
 
 function createModal(html) {
@@ -2759,7 +2740,7 @@ function pollPaymentStatus(paymentId, modal) {
       unlockedSlots = data.slots;
       await loadWallets();
       renderWallets();
-      updateSlotCount();
+      await updateSlotCount();
       
       // Close modal after 2 seconds
       setTimeout(async () => {
