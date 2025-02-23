@@ -1997,7 +1997,7 @@ function setupBuyButton() {
               showSuccess('Payment verified! Your slots have been added.');
               
               // Close modal after 2 seconds
-              setTimeout(() => {
+              setTimeout(async () => {
                 modal.remove();
                 await loadWallets();
                 renderWallets();
@@ -2269,7 +2269,7 @@ function setupEventListeners() {
               showSuccess('Payment verified! Your slots have been added.');
               
               // Close modal after 2 seconds
-              setTimeout(() => {
+              setTimeout(async () => {
                 modal.remove();
                 await loadWallets();
                 renderWallets();
@@ -2734,7 +2734,7 @@ function pollPaymentStatus(paymentId, modal) {
     attempts++;
     const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
     const data = await response.json();
-    
+
     if (data.verified) {
       eventSource.close();
       
