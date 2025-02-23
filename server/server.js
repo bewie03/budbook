@@ -563,62 +563,57 @@ async function verifyPayment(txHash) {
                 paymentId: key.split(':')[1]
             });
 
-            // Compare raw lovelace values
-            if (lovelaceAmount === payment.adaAmount) {
-                // Check BONE amount
-                const boneAmount = parseInt(paymentOutput.amount.find(asset => 
-                    asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
-                )?.quantity || '0');
-
-                console.log(' BONE amount check:', {
-                    expected: payment.boneAmount,
-                    received: boneAmount
+            // Verify the received amount meets or exceeds expected (allow overpayment)
+            if (lovelaceAmount >= payment.adaAmount && boneAmount >= payment.boneAmount) {
+                console.log(' Payment amounts verified:', {
+                    adaReceived: lovelaceAmount,
+                    adaExpected: payment.adaAmount,
+                    boneReceived: boneAmount,
+                    boneExpected: payment.boneAmount
                 });
 
-                if (boneAmount >= payment.boneAmount) {
-                    console.log(' Payment matched! Updating user slots:', {
-                        userId: payment.userId,
-                        txHash: txHash
-                    });
+                console.log(' Payment matched! Updating user slots:', {
+                    userId: payment.userId,
+                    txHash: txHash
+                });
 
-                    // Mark payment as verified
-                    payment.verified = true;
-                    payment.txHash = txHash;
-                    payment.verifiedAt = Date.now();
-                    await setInCache(key, payment, 24 * 60 * 60);
+                // Mark payment as verified
+                payment.verified = true;
+                payment.txHash = txHash;
+                payment.verifiedAt = Date.now();
+                await setInCache(key, payment, 24 * 60 * 60);
 
-                    // Update user slots
-                    const userId = payment.userId;
-                    const currentSlots = await getUserSlots(userId);
-                    const newSlots = currentSlots + SLOTS_PER_PAYMENT;
-                    await updateUserSlots(userId, SLOTS_PER_PAYMENT);
-                    console.log(' Updated slots:', {
-                        userId,
-                        currentSlots,
-                        newSlots,
-                        added: SLOTS_PER_PAYMENT
-                    });
+                // Update user slots
+                const userId = payment.userId;
+                const currentSlots = await getUserSlots(userId);
+                const newSlots = currentSlots + SLOTS_PER_PAYMENT;
+                await updateUserSlots(userId, SLOTS_PER_PAYMENT);
+                console.log(' Updated slots:', {
+                    userId,
+                    currentSlots,
+                    newSlots,
+                    added: SLOTS_PER_PAYMENT
+                });
 
-                    // Notify clients
-                    if (global.clients) {
-                        for (const [clientId, client] of global.clients) {
-                            if (client.paymentId === key.split(':')[1]) {
-                                try {
-                                    client.res.write(`data: ${JSON.stringify({
-                                        verified: true,
-                                        slots: newSlots,
-                                        txHash: txHash
-                                    })}\n\n`);
-                                } catch (error) {
-                                    console.error('Error notifying client:', error);
-                                }
+                // Notify clients
+                if (global.clients) {
+                    for (const [clientId, client] of global.clients) {
+                        if (client.paymentId === key.split(':')[1]) {
+                            try {
+                                client.res.write(`data: ${JSON.stringify({
+                                    verified: true,
+                                    slots: newSlots,
+                                    txHash: txHash
+                                })}\n\n`);
+                            } catch (error) {
+                                console.error('Error notifying client:', error);
                             }
                         }
                     }
-
-                    paymentVerified = true;
-                    break;
                 }
+
+                paymentVerified = true;
+                break;
             }
         }
 
@@ -842,8 +837,8 @@ app.post('/', express.json({
           paymentId: key.split(':')[1]
         });
 
-        // Compare raw lovelace values
-        if (lovelaceAmount === payment.adaAmount) {
+        // Verify the received amount meets or exceeds expected (allow overpayment)
+        if (lovelaceAmount >= payment.adaAmount) {
           // Check BONE amount
           const boneAmount = parseInt(paymentOutput.amount.find(asset => 
             asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
