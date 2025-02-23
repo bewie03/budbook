@@ -889,11 +889,13 @@ function verifyBlockfrostSignature(signatureHeader, rawPayload, webhookToken) {
       if (version === 'timestamp') continue;
 
       try {
+        // Convert hex strings to buffers for comparison
+        const receivedBuffer = Buffer.from(signature, 'hex');
+        const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+
         // Compare signatures using timing-safe comparison
-        const isValid = crypto.timingSafeEqual(
-          Buffer.from(signature),
-          Buffer.from(expectedSignature)
-        );
+        const isValid = receivedBuffer.length === expectedBuffer.length &&
+          crypto.timingSafeEqual(receivedBuffer, expectedBuffer);
 
         if (isValid) {
           console.log('Valid signature found:', { version });
