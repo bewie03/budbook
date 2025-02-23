@@ -493,25 +493,23 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
 });
 
 // Payment verification function
-async function verifyPayment(txHash, userId) {
+async function verifyPayment(txHash) {
     try {
-        // Get transaction details
-        const txData = await fetchBlockfrost(`/txs/${txHash}/utxos`, 'fetch transaction UTXOs');
-        if (!txData || !txData.outputs) {
-            console.log('No transaction data found');
+        // Get transaction details from Blockfrost
+        const tx = await fetchBlockfrost(`/txs/${txHash}/utxos`, 'verify payment');
+        if (!tx || !tx.outputs) {
+            console.error('Failed to fetch transaction details');
             return false;
         }
 
-        // Find output to our payment address
-        const paymentOutput = txData.outputs.find(output => 
-            output.address === PAYMENT_ADDRESS
-        );
-
+        // Find payment to our address
+        const paymentOutput = tx.outputs.find(output => output.address === PAYMENT_ADDRESS);
         if (!paymentOutput) {
             console.log('No payment to our address found');
             return false;
         }
-
+        console.log(' Found payment to our address:', paymentOutput);
+        
         // Get ADA amount in lovelace (1 ADA = 1,000,000 lovelace)
         const lovelaceAmount = paymentOutput.amount.find(a => a.unit === 'lovelace')?.quantity || '0';
         console.log(' Lovelace amount:', lovelaceAmount);
@@ -520,43 +518,42 @@ async function verifyPayment(txHash, userId) {
         const boneAmount = paymentOutput.amount.find(a => a.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)?.quantity || '0';
         console.log(' BONE amount:', boneAmount);
 
-        // Check if this matches any pending payments
-        const paymentId = await getFromCache(`user_payment:${userId}`);
-        if (paymentId) {
-          const paymentRecord = await getFromCache(`payment:${paymentId}`);
-          if (paymentRecord) {
+        // Get all payment keys to find matching payment
+        const keys = await cache.keys('payment:*');
+        console.log(' Found payment keys:', keys);
+
+        // Check each payment record
+        for (const key of keys) {
+            const paymentRecord = await getFromCache(key);
+            if (!paymentRecord) continue;
+
             console.log(' Checking payment record:', {
-              expected: paymentRecord.adaAmount,
-              received: lovelaceAmount,
-              userId: paymentRecord.userId
+                expected: paymentRecord.adaAmount,
+                received: lovelaceAmount,
+                userId: paymentRecord.userId
             });
+
+            // Skip if already verified
+            if (paymentRecord.verified || paymentRecord.txHash) {
+                console.log(' Payment already verified');
+                continue;
+            }
 
             // Verify payment amount matches (comparing as strings since these are large numbers)
             if (paymentRecord.adaAmount.toString() === lovelaceAmount.toString() && 
                 paymentRecord.boneAmount.toString() === boneAmount.toString()) {
-              // Get all payment keys from cache
-              const keys = await cache.keys('payment:*');
-              console.log('Found payment keys:', keys);
-              
-              // Check each payment for matching tx hash
-              for (const key of keys) {
-                const existingPayment = await getFromCache(key);
-                if (existingPayment && existingPayment.txHash === txHash) {
-                  console.log('Payment already processed');
-                  return false;
-                }
-              }
-
-              // Update payment record with tx hash
-              paymentRecord.txHash = txHash;
-              paymentRecord.verified = true;
-              await setInCache(`payment:${paymentId}`, paymentRecord, 24 * 60 * 60); // 24 hour TTL
-
-              return true;
+                
+                // Update payment record with tx hash
+                paymentRecord.txHash = txHash;
+                paymentRecord.verified = true;
+                await setInCache(key, paymentRecord, 24 * 60 * 60); // 24 hour TTL
+                
+                console.log(' Payment verified successfully');
+                return true;
             }
-          }
         }
 
+        console.log(' No matching unverified payment found');
         return false;
     } catch (error) {
         console.error('Error verifying payment:', error);
@@ -731,11 +728,11 @@ app.post('/', express.json({
 
       console.log(' Found payment to our address:', paymentOutput);
 
-      // Get ADA amount
-      const adaAmount = parseInt(paymentOutput.amount.find(a => a.unit === 'lovelace').quantity) / 1000000;
-      console.log(' ADA amount:', adaAmount);
+      // Get lovelace amount (raw ADA value)
+      const lovelaceAmount = parseInt(paymentOutput.amount.find(a => a.unit === 'lovelace').quantity);
+      console.log(' Lovelace amount:', lovelaceAmount);
 
-      // Find pending payment with this ADA amount
+      // Find pending payment with this lovelace amount
       const keys = await cache.keys('payment:*');
       for (const key of keys) {
         const payment = await getFromCache(key);
@@ -743,11 +740,12 @@ app.post('/', express.json({
 
         console.log(' Checking payment record:', {
           expected: payment.adaAmount,
-          received: adaAmount,
+          received: lovelaceAmount,
           userId: payment.userId
         });
 
-        if (adaAmount === payment.adaAmount) {
+        // Compare raw lovelace values
+        if (lovelaceAmount === payment.adaAmount) {
           // Check BONE amount
           const boneAmount = parseInt(paymentOutput.amount.find(asset => 
             asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
