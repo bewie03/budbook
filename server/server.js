@@ -608,25 +608,22 @@ async function verifyPayment(txHash) {
                     added: SLOTS_PER_PAYMENT
                 });
 
-                // Update unlocked slots in chrome.storage.sync
-                chrome.storage.sync.set({ unlockedSlots: newSlots });
-
                 // Notify clients
                 if (global.clients) {
-                    for (const [clientId, client] of global.clients) {
-                        if (client.paymentId === key.split(':')[1]) {
-                            try {
-                                client.res.write(`data: ${JSON.stringify({
-                                    verified: true,
-                                    slots: newSlots,
-                                    txHash: txHash,
-                                    message: `Added ${SLOTS_PER_PAYMENT} slots. New total: ${newSlots} slots`
-                                })}\n\n`);
-                            } catch (error) {
-                                console.error('Error notifying client:', error);
-                            }
-                        }
+                  for (const [clientId, client] of global.clients) {
+                    if (client.paymentId === key.split(':')[1]) {
+                      try {
+                        client.res.write(`data: ${JSON.stringify({
+                          verified: true,
+                          slots: newSlots,
+                          txHash: txHash,
+                          message: `Added ${SLOTS_PER_PAYMENT} slots. New total: ${newSlots} slots`
+                        })}\n\n`);
+                      } catch (error) {
+                        console.error('Error notifying client:', error);
+                      }
                     }
+                  }
                 }
 
                 paymentVerified = true;
@@ -903,9 +900,6 @@ app.post('/', express.json({
               added: SLOTS_PER_PAYMENT
             });
 
-            // Update unlocked slots in chrome.storage.sync
-            chrome.storage.sync.set({ unlockedSlots: newSlots });
-
             // Notify clients
             if (global.clients) {
               for (const [clientId, client] of global.clients) {
@@ -914,7 +908,8 @@ app.post('/', express.json({
                     client.res.write(`data: ${JSON.stringify({
                       verified: true,
                       slots: newSlots,
-                      txHash: txData.tx.hash
+                      txHash: txData.tx.hash,
+                      message: `Added ${SLOTS_PER_PAYMENT} slots. New total: ${newSlots} slots`
                     })}\n\n`);
                   } catch (error) {
                     console.error('Error notifying client:', error);

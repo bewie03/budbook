@@ -2287,50 +2287,6 @@ function setupEventListeners() {
   }
 }
 
-async function updateSlotCount() {
-  try {
-    // Get current slots from storage
-    const data = await chrome.storage.sync.get(['unlockedSlots']);
-    unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
-
-    // Update all slot count displays
-    const slotCountElements = document.querySelectorAll('.slot-count');
-    slotCountElements.forEach(element => {
-      element.textContent = `${unlockedSlots} slots`;
-    });
-
-    // Update progress bars if they exist
-    const progressBars = document.querySelectorAll('.slot-progress');
-    progressBars.forEach(bar => {
-      const percentage = (unlockedSlots / MAX_TOTAL_SLOTS) * 100;
-      bar.style.width = `${percentage}%`;
-    });
-
-    // Update any slot usage displays
-    const usageElements = document.querySelectorAll('.slot-usage');
-    const walletCount = wallets.length;
-    usageElements.forEach(element => {
-      element.textContent = `${walletCount}/${unlockedSlots}`;
-    });
-
-    console.log('Updated slot UI:', {
-      unlockedSlots,
-      walletCount,
-      maxTotal: MAX_TOTAL_SLOTS
-    });
-  } catch (error) {
-    console.error('Error updating slot count:', error);
-  }
-}
-
-// Add listener for storage changes to update UI
-chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === 'sync' && changes.unlockedSlots) {
-    console.log('Slots updated in storage:', changes.unlockedSlots);
-    updateSlotCount();
-  }
-});
-
 async function init() {
   console.log('init() called');
   
@@ -2377,7 +2333,7 @@ async function init() {
         )
       );
       
-      // Save and render if any wallet was updated
+      // Save and re-render if any wallet was updated
       if (refreshResults.some(result => result)) {
         await saveWallets();
         await renderWallets();
@@ -2407,6 +2363,50 @@ async function init() {
     showError('Failed to initialize application');
   }
 }
+
+async function updateSlotCount() {
+  try {
+    // Get current slots from storage
+    const data = await chrome.storage.sync.get(['unlockedSlots']);
+    unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
+
+    // Update all slot count displays
+    const slotCountElements = document.querySelectorAll('.slot-count');
+    slotCountElements.forEach(element => {
+      element.textContent = `${unlockedSlots} slots`;
+    });
+
+    // Update progress bars if they exist
+    const progressBars = document.querySelectorAll('.slot-progress');
+    progressBars.forEach(bar => {
+      const percentage = (unlockedSlots / MAX_TOTAL_SLOTS) * 100;
+      bar.style.width = `${percentage}%`;
+    });
+
+    // Update any slot usage displays
+    const usageElements = document.querySelectorAll('.slot-usage');
+    const walletCount = wallets.length;
+    usageElements.forEach(element => {
+      element.textContent = `${walletCount}/${unlockedSlots}`;
+    });
+
+    console.log('Updated slot UI:', {
+      unlockedSlots,
+      walletCount,
+      maxTotal: MAX_TOTAL_SLOTS
+    });
+  } catch (error) {
+    console.error('Error updating slot count:', error);
+  }
+}
+
+// Add listener for storage changes to update UI
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === 'sync' && changes.unlockedSlots) {
+    console.log('Slots updated in storage:', changes.unlockedSlots);
+    updateSlotCount();
+  }
+});
 
 async function updateStorageUsage() {
   try {
@@ -2522,7 +2522,7 @@ async function initiatePayment() {
       throw new Error(errorData.error || 'Failed to initiate payment');
     }
     
-    const data = await response.json();
+    const { paymentId, address, adaAmount, boneAmount } = await response.json();
     
     // Show payment details modal
     const modal = createModal(`
@@ -2534,19 +2534,19 @@ async function initiatePayment() {
         
         <div class="payment-details">
           <div class="amount-display">
-            <div class="payment-amount">${data.boneAmount} BONE</div>
-            <div class="payment-amount">₳ ${data.adaAmount} ADA</div>
+            <div class="payment-amount">${boneAmount} BONE</div>
+            <div class="payment-amount">₳ ${adaAmount} ADA</div>
           </div>
           
           <div class="address-container">
             <span class="label">Send to:</span>
             <div class="address-box">
-              <code>${data.address}</code>
-              <button class="copy-btn" onclick="copyToClipboard('${data.address}', this)">Copy</button>
+              <code>${address}</code>
+              <button class="copy-btn" onclick="copyToClipboard('${address}', this)">Copy</button>
             </div>
           </div>
           <div class="payment-note">
-            <p>Important: Send EXACTLY ₳ ${data.adaAmount} ADA along with ${data.boneAmount} BONE tokens.</p>
+            <p>Important: Send EXACTLY ₳ ${adaAmount} ADA along with ${boneAmount} BONE tokens.</p>
             <p>The specific ADA amount helps us identify your payment.</p>
           </div>
         </div>
@@ -2554,12 +2554,16 @@ async function initiatePayment() {
     `);
 
     // Setup SSE for real-time updates
-    const eventSource = new EventSource(`${API_BASE_URL}/api/payment-status/${data.paymentId}`);
+    const eventSource = new EventSource(`${API_BASE_URL}/api/payment-status/${paymentId}`);
     
     eventSource.onmessage = async (event) => {
       const paymentStatus = JSON.parse(event.data);
       if (paymentStatus.verified) {
         eventSource.close();
+        
+        // Update storage with new slot count
+        await chrome.storage.sync.set({ unlockedSlots: paymentStatus.slots });
+        console.log('Updated storage with new slot count:', paymentStatus.slots);
         
         // Update UI with success
         const statusDiv = modal.querySelector('.payment-status');
