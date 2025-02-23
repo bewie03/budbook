@@ -414,23 +414,23 @@ app.get('/api/wallet/:address', async (req, res) => {
 // Helper function to get user slots
 async function getUserSlots(userId) {
   try {
-    const slots = await getFromCache(`slots:${userId}`);
-    return slots || MAX_FREE_SLOTS;
+    // We don't store slots on server anymore, just return free slots
+    return MAX_FREE_SLOTS;
   } catch (error) {
     console.error('Error getting user slots:', error);
     return MAX_FREE_SLOTS;
   }
 }
 
-// Helper function to update user slots
-async function updateUserSlots(userId, additionalSlots) {
+// Helper function to calculate new slot count
+async function calculateNewSlots(userId, additionalSlots) {
   try {
-    const currentSlots = await getUserSlots(userId);
+    // We just calculate and return the new slot count, client handles storage
+    const currentSlots = MAX_FREE_SLOTS;  // Default for new payments
     const newSlots = Math.min(currentSlots + additionalSlots, MAX_TOTAL_SLOTS);
-    await setInCache(`slots:${userId}`, newSlots);
     return newSlots;
   } catch (error) {
-    console.error('Error updating user slots:', error);
+    console.error('Error calculating new slots:', error);
     throw error;
   }
 }
@@ -596,18 +596,6 @@ async function verifyPayment(txHash) {
                 payment.verifiedAt = Date.now();
                 await setInCache(key, payment, 24 * 60 * 60);
 
-                // Update user slots
-                const userId = payment.userId;
-                const currentSlots = await getUserSlots(userId);
-                const newSlots = currentSlots + SLOTS_PER_PAYMENT;
-                await updateUserSlots(userId, SLOTS_PER_PAYMENT);
-                console.log(' Updated slots:', {
-                    userId,
-                    currentSlots,
-                    newSlots,
-                    added: SLOTS_PER_PAYMENT
-                });
-
                 // Notify clients
                 if (global.clients) {
                   for (const [clientId, client] of global.clients) {
@@ -615,9 +603,9 @@ async function verifyPayment(txHash) {
                       try {
                         client.res.write(`data: ${JSON.stringify({
                           verified: true,
-                          slots: newSlots,
+                          slots: await calculateNewSlots(payment.userId, SLOTS_PER_PAYMENT),
                           txHash: txHash,
-                          message: `Added ${SLOTS_PER_PAYMENT} slots. New total: ${newSlots} slots`
+                          message: `Added ${SLOTS_PER_PAYMENT} slots. New total: ${await calculateNewSlots(payment.userId, SLOTS_PER_PAYMENT)} slots`
                         })}\n\n`);
                       } catch (error) {
                         console.error('Error notifying client:', error);
@@ -888,18 +876,6 @@ app.post('/', express.json({
             payment.verifiedAt = Date.now();
             await setInCache(key, payment, 24 * 60 * 60);
 
-            // Update user slots
-            const userId = payment.userId;
-            const currentSlots = await getUserSlots(userId);
-            const newSlots = currentSlots + SLOTS_PER_PAYMENT;
-            await updateUserSlots(userId, SLOTS_PER_PAYMENT);
-            console.log(' Updated slots:', {
-              userId,
-              currentSlots,
-              newSlots,
-              added: SLOTS_PER_PAYMENT
-            });
-
             // Notify clients
             if (global.clients) {
               for (const [clientId, client] of global.clients) {
@@ -907,9 +883,9 @@ app.post('/', express.json({
                   try {
                     client.res.write(`data: ${JSON.stringify({
                       verified: true,
-                      slots: newSlots,
+                      slots: await calculateNewSlots(payment.userId, SLOTS_PER_PAYMENT),
                       txHash: txData.tx.hash,
-                      message: `Added ${SLOTS_PER_PAYMENT} slots. New total: ${newSlots} slots`
+                      message: `Added ${SLOTS_PER_PAYMENT} slots. New total: ${await calculateNewSlots(payment.userId, SLOTS_PER_PAYMENT)} slots`
                     })}\n\n`);
                   } catch (error) {
                     console.error('Error notifying client:', error);

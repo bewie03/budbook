@@ -2296,81 +2296,49 @@ function setupEventListeners() {
 }
 
 async function init() {
-  console.log('init() called');
-  
   try {
-    console.log('Initializing modal...');
-    initializeModal(); // Initialize modal first
+    // Get initial slot count
+    const data = await chrome.storage.sync.get(['unlockedSlots']);
+    unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
     
-    console.log('Loading wallets...');
-    // Load wallets and get list of ones needing refresh
-    const walletsNeedingRefresh = await loadWallets();
-    if (walletsNeedingRefresh === null) {
-      console.log('No wallets to refresh');
-      return;
-    }
+    // Load wallets and setup UI
+    await loadWallets();
+    renderWallets();
+    updateSlotCount();
     
-    console.log('Rendering wallets...');
-    // Render wallets with any cached data we have
-    await renderWallets();
-    
-    // Find all refresh buttons after rendering
-    const refreshButtons = document.querySelectorAll('.refresh-btn');
-    
-    // Only refresh wallets that need it
-    if (walletsNeedingRefresh.length > 0) {
-      console.log('Refreshing wallets with expired/no cache:', walletsNeedingRefresh);
-      
-      // Start spinning only buttons for wallets being refreshed
-      wallets.forEach((wallet, index) => {
-        if (walletsNeedingRefresh.includes(wallet.address)) {
-          const button = refreshButtons[index];
-          if (button) {
-            const icon = button.querySelector('i');
-            if (icon) icon.classList.add('rotating');
-          }
-        }
-      });
-      
-      // Refresh only the wallets that need it
-      const refreshResults = await Promise.all(
-        wallets.map((wallet, index) => 
-          walletsNeedingRefresh.includes(wallet.address) 
-            ? refreshWallet(index) 
-            : Promise.resolve(false)
-        )
-      );
-      
-      // Save and re-render if any wallet was updated
-      if (refreshResults.some(result => result)) {
-        await saveWallets();
-        await renderWallets();
-      }
-    } else {
-      console.log('All wallets have valid cache, no refresh needed');
-    }
-    
-    // Setup remaining UI elements
-    console.log('Setting up UI elements...');
+    // Setup event handlers
+    setupEventListeners();
+    setupAssetsPanelListeners();
     setupGlobalTabs();
     setupAssetSearch();
+    setupBuyButton();
+    
+    // Start cache monitor
     startCacheRefreshMonitor();
-    setupTabSwitching();
     
-    // Add initial storage update with a small delay to ensure all data is loaded
-    setTimeout(async () => {
-      await updateStorageUsage();
-    }, 1000);
+    // Setup initial tab state
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialTab = urlParams.get('tab') || 'general';
+    document.querySelector(`[data-tab="${initialTab}"]`)?.click();
     
-    // Add periodic storage update (every 30 seconds)
-    setInterval(updateStorageUsage, 30000);
-    
-    console.log('Initialization complete!');
   } catch (error) {
-    console.error('Error during initialization:', error);
-    showError('Failed to initialize application');
+    console.error('Error initializing fullview:', error);
+    showError('Failed to initialize. Please try again.');
   }
 }
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('DOMContentLoaded fired');
+  setupEventListeners(); // Setup listeners first
+  initializePage();
+});
+
+window.onload = () => {
+  console.log('window.onload fired');
+  setupEventListeners(); // Setup listeners again in case DOMContentLoaded missed it
+  initializePage();
+};
 
 async function updateSlotCount() {
   try {
@@ -2412,7 +2380,16 @@ async function updateSlotCount() {
 chrome.storage.onChanged.addListener((changes, namespace) => {
   if (namespace === 'sync' && changes.unlockedSlots) {
     console.log('Slots updated in storage:', changes.unlockedSlots);
+    // Update local variable with new value
+    unlockedSlots = changes.unlockedSlots.newValue || MAX_FREE_SLOTS;
     updateSlotCount();
+    
+    // Also refresh wallets to ensure UI is fully up to date
+    loadWallets().then(() => {
+      renderWallets();
+    }).catch(error => {
+      console.error('Error refreshing wallets after slot update:', error);
+    });
   }
 });
 
@@ -2569,30 +2546,44 @@ async function initiatePayment() {
       if (paymentStatus.verified) {
         eventSource.close();
         
-        // Update storage with new slot count
-        await chrome.storage.sync.set({ unlockedSlots: paymentStatus.slots });
-        console.log('Updated storage with new slot count:', paymentStatus.slots);
-        
-        // Update UI with success
-        const statusDiv = modal.querySelector('.payment-status');
-        const detailsDiv = modal.querySelector('.payment-details');
-        
-        statusDiv.textContent = 'Payment Successful!';
-        statusDiv.classList.add('success');
-        
-        detailsDiv.innerHTML = `
-          <div class="success-message">
-            <p>Thank you for your payment!</p>
-            <p>You now have ${paymentStatus.slots} slots available.</p>
-            <p>Transaction: <a href="https://cardanoscan.io/transaction/${paymentStatus.txHash}" target="_blank">${paymentStatus.txHash.substring(0,8)}...</a></p>
-          </div>
-        `;
-        
-        // Update slots and refresh wallets
-        unlockedSlots = paymentStatus.slots;
-        await loadWallets();
-        renderWallets();
-        updateSlotCount();
+        try {
+          // Update storage with new slot count
+          await chrome.storage.sync.set({ unlockedSlots: paymentStatus.slots });
+          console.log('Updated storage with new slot count:', paymentStatus.slots);
+          
+          // Update UI with success
+          const statusDiv = modal.querySelector('.payment-status');
+          const detailsDiv = modal.querySelector('.payment-details');
+          
+          statusDiv.textContent = 'Payment Successful!';
+          statusDiv.classList.add('success');
+          
+          detailsDiv.innerHTML = `
+            <div class="success-message">
+              <p>Thank you for your payment!</p>
+              <p>You now have ${paymentStatus.slots} slots available.</p>
+              <p>Transaction: <a href="https://cardanoscan.io/transaction/${paymentStatus.txHash}" target="_blank">${paymentStatus.txHash.substring(0,8)}...</a></p>
+            </div>
+          `;
+          
+          // Update local variable
+          unlockedSlots = paymentStatus.slots;
+          
+          // Refresh UI
+          await loadWallets();
+          renderWallets();
+          updateSlotCount();
+          
+          // Notify other views (like popup) to refresh
+          chrome.runtime.sendMessage({
+            action: 'SLOTS_UPDATED',
+            slots: paymentStatus.slots
+          });
+          
+        } catch (error) {
+          console.error('Error updating storage or UI:', error);
+          showError('Payment verified but there was an error updating your slots. Please refresh the page.');
+        }
         
         // Close modal after 5 seconds
         setTimeout(() => {
@@ -2629,7 +2620,7 @@ async function pollPaymentStatus(paymentId, modal) {
     attempts++;
     const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
     const data = await response.json();
-    
+
     if (data.verified) {
       eventSource.close();
       
@@ -2655,7 +2646,7 @@ async function pollPaymentStatus(paymentId, modal) {
       updateSlotCount();
       
       // Close modal after 2 seconds
-      setTimeout(() => {
+      setTimeout(async () => {
         modal.remove();
         updateUI();
       }, 2000);
@@ -2760,7 +2751,7 @@ function pollPaymentStatus(paymentId, modal) {
       updateSlotCount();
       
       // Close modal after 2 seconds
-      setTimeout(() => {
+      setTimeout(async () => {
         modal.remove();
         updateUI();
       }, 2000);
