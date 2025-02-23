@@ -106,16 +106,17 @@ async function requestPayment() {
         'Origin': chrome.runtime.getURL('')
       },
       body: JSON.stringify({
-        userId: chrome.runtime.id // Temporarily use extension ID as user ID
+        userId: chrome.runtime.id
       })
     });
 
+    const data = await response.json();
+    
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || 'Failed to generate payment request');
+      throw new Error(data.error || `Server error: ${response.status}`);
     }
 
-    const data = await response.json();
+    currentPaymentId = data.paymentId;
     
     // Setup SSE for payment status updates
     if (eventSource) {
@@ -141,6 +142,7 @@ async function requestPayment() {
   } catch (error) {
     console.error('Error requesting payment:', error);
     showError(error.message || 'Failed to initiate payment');
+    throw error; // Re-throw to handle in caller
   }
 }
 
@@ -332,6 +334,28 @@ function showError(message) {
   }, 3000);
 }
 
+function showSuccess(message) {
+  const container = document.getElementById('messageContainer');
+  if (!container) return;
+
+  // Remove any existing messages
+  while (container.firstChild) {
+    container.firstChild.remove();
+  }
+
+  const successDiv = document.createElement('div');
+  successDiv.className = 'message success';
+  successDiv.textContent = message;
+  container.appendChild(successDiv);
+
+  // Auto-remove after 3 seconds
+  setTimeout(() => {
+    if (successDiv.parentNode === container) {
+      successDiv.remove();
+    }
+  }, 3000);
+}
+
 function renderWallets() {
   if (!wallets.length) {
     return '<p class="no-wallets">No wallets added yet</p>';
@@ -431,7 +455,7 @@ function updateUI() {
     addWalletBtn.disabled = wallets.length >= unlockedSlots;
   }
 
-  const walletTypeSelect = document.getElementById('walletTypeSelector');
+  const walletTypeSelect = document.getElementById('walletType');
   if (walletTypeSelect) {
     walletTypeSelect.innerHTML = renderWalletSelector();
   }
@@ -533,7 +557,7 @@ async function handlePaymentSuccess(data) {
 
 function setupEventListeners() {
   // Populate wallet type selector
-  const walletTypeSelect = document.getElementById('walletTypeSelector');
+  const walletTypeSelect = document.getElementById('walletType');
   if (walletTypeSelect) {
     // Clear existing options
     walletTypeSelect.innerHTML = '';
@@ -791,105 +815,80 @@ async function getWalletLogo(walletType, address) {
 }
 
 async function addWallet() {
-  const addressInput = document.getElementById('addressInput');
-  const nameInput = document.getElementById('nameInput');
-  const walletTypeSelect = document.getElementById('walletType');
-  const addButton = document.getElementById('addWallet');
-
   try {
+    const addressInput = document.getElementById('addressInput');
+    const nameInput = document.getElementById('nameInput');
+    const walletTypeSelect = document.getElementById('walletType');
+    
     const address = addressInput.value.trim();
     const name = nameInput.value.trim();
     const walletType = walletTypeSelect.value;
-
-    // Validate inputs
-    if (!address) {
-      showError('Please enter a wallet address');
+    
+    if (!address || !name) {
+      showError('Please fill in all required fields');
       return;
     }
-
-    if (!name) {
-      showError('Please enter a wallet name');
+    
+    // Check if we have available slots
+    if (wallets.length >= unlockedSlots) {
+      showError('No available slots. Please purchase more slots to add additional wallets.');
       return;
     }
-
-    if (name.length > 25) {
-      showError('Wallet name must be 25 characters or less');
-      return;
-    }
-
-    if (!validateAddress(address)) {
-      showError('Please enter a valid Cardano address');
-      return;
-    }
-
-    // Check for duplicate wallet name
-    if (wallets.some(w => w.name.toLowerCase() === name.toLowerCase())) {
-      showError('A wallet with this name already exists');
-      return;
-    }
-
-    // Check for duplicate wallet address
+    
+    // Check for duplicate address
     if (wallets.some(w => w.address === address)) {
       showError('This wallet has already been added');
       return;
     }
-
-    if (wallets.length >= unlockedSlots) {
-      showError('No available slots. Please unlock more slots.');
+    
+    // Check for duplicate name
+    if (wallets.some(w => w.name.toLowerCase() === name.toLowerCase())) {
+      showError('A wallet with this name already exists');
       return;
     }
-
-    addButton.disabled = true;
-    showError('Adding wallet...', 'info');
-
-    // Create the wallet object
-    const newWallet = {
-      name,
-      address,
-      walletType,
-      customIcon: walletType === 'Custom' ? customIconData : null
-    };
-
-    // First notify fullview that we're adding a wallet
-    const fullviewTabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
     
-    // Send WALLET_ADDED message before saving to storage
-    if (fullviewTabs.length > 0) {
-      chrome.tabs.sendMessage(fullviewTabs[0].id, {
-        type: 'WALLET_ADDED',
-        wallet: newWallet
-      });
-    }
-
-    // Add wallet locally and save
+    // Create new wallet object
+    const newWallet = {
+      address,
+      name,
+      walletType,
+      customIcon: walletType === 'Custom' ? customIconData : null,
+      addedAt: Date.now()
+    };
+    
+    // Fetch initial wallet data
+    const walletData = await fetchWalletData(address);
+    Object.assign(newWallet, walletData);
+    
+    // Add to wallets array
     wallets.push(newWallet);
+    
+    // Save to storage
     await saveWallets();
-
-    // Show success and update UI
-    showError('Wallet added successfully!', 'success');
-    updateSlotDisplay();
-
+    
     // Clear form
     addressInput.value = '';
     nameInput.value = '';
     walletTypeSelect.value = 'None';
     customIconData = null;
+    
+    // Update UI
+    updateUI();
+    
+    showSuccess('Wallet added successfully!');
 
-    const selectedIcon = document.getElementById('selectedIcon');
-    if (selectedIcon) {
-      selectedIcon.style.display = 'none';
-    }
-
-    const customIconUpload = document.getElementById('customIconUpload');
-    if (customIconUpload) {
-      customIconUpload.style.display = 'none';
-    }
+    // Notify fullview to refresh
+    chrome.tabs.query({}, function(tabs) {
+      tabs.forEach(function(tab) {
+        if (tab.url && tab.url.includes('fullview.html')) {
+          chrome.tabs.sendMessage(tab.id, { action: 'REFRESH_ALL_WALLETS' });
+        }
+      });
+    });
 
   } catch (error) {
     console.error('Error adding wallet:', error);
-    showError('Failed to add wallet. Please try again.');
-  } finally {
-    addButton.disabled = false;
+    showError(error.message || 'Failed to add wallet');
   }
 }
 

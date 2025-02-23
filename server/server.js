@@ -75,8 +75,35 @@ app.get('/', (req, res) => {
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+app.get('/health', async (req, res) => {
+  try {
+    // Check Blockfrost connection
+    const response = await fetch(`${BLOCKFROST_BASE_URL}/blocks/latest`, {
+      headers: { 
+        'project_id': BLOCKFROST_API_KEY,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error('Blockfrost connection failed');
+    }
+
+    res.status(200).json({ 
+      status: 'ok',
+      blockfrost: 'connected',
+      webhook: {
+        id: BLOCKFROST_WEBHOOK_ID,
+        configured: true
+      }
+    });
+  } catch (error) {
+    console.error('Health check failed:', error);
+    res.status(500).json({ 
+      status: 'error',
+      error: error.message
+    });
+  }
 });
 
 async function fetchBlockfrost(endpoint, errorContext = '') {
@@ -643,131 +670,62 @@ app.get('/api/payment-updates/:paymentId', async (req, res) => {
   });
 });
 
-// Webhook endpoint for payment verification
-app.post('/webhook', express.json(), async (req, res) => {
+// Blockfrost webhook endpoint
+app.post('/webhook', async (req, res) => {
   try {
     // Verify webhook authenticity
-    const webhookId = req.headers['blockfrost-webhook-id'];
-    const signature = req.headers['blockfrost-signature'];
-    
-    if (!webhookId || webhookId !== BLOCKFROST_WEBHOOK_ID) {
-      console.error('Invalid webhook ID');
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    if (!signature || signature !== BLOCKFROST_WEBHOOK_TOKEN) {
-      console.error('Invalid signature');
-      return res.status(401).json({ error: 'Unauthorized' });
+    const webhookToken = req.headers['webhook-token'];
+    if (webhookToken !== BLOCKFROST_WEBHOOK_TOKEN) {
+      console.error('Invalid webhook token');
+      return res.status(401).json({ error: 'Invalid webhook token' });
     }
 
     const payload = req.body;
     console.log('Received webhook payload:', JSON.stringify(payload, null, 2));
 
-    // Extract transaction details and validate timestamp
-    const tx = payload.payload;
-    if (!tx || !tx.outputs || !tx.timestamp) {
-      console.error('Invalid webhook payload - missing required fields');
-      return res.status(400).json({ error: 'Invalid payload' });
-    }
+    // Process each transaction in the payload
+    for (const txData of payload.payload) {
+      const tx = txData.tx;
+      const outputs = txData.outputs;
 
-    // Skip old transactions (older than 15 minutes)
-    const txTimestamp = new Date(tx.timestamp).getTime();
-    const fifteenMinutesAgo = Date.now() - (15 * 60 * 1000);
-    if (txTimestamp < fifteenMinutesAgo) {
-      console.log('Skipping old transaction from:', new Date(txTimestamp).toISOString());
-      return res.status(200).json({ status: 'skipped', reason: 'old_transaction' });
-    }
+      // Find output to our payment address
+      const paymentOutput = outputs.find(output => 
+        output.address === PAYMENT_ADDRESS
+      );
 
-    // Find the output to our payment address with both ADA and BONE tokens
-    const paymentOutput = tx.outputs.find(output => {
-      if (output.address !== PAYMENT_ADDRESS) return false;
+      if (!paymentOutput) {
+        console.log('No payment to our address found');
+        continue;
+      }
+
+      // Check for BONE token payment
+      const bonePayment = paymentOutput.amount.find(asset => 
+        asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
+      );
+
+      if (!bonePayment) {
+        console.log('No BONE token payment found');
+        continue;
+      }
+
+      console.log('Processing payment:', {
+        txHash: tx.hash,
+        amount: bonePayment.quantity,
+        address: paymentOutput.address
+      });
+
+      // Verify the payment
+      const verified = await verifyPayment(tx.hash);
       
-      // Check for both ADA and BONE tokens
-      const hasAda = output.amount.some(asset => asset.unit === 'lovelace');
-      const hasBone = output.amount.some(asset => asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`);
-      
-      return hasAda && hasBone;
-    });
-
-    if (!paymentOutput) {
-      console.error('No valid payment to verification address found');
-      return res.status(200).json({ status: 'skipped', reason: 'no_payment' });
-    }
-
-    // Get ADA and BONE amounts
-    const adaAsset = paymentOutput.amount.find(asset => asset.unit === 'lovelace');
-    const boneAsset = paymentOutput.amount.find(asset => 
-      asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
-    );
-    
-    const adaAmount = parseInt(adaAsset.quantity);
-    const boneAmount = parseInt(boneAsset.quantity);
-    
-    console.log('Payment received:', {
-      ada: adaAmount / 1000000, // Convert lovelace to ADA
-      bone: boneAmount,
-      txHash: tx.hash
-    });
-
-    // Get all payment keys from cache
-    const keys = await cache.keys('payment:*');
-    console.log('Found payment keys:', keys);
-    
-    // Check each payment for matching transaction
-    let verifiedPayment = false;
-    for (const key of keys) {
-      const payment = await getFromCache(key);
-      console.log('Checking payment:', key, payment);
-      
-      if (payment && !payment.verified) {
-        // Verify EXACT amounts match
-        if (boneAmount === payment.boneAmount && adaAmount === payment.adaAmount) {
-          payment.verified = true;
-          payment.txHash = tx.hash;
-          payment.verifiedAt = Date.now();
-          await setInCache(key, payment, 24 * 60 * 60); // 24 hour TTL after verification
-          
-          const paymentId = key.split(':')[1];
-          console.log('Payment verified for ID:', paymentId);
-          verifiedPayment = true;
-
-          // Update slots in cache
-          const currentSlots = await getFromCache(`slots:${payment.userId}`) || MAX_FREE_SLOTS;
-          const newSlots = currentSlots + SLOTS_PER_PAYMENT;
-          await setInCache(`slots:${payment.userId}`, newSlots);
-          
-          // Notify all clients watching this payment
-          if (global.clients) {
-            for (const [clientId, client] of global.clients) {
-              if (client.paymentId === paymentId) {
-                try {
-                  client.res.write(`data: ${JSON.stringify({ 
-                    verified: true,
-                    slots: newSlots,
-                    txHash: tx.hash
-                  })}\n\n`);
-                  console.log('Notified client:', clientId);
-                } catch (error) {
-                  console.error('Error notifying client:', error);
-                }
-              }
-            }
-          }
-          break;
-        } else {
-          console.log('Amount mismatch:', {
-            expected: { ada: payment.adaAmount, bone: payment.boneAmount },
-            received: { ada: adaAmount, bone: boneAmount }
-          });
-        }
+      if (verified) {
+        console.log('Payment verified successfully');
+        // The payment verification will handle slot updates
+      } else {
+        console.log('Payment verification failed');
       }
     }
 
-    if (!verifiedPayment) {
-      console.log('No matching pending payment found for transaction');
-    }
-
-    res.json({ status: 'success', verified: verifiedPayment });
+    res.status(200).json({ status: 'ok' });
   } catch (error) {
     console.error('Error processing webhook:', error);
     res.status(500).json({ error: 'Internal server error' });

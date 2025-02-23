@@ -1208,6 +1208,18 @@ async function messageListener(message, sender, sendResponse) {
           await renderWallets();
         }
         break;
+
+      case 'REFRESH_ALL_WALLETS':
+        console.log('Received refresh request from popup');
+        loadWallets().then(async (walletsNeedingRefresh) => {
+          updateUI();
+          
+          // Queue refresh requests for wallets that need it
+          for (const address of walletsNeedingRefresh) {
+            requestQueue.add(address);
+          }
+        });
+        break;
     }
   } catch (error) {
     console.error('Error handling message:', error);
@@ -1215,7 +1227,50 @@ async function messageListener(message, sender, sendResponse) {
 }
 
 // Add the single message listener
-chrome.runtime.onMessage.addListener(messageListener);
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('Received message in fullview:', message);
+  if (message.action === 'REFRESH_ALL_WALLETS') {
+    console.log('Refreshing all wallets...');
+    loadWallets().then(async (walletsNeedingRefresh) => {
+      // First load wallets from storage
+      const data = await chrome.storage.sync.get(['wallet_index']);
+      const walletIndex = data.wallet_index || [];
+
+      // Load each wallet's data
+      for (const address of walletIndex) {
+        const storedData = await chrome.storage.sync.get(`wallet_${address}`);
+        const walletData = storedData[`wallet_${address}`] || {};
+        const iconData = await chrome.storage.local.get(`wallet_icon_${address}`);
+        
+        // Add or update wallet in the wallets array
+        const existingIndex = wallets.findIndex(w => w.address === address);
+        if (existingIndex !== -1) {
+          wallets[existingIndex] = {
+            ...wallets[existingIndex],
+            ...walletData,
+            customIcon: iconData[`wallet_icon_${address}`]?.customIcon
+          };
+        } else {
+          wallets.push({
+            address,
+            ...walletData,
+            customIcon: iconData[`wallet_icon_${address}`]?.customIcon
+          });
+        }
+      }
+
+      // Update UI with new wallet data
+      updateUI();
+      
+      // Queue refresh requests for wallets that need it
+      for (const address of walletsNeedingRefresh) {
+        requestQueue.add(address);
+      }
+    });
+  }
+  // Must return true if we're using sendResponse asynchronously
+  return true;
+});
 
 async function addWallet() {
   const name = document.getElementById('nameInput').value.trim();
@@ -3075,3 +3130,67 @@ async function handleDrop(e) {
   // Re-render wallets
   renderWallets();
 }
+
+// Add event listeners for refresh buttons
+document.querySelectorAll('.refresh-btn').forEach(button => {
+  button.addEventListener('click', async () => {
+    const index = parseInt(button.closest('.wallet-item').dataset.index);
+    if (!isNaN(index)) {
+      await refreshWallet(index);
+    }
+  });
+});
+
+// Add event listeners for wallet name clicks
+document.querySelectorAll('.wallet-text').forEach(element => {
+  element.addEventListener('click', async () => {
+    const address = element.dataset.address;
+    if (address) {
+      await copyToClipboard(address);
+      showSuccess('Address copied to clipboard!');
+    }
+  });
+});
+
+// Add event listeners for delete buttons
+document.querySelectorAll('.delete-btn').forEach(button => {
+  button.addEventListener('click', () => {
+    const confirmBox = button.nextElementSibling;
+    confirmBox.classList.add('show');
+    
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+      confirmBox.classList.remove('show');
+    }, 3000);
+  });
+});
+
+// Add event listeners for delete confirmations
+document.querySelectorAll('.confirm-delete').forEach(button => {
+  button.addEventListener('click', async () => {
+    const index = parseInt(button.closest('.wallet-item').dataset.index);
+    if (!isNaN(index)) {
+      await deleteWallet(index);
+    }
+  });
+});
+
+// Add event listeners for cancel delete
+document.querySelectorAll('.cancel-delete').forEach(button => {
+  button.addEventListener('click', () => {
+    button.closest('.delete-confirm').classList.remove('show');
+  });
+});
+
+// Try both DOMContentLoaded and window.onload
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('DOMContentLoaded fired');
+  setupEventListeners(); // Setup listeners first
+  initializePage();
+});
+
+window.onload = () => {
+  console.log('window.onload fired');
+  setupEventListeners(); // Setup listeners again in case DOMContentLoaded missed it
+  initializePage();
+};
