@@ -59,7 +59,7 @@ app.use(express.json());
 
 // Test webhook endpoint
 app.post('/test-webhook', express.json(), (req, res) => {
-  console.log('📝 Test webhook received:', {
+  console.log(' Test webhook received:', {
     headers: req.headers,
     body: JSON.stringify(req.body, null, 2)
   });
@@ -719,16 +719,23 @@ function verifyBlockfrostSignature(signatureHeader, payload, webhookToken) {
       return false;
     }
 
-    // Create the string to sign
-    const payloadString = typeof payload === 'string' ? payload : JSON.stringify(payload);
-    const stringToSign = `${timestamp}.${payloadString}`;
+    // Check timestamp tolerance (10 minutes)
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - parseInt(timestamp)) > 600) {
+      console.error('Signature timestamp too old');
+      return false;
+    }
 
-    // Create HMAC
+    // Prepare signature payload exactly as specified by Blockfrost
+    const payloadString = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    const signaturePayload = `${timestamp}.${payloadString}`;
+
+    // Compute expected signature using HMAC-SHA256
     const hmac = crypto.createHmac('sha256', webhookToken);
-    hmac.update(stringToSign);
+    hmac.update(signaturePayload);
     const expectedSignature = hmac.digest('hex');
 
-    // Compare signatures
+    // Compare signatures using timing-safe comparison
     const isValid = crypto.timingSafeEqual(
       Buffer.from(signature),
       Buffer.from(expectedSignature)
@@ -739,7 +746,7 @@ function verifyBlockfrostSignature(signatureHeader, payload, webhookToken) {
         received: signature,
         expected: expectedSignature,
         timestamp,
-        stringToSign: stringToSign.substring(0, 100) + '...' // Log only first 100 chars
+        signaturePayload: signaturePayload.substring(0, 100) + '...' // Log only first 100 chars
       });
     }
 
@@ -752,7 +759,7 @@ function verifyBlockfrostSignature(signatureHeader, payload, webhookToken) {
 
 // Webhook handler
 app.post('/', express.json(), async (req, res) => {
-  console.log('🔔 Webhook received:', {
+  console.log(' Webhook received:', {
     headers: req.headers,
     body: JSON.stringify(req.body, null, 2)
   });
@@ -761,36 +768,36 @@ app.post('/', express.json(), async (req, res) => {
     // Verify webhook signature
     const signatureHeader = req.headers['blockfrost-signature'];
     if (!signatureHeader) {
-      console.error('❌ Missing Blockfrost-Signature header');
+      console.error(' Missing Blockfrost-Signature header');
       return res.status(401).json({ error: 'Missing signature' });
     }
 
     if (!verifyBlockfrostSignature(signatureHeader, req.body, BLOCKFROST_WEBHOOK_TOKEN)) {
-      console.error('❌ Invalid webhook signature');
+      console.error(' Invalid webhook signature');
       return res.status(401).json({ error: 'Invalid signature' });
     }
 
-    console.log('✅ Webhook signature verified');
+    console.log(' Webhook signature verified');
 
     // Process transactions
     const payload = req.body;
     for (const txData of payload.payload) {
-      console.log('📦 Processing transaction:', txData.tx.hash);
+      console.log(' Processing transaction:', txData.tx.hash);
       
       // Find payment to our address
       const outputs = txData.outputs;
       const paymentOutput = outputs.find(output => output.address === PAYMENT_ADDRESS);
       
       if (!paymentOutput) {
-        console.log('⏭️ No payment to our address in this transaction');
+        console.log(' No payment to our address in this transaction');
         continue;
       }
 
-      console.log('💰 Found payment to our address:', paymentOutput);
+      console.log(' Found payment to our address:', paymentOutput);
 
       // Get ADA amount
       const adaAmount = parseInt(paymentOutput.amount.find(a => a.unit === 'lovelace')?.quantity || '0');
-      console.log('💵 ADA amount:', adaAmount / 1000000);
+      console.log(' ADA amount:', adaAmount / 1000000);
 
       // Find pending payment with this ADA amount
       const keys = await cache.keys('payment:*');
@@ -798,7 +805,7 @@ app.post('/', express.json(), async (req, res) => {
         const payment = await getFromCache(key);
         if (!payment || payment.verified) continue;
 
-        console.log('🔍 Checking payment record:', {
+        console.log(' Checking payment record:', {
           expected: payment.adaAmount,
           received: adaAmount,
           userId: payment.userId
@@ -811,7 +818,7 @@ app.post('/', express.json(), async (req, res) => {
           )?.quantity || '0');
 
           if (boneAmount >= payment.boneAmount) {
-            console.log('✨ Payment matched! Updating user slots:', {
+            console.log(' Payment matched! Updating user slots:', {
               userId: payment.userId,
               txHash: txData.tx.hash
             });
@@ -851,7 +858,7 @@ app.post('/', express.json(), async (req, res) => {
 
     res.status(200).json({ status: 'ok' });
   } catch (error) {
-    console.error('❌ Error processing webhook:', error);
+    console.error(' Error processing webhook:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
