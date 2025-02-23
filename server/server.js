@@ -692,7 +692,7 @@ app.get('/api/payment-updates/:paymentId', async (req, res) => {
   });
 });
 
-// Function to verify Blockfrost webhook signature
+// Function to verify Blockfrost webhook signaturee
 function verifyBlockfrostSignature(signatureHeader, payload, webhookToken) {
   try {
     if (!signatureHeader) {
