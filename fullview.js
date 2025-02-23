@@ -1212,7 +1212,9 @@ async function messageListener(message, sender, sendResponse) {
       case 'REFRESH_ALL_WALLETS':
         console.log('Received refresh request from popup');
         loadWallets().then(async (walletsNeedingRefresh) => {
-          updateUI();
+          await loadWallets();
+          renderWallets();
+          updateSlotCount();
           
           // Queue refresh requests for wallets that need it
           for (const address of walletsNeedingRefresh) {
@@ -1260,7 +1262,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       // Update UI with new wallet data
-      updateUI();
+      await loadWallets();
+      renderWallets();
+      updateSlotCount();
       
       // Queue refresh requests for wallets that need it
       for (const address of walletsNeedingRefresh) {
@@ -1354,7 +1358,7 @@ async function addWallet() {
     document.getElementById('walletType').value = 'None';
     customIconData = null;
 
-    showMessage('Wallet added successfully!', 'success');
+    showSuccess('Wallet added successfully!');
   } catch (error) {
     console.error('Error adding wallet:', error);
     // Remove the wallet if it failed
@@ -1995,7 +1999,9 @@ function setupBuyButton() {
               // Close modal after 2 seconds
               setTimeout(() => {
                 modal.remove();
-                updateUI();
+                await loadWallets();
+                renderWallets();
+                updateSlotCount();
               }, 2000);
             } else {
               statusDiv.textContent = 'Payment not detected yet. Try again in a few moments.';
@@ -2265,7 +2271,9 @@ function setupEventListeners() {
               // Close modal after 2 seconds
               setTimeout(() => {
                 modal.remove();
-                updateUI();
+                await loadWallets();
+                renderWallets();
+                updateSlotCount();
               }, 2000);
             } else {
               statusDiv.textContent = 'Payment not detected yet. Try again in a few moments.';
