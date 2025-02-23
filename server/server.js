@@ -426,41 +426,50 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
     }
 
     // Check if user already has a pending payment
-    const existingPayment = await getFromCache(`user_payment:${userId}`);
-    if (existingPayment) {
-      const payment = await getFromCache(`payment:${existingPayment}`);
-      if (payment && !payment.verified) {
+    const existingPaymentId = await getFromCache(`user_payment:${userId}`);
+    if (existingPaymentId) {
+      const existingPayment = await getFromCache(`payment:${existingPaymentId}`);
+      if (existingPayment && !existingPayment.verified && (Date.now() - existingPayment.timestamp) < 900000) {
+        // Return existing payment if it's less than 15 minutes old
         return res.json({
-          paymentId: existingPayment,
+          paymentId: existingPaymentId,
           address: PAYMENT_ADDRESS,
-          boneAmount: REQUIRED_BONE_PAYMENT,
-          status: 'pending'
+          adaAmount: (existingPayment.adaAmount / 1000000).toFixed(6),
+          boneAmount: existingPayment.boneAmount
         });
       }
     }
 
+    // Generate random ADA amount between 1.9 and 2.1 ADA
+    const adaAmount = (Math.random() * (2.1 - 1.9) + 1.9).toFixed(6);
+    const lovelaceAmount = Math.floor(parseFloat(adaAmount) * 1000000); // Convert to lovelace
+    
     // Generate payment ID
     const paymentId = crypto.randomBytes(16).toString('hex');
-    console.log('Generated payment ID:', paymentId);
-
-    // Create payment record
+    
+    // Store payment details with user ID
     const payment = {
       userId,
       boneAmount: REQUIRED_BONE_PAYMENT,
-      created: Date.now(),
+      adaAmount: lovelaceAmount,
+      timestamp: Date.now(),
       verified: false
     };
-
-    // Store payment with 1 hour TTL
-    await setInCache(`payment:${paymentId}`, payment, 3600);
-    await setInCache(`user_payment:${userId}`, paymentId, 3600);
-
-    // Return payment details
+    
+    // Cache payment details for 15 minutes
+    await setInCache(`payment:${paymentId}`, payment, 900);
+    await setInCache(`user_payment:${userId}`, paymentId, 900);
+    
+    console.log('Payment initiated:', {
+      ...payment,
+      adaAmount: adaAmount // Log human-readable ADA amount
+    });
+    
     res.json({
       paymentId,
       address: PAYMENT_ADDRESS,
-      boneAmount: REQUIRED_BONE_PAYMENT,
-      status: 'new'
+      adaAmount: adaAmount,
+      boneAmount: REQUIRED_BONE_PAYMENT
     });
 
   } catch (error) {
@@ -725,97 +734,97 @@ function verifyBlockfrostSignature(signatureHeader, payload, webhookToken) {
   }
 }
 
-// Blockfrost webhook endpoint
+// Webhook handler
 app.post('/', express.json(), async (req, res) => {
+  console.log('🔔 Webhook received:', {
+    headers: req.headers,
+    body: JSON.stringify(req.body, null, 2)
+  });
+
   try {
-    // Verify webhook authenticity
+    // Verify webhook signature
     const signatureHeader = req.headers['blockfrost-signature'];
     if (!signatureHeader) {
-      console.error('Missing Blockfrost-Signature header');
+      console.error('❌ Missing Blockfrost-Signature header');
       return res.status(401).json({ error: 'Missing signature' });
     }
 
-    // Verify signature
     if (!verifyBlockfrostSignature(signatureHeader, req.body, BLOCKFROST_WEBHOOK_TOKEN)) {
-      console.error('Invalid webhook signature');
+      console.error('❌ Invalid webhook signature');
       return res.status(401).json({ error: 'Invalid signature' });
     }
 
+    console.log('✅ Webhook signature verified');
+
+    // Process transactions
     const payload = req.body;
-    console.log('Received webhook payload:', JSON.stringify(payload, null, 2));
-
-    // Process each transaction in the payload
     for (const txData of payload.payload) {
-      const tx = txData.tx;
+      console.log('📦 Processing transaction:', txData.tx.hash);
+      
+      // Find payment to our address
       const outputs = txData.outputs;
-
-      // Find output to our payment address
-      const paymentOutput = outputs.find(output => 
-        output.address === PAYMENT_ADDRESS
-      );
-
+      const paymentOutput = outputs.find(output => output.address === PAYMENT_ADDRESS);
+      
       if (!paymentOutput) {
-        console.log('No payment to our address found');
+        console.log('⏭️ No payment to our address in this transaction');
         continue;
       }
 
-      // Get ADA and BONE amounts
-      const adaAsset = paymentOutput.amount.find(asset => asset.unit === 'lovelace');
-      const boneAsset = paymentOutput.amount.find(asset => 
-        asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
-      );
+      console.log('💰 Found payment to our address:', paymentOutput);
 
-      if (!adaAsset || !boneAsset) {
-        console.log('Missing required assets');
-        continue;
-      }
+      // Get ADA amount
+      const adaAmount = parseInt(paymentOutput.amount.find(asset => asset.unit === 'lovelace')?.quantity || '0');
+      console.log('💵 ADA amount:', adaAmount / 1000000);
 
-      const adaAmount = parseInt(adaAsset.quantity);
-      const boneAmount = parseInt(boneAsset.quantity);
-
-      console.log('Payment received:', {
-        ada: adaAmount / 1000000,
-        bone: boneAmount,
-        txHash: tx.hash
-      });
-
-      // Check for pending payments
+      // Find pending payment with this ADA amount
       const keys = await cache.keys('payment:*');
       for (const key of keys) {
         const payment = await getFromCache(key);
         if (!payment || payment.verified) continue;
 
-        // Verify payment amounts
-        if (boneAmount >= payment.boneAmount) {
-          payment.verified = true;
-          payment.txHash = tx.hash;
-          payment.verifiedAt = Date.now();
-          await setInCache(key, payment, 24 * 60 * 60); // 24 hour TTL
+        console.log('🔍 Checking payment record:', {
+          expected: payment.adaAmount,
+          received: adaAmount,
+          userId: payment.userId
+        });
 
-          // Update user slots
-          const userId = payment.userId;
-          const currentSlots = await getUserSlots(userId);
-          const newSlots = currentSlots + SLOTS_PER_PAYMENT;
-          await updateUserSlots(userId, newSlots);
+        if (adaAmount === payment.adaAmount) {
+          // Check BONE amount
+          const boneAmount = parseInt(paymentOutput.amount.find(asset => 
+            asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
+          )?.quantity || '0');
 
-          console.log('Payment verified for:', {
-            userId,
-            paymentId: key.split(':')[1],
-            newSlots
-          });
+          if (boneAmount >= payment.boneAmount) {
+            console.log('✨ Payment matched! Updating user slots:', {
+              userId: payment.userId,
+              txHash: txData.tx.hash
+            });
 
-          // Notify clients if SSE connection exists
-          if (global.clients) {
-            for (const [clientId, client] of global.clients) {
-              if (client.paymentId === key.split(':')[1]) {
-                try {
-                  client.res.write(`data: ${JSON.stringify({
-                    verified: true,
-                    slots: newSlots,
-                    txHash: tx.hash
-                  })}\n\n`);
-                } catch (error) {
-                  console.error('Error notifying client:', error);
+            // Mark payment as verified
+            payment.verified = true;
+            payment.txHash = txData.tx.hash;
+            payment.verifiedAt = Date.now();
+            await setInCache(key, payment, 24 * 60 * 60);
+
+            // Update user slots
+            const userId = payment.userId;
+            const currentSlots = await getUserSlots(userId);
+            const newSlots = currentSlots + SLOTS_PER_PAYMENT;
+            await updateUserSlots(userId, newSlots);
+
+            // Notify clients
+            if (global.clients) {
+              for (const [clientId, client] of global.clients) {
+                if (client.paymentId === key.split(':')[1]) {
+                  try {
+                    client.res.write(`data: ${JSON.stringify({
+                      verified: true,
+                      slots: newSlots,
+                      txHash: txData.tx.hash
+                    })}\n\n`);
+                  } catch (error) {
+                    console.error('Error notifying client:', error);
+                  }
                 }
               }
             }
@@ -826,7 +835,7 @@ app.post('/', express.json(), async (req, res) => {
 
     res.status(200).json({ status: 'ok' });
   } catch (error) {
-    console.error('Error processing webhook:', error);
+    console.error('❌ Error processing webhook:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -2491,6 +2491,7 @@ async function initiatePayment() {
         <div class="payment-details">
           <div class="amount-display">
             <div class="payment-amount">${data.boneAmount} BONE</div>
+            <div class="payment-amount">₳ ${data.adaAmount} ADA</div>
           </div>
           
           <div class="address-container">
@@ -2501,8 +2502,8 @@ async function initiatePayment() {
             </div>
           </div>
           <div class="payment-note">
-            <p>Please send exactly ${data.boneAmount} BONE tokens to complete your payment.</p>
-            <p>Your slots will be unlocked automatically once the payment is confirmed.</p>
+            <p>Important: Send EXACTLY ₳ ${data.adaAmount} ADA along with ${data.boneAmount} BONE tokens.</p>
+            <p>The specific ADA amount helps us identify your payment.</p>
           </div>
         </div>
       </div>
@@ -2565,49 +2566,52 @@ async function initiatePayment() {
 }
 
 async function pollPaymentStatus(paymentId, modal) {
-  const checkInterval = setInterval(async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-      const data = await response.json();
-      
-      if (data.verified) {
-        clearInterval(checkInterval);
-        
-        // Update UI with success
-        const statusDiv = modal.querySelector('.payment-status');
-        const detailsDiv = modal.querySelector('.payment-details');
-        
-        statusDiv.textContent = 'Payment Successful!';
-        statusDiv.classList.add('success');
-        
-        detailsDiv.innerHTML = `
-          <div class="success-message">
-            <p>Thank you for your payment!</p>
-            <p>You now have ${data.slots} slots available.</p>
-            <p>Transaction: <a href="https://cardanoscan.io/transaction/${data.txHash}" target="_blank">${data.txHash.substring(0, 8)}...</a></p>
-          </div>
-        `;
-        
-        // Update slots and refresh wallets
-        unlockedSlots = data.slots;
-        await loadWallets();
-        renderWallets();
-        updateSlotCount();
-        
-        // Close modal after 5 seconds
-        setTimeout(() => {
-          modal.remove();
-        }, 5000);
-      }
-    } catch (error) {
-      console.error('Error checking payment:', error);
-    }
-  }, 10000); // Check every 10 seconds
+  let attempts = 0;
+  const maxAttempts = 36; // 3 minutes total with increasing intervals
   
-  // Stop checking after 15 minutes
-  setTimeout(() => {
-    clearInterval(checkInterval);
-  }, 15 * 60 * 1000);
+  const checkStatus = async () => {
+    attempts++;
+    const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
+    const data = await response.json();
+    
+    if (data.verified) {
+      eventSource.close();
+      
+      // Update status and add slots
+      const statusDiv = modal.querySelector('.payment-status');
+      const detailsDiv = modal.querySelector('.payment-details');
+      
+      statusDiv.textContent = 'Payment verified!';
+      statusDiv.className = 'payment-status success';
+      
+      detailsDiv.innerHTML = `
+        <div class="success-message">
+          <p>Thank you for your payment!</p>
+          <p>You now have ${data.slots} slots available.</p>
+          <p>Transaction: <a href="https://cardanoscan.io/transaction/${data.txHash}" target="_blank">${data.txHash.substring(0, 8)}...</a></p>
+        </div>
+      `;
+      
+      // Update slots and refresh wallets
+      unlockedSlots = data.slots;
+      await loadWallets();
+      renderWallets();
+      updateSlotCount();
+      
+      // Close modal after 2 seconds
+      setTimeout(() => {
+        modal.remove();
+        updateUI();
+      }, 2000);
+    } else {
+      attempts++;
+      // Calculate next delay with exponential backoff
+      const nextDelay = Math.min(2000 * Math.pow(1.2, attempts), 10000); // Cap at 10 seconds
+      setTimeout(checkStatus, nextDelay);
+    }
+  };
+  
+  checkStatus();
 }
 
 function formatBalance(balance) {
@@ -2673,10 +2677,9 @@ function pollPaymentStatus(paymentId, modal) {
   const checkStatus = async () => {
     attempts++;
     const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-    if (!response.ok) throw new Error('Failed to verify payment');
-    const { verified, used } = await response.json();
-
-    if (verified) {
+    const data = await response.json();
+    
+    if (data.verified) {
       eventSource.close();
       
       // Update status and add slots
@@ -2689,13 +2692,13 @@ function pollPaymentStatus(paymentId, modal) {
       detailsDiv.innerHTML = `
         <div class="success-message">
           <p>Thank you for your payment!</p>
-          <p>You now have ${verified.slots} slots available.</p>
-          <p>Transaction: <a href="https://cardanoscan.io/transaction/${verified.txHash}" target="_blank">${verified.txHash.substring(0, 8)}...</a></p>
+          <p>You now have ${data.slots} slots available.</p>
+          <p>Transaction: <a href="https://cardanoscan.io/transaction/${data.txHash}" target="_blank">${data.txHash.substring(0, 8)}...</a></p>
         </div>
       `;
       
       // Update slots and refresh wallets
-      unlockedSlots = verified.slots;
+      unlockedSlots = data.slots;
       await loadWallets();
       renderWallets();
       updateSlotCount();
