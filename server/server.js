@@ -697,73 +697,13 @@ app.get('/api/payment-updates/:paymentId', async (req, res) => {
   });
 });
 
-// Function to verify Blockfrost webhook signature
-function verifyBlockfrostSignature(signatureHeader, payload, webhookToken) {
-  try {
-    if (!signatureHeader) {
-      console.error('No Blockfrost-Signature header');
-      return false;
-    }
-
-    // Parse the header
-    const elements = signatureHeader.split(',');
-    let timestamp = null;
-    let signature = null;
-
-    for (const element of elements) {
-      const [key, value] = element.split('=');
-      if (key === 't') {
-        timestamp = value;
-      } else if (key === 'v1') {
-        signature = value;
-      }
-    }
-
-    if (!timestamp || !signature) {
-      console.error('Missing timestamp or signature');
-      return false;
-    }
-
-    // Check timestamp tolerance (10 minutes)
-    const now = Math.floor(Date.now() / 1000);
-    if (Math.abs(now - parseInt(timestamp)) > 600) {
-      console.error('Signature timestamp too old');
-      return false;
-    }
-
-    // Use raw payload string as received
-    const payloadString = typeof payload === 'string' ? payload : req.rawBody;
-    const signaturePayload = `${timestamp}.${payloadString}`;
-
-    // Compute expected signature using HMAC-SHA256
-    const hmac = crypto.createHmac('sha256', webhookToken);
-    hmac.update(signaturePayload);
-    const expectedSignature = hmac.digest('hex');
-
-    // Compare signatures using timing-safe comparison
-    const isValid = crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expectedSignature)
-    );
-
-    if (!isValid) {
-      console.error('Signature mismatch:', {
-        received: signature,
-        expected: expectedSignature,
-        timestamp,
-        signaturePayload: signaturePayload.substring(0, 100) + '...' // Log only first 100 chars
-      });
-    }
-
-    return isValid;
-  } catch (error) {
-    console.error('Error verifying signature:', error);
-    return false;
-  }
-}
-
 // Webhook handler
-app.post('/', express.json(), async (req, res) => {
+app.post('/', express.json({
+  verify: (req, res, buf) => {
+    // Store raw body for webhook signature verification
+    req.rawBody = buf.toString();
+  }
+}), async (req, res) => {
   console.log(' Webhook received:', {
     headers: req.headers,
     body: JSON.stringify(req.body, null, 2)
@@ -777,7 +717,9 @@ app.post('/', express.json(), async (req, res) => {
       return res.status(401).json({ error: 'Missing signature' });
     }
 
-    if (!verifyBlockfrostSignature(signatureHeader, req.body, BLOCKFROST_WEBHOOK_TOKEN)) {
+    // Pass the raw body to signature verification
+    const isValid = verifyBlockfrostSignature(signatureHeader, req.rawBody, BLOCKFROST_WEBHOOK_TOKEN);
+    if (!isValid) {
       console.error(' Invalid webhook signature');
       return res.status(401).json({ error: 'Invalid signature' });
     }
@@ -867,6 +809,70 @@ app.post('/', express.json(), async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Function to verify Blockfrost webhook signature
+function verifyBlockfrostSignature(signatureHeader, rawPayload, webhookToken) {
+  try {
+    if (!signatureHeader) {
+      console.error('No Blockfrost-Signature header');
+      return false;
+    }
+
+    // Parse the header
+    const elements = signatureHeader.split(',');
+    let timestamp = null;
+    let signature = null;
+
+    for (const element of elements) {
+      const [key, value] = element.split('=');
+      if (key === 't') {
+        timestamp = value;
+      } else if (key === 'v1') {
+        signature = value;
+      }
+    }
+
+    if (!timestamp || !signature) {
+      console.error('Missing timestamp or signature');
+      return false;
+    }
+
+    // Check timestamp tolerance (10 minutes)
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - parseInt(timestamp)) > 600) {
+      console.error('Signature timestamp too old');
+      return false;
+    }
+
+    // Create signature payload with raw request body
+    const signaturePayload = `${timestamp}.${rawPayload}`;
+
+    // Compute expected signature using HMAC-SHA256
+    const hmac = crypto.createHmac('sha256', webhookToken);
+    hmac.update(signaturePayload);
+    const expectedSignature = hmac.digest('hex');
+
+    // Compare signatures using timing-safe comparison
+    const isValid = crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
+
+    if (!isValid) {
+      console.error('Signature mismatch:', {
+        received: signature,
+        expected: expectedSignature,
+        timestamp,
+        signaturePayload: signaturePayload.substring(0, 100) + '...' // Log only first 100 chars
+      });
+    }
+
+    return isValid;
+  } catch (error) {
+    console.error('Error verifying signature:', error);
+    return false;
+  }
+}
 
 // Debug endpoint to check recent transactions
 app.get('/api/debug/recent-transactions', async (req, res) => {
