@@ -122,7 +122,7 @@ async function requestPayment() {
       const paymentStatus = JSON.parse(event.data);
       if (paymentStatus.verified) {
         eventSource.close();
-        await handlePaymentSuccess();
+        await handlePaymentSuccess(paymentStatus);
       }
     };
     
@@ -564,10 +564,15 @@ async function checkPaymentStatus() {
   }
 }
 
-async function handlePaymentSuccess() {
+async function handlePaymentSuccess(data) {
   try {
-    // Update unlocked slots
-    unlockedSlots += SLOTS_PER_PAYMENT;
+    // Update unlocked slots from server response
+    if (data && typeof data.slots === 'number') {
+      unlockedSlots = data.slots;
+    } else {
+      // Fallback to adding SLOTS_PER_PAYMENT
+      unlockedSlots += SLOTS_PER_PAYMENT;
+    }
     
     // Save to storage
     await chrome.storage.sync.set({ unlockedSlots });
@@ -575,7 +580,7 @@ async function handlePaymentSuccess() {
     // Update UI
     updateUI();
     
-    showSuccess(`Payment verified! You now have ${SLOTS_PER_PAYMENT} more wallet slots available.`);
+    showSuccess(`Payment verified! You now have ${unlockedSlots} wallet slots available.`);
     
     // Close payment instructions if open
     const instructions = document.querySelector('.modal');
