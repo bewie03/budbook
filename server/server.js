@@ -608,6 +608,9 @@ async function verifyPayment(txHash) {
                     added: SLOTS_PER_PAYMENT
                 });
 
+                // Update unlocked slots in chrome.storage.sync
+                chrome.storage.sync.set({ unlockedSlots: newSlots });
+
                 // Notify clients
                 if (global.clients) {
                     for (const [clientId, client] of global.clients) {
@@ -616,7 +619,8 @@ async function verifyPayment(txHash) {
                                 client.res.write(`data: ${JSON.stringify({
                                     verified: true,
                                     slots: newSlots,
-                                    txHash: txHash
+                                    txHash: txHash,
+                                    message: `Added ${SLOTS_PER_PAYMENT} slots. New total: ${newSlots} slots`
                                 })}\n\n`);
                             } catch (error) {
                                 console.error('Error notifying client:', error);
@@ -898,6 +902,9 @@ app.post('/', express.json({
               newSlots,
               added: SLOTS_PER_PAYMENT
             });
+
+            // Update unlocked slots in chrome.storage.sync
+            chrome.storage.sync.set({ unlockedSlots: newSlots });
 
             // Notify clients
             if (global.clients) {

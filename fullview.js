@@ -2287,6 +2287,50 @@ function setupEventListeners() {
   }
 }
 
+async function updateSlotCount() {
+  try {
+    // Get current slots from storage
+    const data = await chrome.storage.sync.get(['unlockedSlots']);
+    unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
+
+    // Update all slot count displays
+    const slotCountElements = document.querySelectorAll('.slot-count');
+    slotCountElements.forEach(element => {
+      element.textContent = `${unlockedSlots} slots`;
+    });
+
+    // Update progress bars if they exist
+    const progressBars = document.querySelectorAll('.slot-progress');
+    progressBars.forEach(bar => {
+      const percentage = (unlockedSlots / MAX_TOTAL_SLOTS) * 100;
+      bar.style.width = `${percentage}%`;
+    });
+
+    // Update any slot usage displays
+    const usageElements = document.querySelectorAll('.slot-usage');
+    const walletCount = wallets.length;
+    usageElements.forEach(element => {
+      element.textContent = `${walletCount}/${unlockedSlots}`;
+    });
+
+    console.log('Updated slot UI:', {
+      unlockedSlots,
+      walletCount,
+      maxTotal: MAX_TOTAL_SLOTS
+    });
+  } catch (error) {
+    console.error('Error updating slot count:', error);
+  }
+}
+
+// Add listener for storage changes to update UI
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === 'sync' && changes.unlockedSlots) {
+    console.log('Slots updated in storage:', changes.unlockedSlots);
+    updateSlotCount();
+  }
+});
+
 async function init() {
   console.log('init() called');
   
@@ -2528,7 +2572,7 @@ async function initiatePayment() {
           <div class="success-message">
             <p>Thank you for your payment!</p>
             <p>You now have ${paymentStatus.slots} slots available.</p>
-            <p>Transaction: <a href="https://cardanoscan.io/transaction/${paymentStatus.txHash}" target="_blank">${paymentStatus.txHash.substring(0, 8)}...</a></p>
+            <p>Transaction: <a href="https://cardanoscan.io/transaction/${paymentStatus.txHash}" target="_blank">${paymentStatus.txHash.substring(0,8)}...</a></p>
           </div>
         `;
         
