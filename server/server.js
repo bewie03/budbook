@@ -682,14 +682,66 @@ app.get('/api/payment-updates/:paymentId', async (req, res) => {
   });
 });
 
-// Blockfrost webhook endpoint
-app.post('/webhook', async (req, res) => {
+// Function to verify Blockfrost webhook signature
+function verifyBlockfrostSignature(signatureHeader, payload, webhookToken) {
   try {
-    // Verify webhook authenticity
-    const webhookToken = req.headers['webhook-token'];
-    if (webhookToken !== BLOCKFROST_WEBHOOK_TOKEN) {
-      console.error('Invalid webhook token');
-      return res.status(401).json({ error: 'Invalid webhook token' });
+    if (!signatureHeader) {
+      console.error('No Blockfrost-Signature header');
+      return false;
+    }
+
+    // Parse the header
+    const elements = signatureHeader.split(',');
+    let timestamp = null;
+    const signatures = [];
+
+    for (const element of elements) {
+      const [key, value] = element.split('=');
+      if (key === 't') {
+        timestamp = value;
+      } else if (key === 'v1') {
+        signatures.push(value);
+      }
+    }
+
+    if (!timestamp || signatures.length === 0) {
+      console.error('Invalid signature format');
+      return false;
+    }
+
+    // Check timestamp is within tolerance (10 minutes)
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - parseInt(timestamp)) > 600) {
+      console.error('Signature timestamp too old');
+      return false;
+    }
+
+    // Prepare signature payload
+    const signaturePayload = `${timestamp}.${JSON.stringify(payload)}`;
+
+    // Compute expected signature
+    const expectedSignature = crypto
+      .createHmac('sha256', webhookToken)
+      .update(signaturePayload)
+      .digest('hex');
+
+    // Compare signatures
+    return signatures.includes(expectedSignature);
+  } catch (error) {
+    console.error('Error verifying signature:', error);
+    return false;
+  }
+}
+
+// Blockfrost webhook endpoint
+app.post('/webhook', express.json(), async (req, res) => {
+  try {
+    const signatureHeader = req.headers['blockfrost-signature'];
+    
+    // Verify the signature
+    if (!verifyBlockfrostSignature(signatureHeader, req.body, BLOCKFROST_WEBHOOK_TOKEN)) {
+      console.error('Invalid webhook signature');
+      return res.status(401).json({ error: 'Invalid signature' });
     }
 
     const payload = req.body;
