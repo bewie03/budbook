@@ -55,7 +55,12 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Blockfrost-Signature', 'Origin', 'Accept']
 }));
 
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buf) => {
+    // Store raw body for webhook signature verification
+    req.rawBody = buf.toString();
+  }
+}));
 
 // Test webhook endpoint
 app.post('/test-webhook', express.json(), (req, res) => {
@@ -726,8 +731,8 @@ function verifyBlockfrostSignature(signatureHeader, payload, webhookToken) {
       return false;
     }
 
-    // Prepare signature payload exactly as specified by Blockfrost
-    const payloadString = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    // Use raw payload string as received
+    const payloadString = typeof payload === 'string' ? payload : req.rawBody;
     const signaturePayload = `${timestamp}.${payloadString}`;
 
     // Compute expected signature using HMAC-SHA256
@@ -796,8 +801,8 @@ app.post('/', express.json(), async (req, res) => {
       console.log(' Found payment to our address:', paymentOutput);
 
       // Get ADA amount
-      const adaAmount = parseInt(paymentOutput.amount.find(a => a.unit === 'lovelace')?.quantity || '0');
-      console.log(' ADA amount:', adaAmount / 1000000);
+      const adaAmount = parseInt(paymentOutput.amount.find(a => a.unit === 'lovelace').quantity) / 1000000;
+      console.log(' ADA amount:', adaAmount);
 
       // Find pending payment with this ADA amount
       const keys = await cache.keys('payment:*');
