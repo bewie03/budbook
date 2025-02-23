@@ -2478,7 +2478,7 @@ async function initiatePayment() {
       throw new Error(errorData.error || 'Failed to initiate payment');
     }
     
-    const { paymentId, address, adaAmount, boneAmount } = await response.json();
+    const data = await response.json();
     
     // Show payment details modal
     const modal = createModal(`
@@ -2490,83 +2490,124 @@ async function initiatePayment() {
         
         <div class="payment-details">
           <div class="amount-display">
-            <div class="payment-amount">${boneAmount} BONE</div>
-            <div class="payment-amount">₳ ${adaAmount} ADA</div>
+            <div class="payment-amount">${data.boneAmount} BONE</div>
           </div>
           
           <div class="address-container">
             <span class="label">Send to:</span>
-            <div class="address-box">${address}</div>
+            <div class="address-box">
+              <code>${data.address}</code>
+              <button class="copy-btn" onclick="copyToClipboard('${data.address}', this)">Copy</button>
+            </div>
           </div>
           <div class="payment-note">
-            Important: Send EXACTLY ₳ ${adaAmount} ADA along with ${boneAmount} BONE tokens.
-            This specific ADA amount helps us identify your payment.
+            <p>Please send exactly ${data.boneAmount} BONE tokens to complete your payment.</p>
+            <p>Your slots will be unlocked automatically once the payment is confirmed.</p>
           </div>
-        </div>
-
-        <div class="modal-buttons">
-          <button class="modal-button secondary">Cancel</button>
-          <button class="modal-button primary">Check Status</button>
         </div>
       </div>
     `);
 
-    document.body.appendChild(modal);
-
-    // Add button handlers
-    const cancelButton = modal.querySelector('.modal-button.secondary');
-    const checkButton = modal.querySelector('.modal-button.primary');
-
-    cancelButton.addEventListener('click', () => {
-      modal.remove();
-    });
-
-    checkButton.addEventListener('click', async () => {
-      const statusDiv = modal.querySelector('.payment-status');
-      statusDiv.textContent = 'Checking payment status...';
-
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-        if (!response.ok) throw new Error('Failed to verify payment');
-        const { verified, used } = await response.json();
-
-        if (verified) {
-          if (used) {
-            showError('This payment has already been used.');
-            modal.remove();
-            return;
-          }
-
-          statusDiv.textContent = 'Payment verified!';
-          const { availableSlots } = await chrome.storage.local.get('availableSlots');
-          await chrome.storage.local.set({
-            availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
-          });
-          await updateStorageUsage();
-
-          showSuccess('Payment verified! Your slots have been added.');
-          
-          // Close modal after 2 seconds
-          setTimeout(() => {
-            modal.remove();
-            updateUI();
-          }, 2000);
-        } else {
-          statusDiv.textContent = 'Payment not detected yet. Try again in a few moments.';
-        }
-      } catch (error) {
-        console.error('Error checking payment:', error);
-        statusDiv.textContent = 'Error checking payment status';
+    // Setup SSE for real-time updates
+    const eventSource = new EventSource(`${API_BASE_URL}/api/payment-status/${data.paymentId}`);
+    
+    eventSource.onmessage = async (event) => {
+      const paymentStatus = JSON.parse(event.data);
+      if (paymentStatus.verified) {
+        eventSource.close();
+        
+        // Update UI with success
+        const statusDiv = modal.querySelector('.payment-status');
+        const detailsDiv = modal.querySelector('.payment-details');
+        
+        statusDiv.textContent = 'Payment Successful!';
+        statusDiv.classList.add('success');
+        
+        detailsDiv.innerHTML = `
+          <div class="success-message">
+            <p>Thank you for your payment!</p>
+            <p>You now have ${paymentStatus.slots} slots available.</p>
+            <p>Transaction: <a href="https://cardanoscan.io/transaction/${paymentStatus.txHash}" target="_blank">${paymentStatus.txHash.substring(0, 8)}...</a></p>
+          </div>
+        `;
+        
+        // Update slots and refresh wallets
+        unlockedSlots = paymentStatus.slots;
+        await loadWallets();
+        renderWallets();
+        updateSlotCount();
+        
+        // Close modal after 5 seconds
+        setTimeout(() => {
+          modal.remove();
+        }, 5000);
+      }
+    };
+    
+    eventSource.onerror = (error) => {
+      console.error('SSE Error:', error);
+      eventSource.close();
+      // Fallback to polling
+      pollPaymentStatus(data.paymentId, modal);
+    };
+    
+    // Add modal cleanup
+    modal.addEventListener('close', () => {
+      if (eventSource) {
+        eventSource.close();
       }
     });
 
-    // Start polling for payment status
-    pollPaymentStatus(paymentId, modal);
-
   } catch (error) {
-    console.error('Payment initiation error:', error);
-    showError(error.message || 'Failed to initiate payment. Please try again.');
+    console.error('Error initiating payment:', error);
+    showError(error.message || 'Failed to initiate payment');
   }
+}
+
+async function pollPaymentStatus(paymentId, modal) {
+  const checkInterval = setInterval(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
+      const data = await response.json();
+      
+      if (data.verified) {
+        clearInterval(checkInterval);
+        
+        // Update UI with success
+        const statusDiv = modal.querySelector('.payment-status');
+        const detailsDiv = modal.querySelector('.payment-details');
+        
+        statusDiv.textContent = 'Payment Successful!';
+        statusDiv.classList.add('success');
+        
+        detailsDiv.innerHTML = `
+          <div class="success-message">
+            <p>Thank you for your payment!</p>
+            <p>You now have ${data.slots} slots available.</p>
+            <p>Transaction: <a href="https://cardanoscan.io/transaction/${data.txHash}" target="_blank">${data.txHash.substring(0, 8)}...</a></p>
+          </div>
+        `;
+        
+        // Update slots and refresh wallets
+        unlockedSlots = data.slots;
+        await loadWallets();
+        renderWallets();
+        updateSlotCount();
+        
+        // Close modal after 5 seconds
+        setTimeout(() => {
+          modal.remove();
+        }, 5000);
+      }
+    } catch (error) {
+      console.error('Error checking payment:', error);
+    }
+  }, 10000); // Check every 10 seconds
+  
+  // Stop checking after 15 minutes
+  setTimeout(() => {
+    clearInterval(checkInterval);
+  }, 15 * 60 * 1000);
 }
 
 function formatBalance(balance) {
@@ -2636,50 +2677,40 @@ function pollPaymentStatus(paymentId, modal) {
     const { verified, used } = await response.json();
 
     if (verified) {
-      if (used) {
-        showError('This payment has already been used.');
-        modal.remove();
-        return true;
-      }
-
+      eventSource.close();
+      
       // Update status and add slots
       const statusDiv = modal.querySelector('.payment-status');
-      if (statusDiv) {
-        statusDiv.textContent = 'Payment verified!';
-        statusDiv.className = 'payment-status success';
-      }
+      const detailsDiv = modal.querySelector('.payment-details');
       
-      const { availableSlots } = await chrome.storage.local.get('availableSlots');
-      await chrome.storage.local.set({
-        availableSlots: (availableSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT
-      });
-      await updateStorageUsage();
-
-      showSuccess('Payment verified! Your slots have been added.');
+      statusDiv.textContent = 'Payment verified!';
+      statusDiv.className = 'payment-status success';
+      
+      detailsDiv.innerHTML = `
+        <div class="success-message">
+          <p>Thank you for your payment!</p>
+          <p>You now have ${verified.slots} slots available.</p>
+          <p>Transaction: <a href="https://cardanoscan.io/transaction/${verified.txHash}" target="_blank">${verified.txHash.substring(0, 8)}...</a></p>
+        </div>
+      `;
+      
+      // Update slots and refresh wallets
+      unlockedSlots = verified.slots;
+      await loadWallets();
+      renderWallets();
+      updateSlotCount();
       
       // Close modal after 2 seconds
       setTimeout(() => {
         modal.remove();
         updateUI();
       }, 2000);
-      
-      return true;
+    } else {
+      attempts++;
+      // Calculate next delay with exponential backoff
+      const nextDelay = Math.min(2000 * Math.pow(1.2, attempts), 10000); // Cap at 10 seconds
+      setTimeout(checkStatus, nextDelay);
     }
-    
-    if (attempts >= maxAttempts) {
-      const statusDiv = modal.querySelector('.payment-status');
-      if (statusDiv) {
-        statusDiv.textContent = 'Verification timeout';
-        statusDiv.className = 'payment-status error';
-      }
-      return true;
-    }
-    
-    // Calculate next delay with exponential backoff
-    const nextDelay = Math.min(2000 * Math.pow(1.2, attempts), 10000); // Cap at 10 seconds
-    setTimeout(checkStatus, nextDelay);
-    
-    return false;
   };
   
   checkStatus();

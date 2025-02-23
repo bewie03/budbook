@@ -422,55 +422,47 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
     const { userId } = req.body;
     
     if (!userId) {
-      return res.status(400).json({ error: 'User ID is required' });
+      return res.status(400).json({ error: 'Missing userId' });
     }
 
     // Check if user already has a pending payment
-    const existingPaymentId = await getFromCache(`user_payment:${userId}`);
-    if (existingPaymentId) {
-      const existingPayment = await getFromCache(`payment:${existingPaymentId}`);
-      if (existingPayment && !existingPayment.verified && (Date.now() - existingPayment.timestamp) < 900000) {
-        // Return existing payment if it's less than 15 minutes old
+    const existingPayment = await getFromCache(`user_payment:${userId}`);
+    if (existingPayment) {
+      const payment = await getFromCache(`payment:${existingPayment}`);
+      if (payment && !payment.verified) {
         return res.json({
-          paymentId: existingPaymentId,
+          paymentId: existingPayment,
           address: PAYMENT_ADDRESS,
-          adaAmount: (existingPayment.adaAmount / 1000000).toFixed(6),
-          boneAmount: existingPayment.boneAmount
+          boneAmount: REQUIRED_BONE_PAYMENT,
+          status: 'pending'
         });
       }
     }
 
-    const paymentId = crypto.randomUUID();
-    
-    // Generate random ADA amount between 1.9 and 2.1 ADA
-    const adaAmount = (Math.random() * (2.1 - 1.9) + 1.9).toFixed(6);
-    const lovelaceAmount = Math.floor(parseFloat(adaAmount) * 1000000); // Convert to lovelace
-    
-    // Store payment details with user ID
+    // Generate payment ID
+    const paymentId = crypto.randomBytes(16).toString('hex');
+    console.log('Generated payment ID:', paymentId);
+
+    // Create payment record
     const payment = {
-      paymentId,
       userId,
       boneAmount: REQUIRED_BONE_PAYMENT,
-      adaAmount: lovelaceAmount,
-      timestamp: Date.now(),
+      created: Date.now(),
       verified: false
     };
-    
-    // Cache payment details for 15 minutes
-    await setInCache(`payment:${paymentId}`, payment, 900);
-    await setInCache(`user_payment:${userId}`, paymentId, 900);
-    
-    console.log('Payment initiated:', {
-      ...payment,
-      adaAmount: adaAmount // Log human-readable ADA amount
-    });
-    
+
+    // Store payment with 1 hour TTL
+    await setInCache(`payment:${paymentId}`, payment, 3600);
+    await setInCache(`user_payment:${userId}`, paymentId, 3600);
+
+    // Return payment details
     res.json({
       paymentId,
       address: PAYMENT_ADDRESS,
-      adaAmount: adaAmount,
-      boneAmount: REQUIRED_BONE_PAYMENT
+      boneAmount: REQUIRED_BONE_PAYMENT,
+      status: 'new'
     });
+
   } catch (error) {
     console.error('Error initiating payment:', error);
     res.status(500).json({ error: 'Failed to initiate payment' });
@@ -734,11 +726,16 @@ function verifyBlockfrostSignature(signatureHeader, payload, webhookToken) {
 }
 
 // Blockfrost webhook endpoint
-app.post('/webhook', express.json(), async (req, res) => {
+app.post('/', express.json(), async (req, res) => {
   try {
+    // Verify webhook authenticity
     const signatureHeader = req.headers['blockfrost-signature'];
-    
-    // Verify the signature
+    if (!signatureHeader) {
+      console.error('Missing Blockfrost-Signature header');
+      return res.status(401).json({ error: 'Missing signature' });
+    }
+
+    // Verify signature
     if (!verifyBlockfrostSignature(signatureHeader, req.body, BLOCKFROST_WEBHOOK_TOKEN)) {
       console.error('Invalid webhook signature');
       return res.status(401).json({ error: 'Invalid signature' });
@@ -762,30 +759,68 @@ app.post('/webhook', express.json(), async (req, res) => {
         continue;
       }
 
-      // Check for BONE token payment
-      const bonePayment = paymentOutput.amount.find(asset => 
+      // Get ADA and BONE amounts
+      const adaAsset = paymentOutput.amount.find(asset => asset.unit === 'lovelace');
+      const boneAsset = paymentOutput.amount.find(asset => 
         asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
       );
 
-      if (!bonePayment) {
-        console.log('No BONE token payment found');
+      if (!adaAsset || !boneAsset) {
+        console.log('Missing required assets');
         continue;
       }
 
-      console.log('Processing payment:', {
-        txHash: tx.hash,
-        amount: bonePayment.quantity,
-        address: paymentOutput.address
+      const adaAmount = parseInt(adaAsset.quantity);
+      const boneAmount = parseInt(boneAsset.quantity);
+
+      console.log('Payment received:', {
+        ada: adaAmount / 1000000,
+        bone: boneAmount,
+        txHash: tx.hash
       });
 
-      // Verify the payment
-      const verified = await verifyPayment(tx.hash);
-      
-      if (verified) {
-        console.log('Payment verified successfully');
-        // The payment verification will handle slot updates
-      } else {
-        console.log('Payment verification failed');
+      // Check for pending payments
+      const keys = await cache.keys('payment:*');
+      for (const key of keys) {
+        const payment = await getFromCache(key);
+        if (!payment || payment.verified) continue;
+
+        // Verify payment amounts
+        if (boneAmount >= payment.boneAmount) {
+          payment.verified = true;
+          payment.txHash = tx.hash;
+          payment.verifiedAt = Date.now();
+          await setInCache(key, payment, 24 * 60 * 60); // 24 hour TTL
+
+          // Update user slots
+          const userId = payment.userId;
+          const currentSlots = await getUserSlots(userId);
+          const newSlots = currentSlots + SLOTS_PER_PAYMENT;
+          await updateUserSlots(userId, newSlots);
+
+          console.log('Payment verified for:', {
+            userId,
+            paymentId: key.split(':')[1],
+            newSlots
+          });
+
+          // Notify clients if SSE connection exists
+          if (global.clients) {
+            for (const [clientId, client] of global.clients) {
+              if (client.paymentId === key.split(':')[1]) {
+                try {
+                  client.res.write(`data: ${JSON.stringify({
+                    verified: true,
+                    slots: newSlots,
+                    txHash: tx.hash
+                  })}\n\n`);
+                } catch (error) {
+                  console.error('Error notifying client:', error);
+                }
+              }
+            }
+          }
+        }
       }
     }
 
@@ -998,7 +1033,7 @@ app.get('/api/accounts/:stakeAddress', async (req, res) => {
     let poolInfo = null;
     if (accountInfo.pool_id) {
       try {
-        poolInfo = await fetchBlockfrost(`/pools/${accountInfo.pool_id}`, 'fetch pool info');
+        const poolInfo = await fetchBlockfrost(`/pools/${accountInfo.pool_id}`, 'fetch pool info');
         console.log('Pool info received:', poolInfo);
       } catch (poolError) {
         console.error('Error fetching pool info:', poolError);
