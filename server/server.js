@@ -365,17 +365,41 @@ app.get('/api/wallet/:address', async (req, res) => {
     }
 });
 
+// Helper function to get user slots
+async function getUserSlots(userId) {
+  try {
+    const slots = await getFromCache(`slots:${userId}`);
+    return slots || MAX_FREE_SLOTS;
+  } catch (error) {
+    console.error('Error getting user slots:', error);
+    return MAX_FREE_SLOTS;
+  }
+}
+
+// Helper function to update user slots
+async function updateUserSlots(userId, additionalSlots) {
+  try {
+    const currentSlots = await getUserSlots(userId);
+    const newSlots = Math.min(currentSlots + additionalSlots, MAX_TOTAL_SLOTS);
+    await setInCache(`slots:${userId}`, newSlots);
+    return newSlots;
+  } catch (error) {
+    console.error('Error updating user slots:', error);
+    throw error;
+  }
+}
+
 // Payment initiation endpoint
 app.post('/api/initiate-payment', express.json(), async (req, res) => {
   try {
-    const { installId } = req.body;
+    const { userId } = req.body;
     
-    if (!installId) {
-      return res.status(400).json({ error: 'Installation ID is required' });
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
     }
 
     // Check if user already has a pending payment
-    const existingPaymentId = await getFromCache(`install_payment:${installId}`);
+    const existingPaymentId = await getFromCache(`user_payment:${userId}`);
     if (existingPaymentId) {
       const existingPayment = await getFromCache(`payment:${existingPaymentId}`);
       if (existingPayment && !existingPayment.verified && (Date.now() - existingPayment.timestamp) < 900000) {
@@ -395,10 +419,10 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
     const adaAmount = (Math.random() * (2.1 - 1.9) + 1.9).toFixed(6);
     const lovelaceAmount = Math.floor(parseFloat(adaAmount) * 1000000); // Convert to lovelace
     
-    // Store payment details with installation ID
+    // Store payment details with user ID
     const payment = {
       paymentId,
-      installId,
+      userId,
       boneAmount: REQUIRED_BONE_PAYMENT,
       adaAmount: lovelaceAmount,
       timestamp: Date.now(),
@@ -407,7 +431,7 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
     
     // Cache payment details for 15 minutes
     await setInCache(`payment:${paymentId}`, payment, 900);
-    await setInCache(`install_payment:${installId}`, paymentId, 900);
+    await setInCache(`user_payment:${userId}`, paymentId, 900);
     
     console.log('Payment initiated:', {
       ...payment,
@@ -427,7 +451,7 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
 });
 
 // Payment verification function
-async function verifyPayment(txHash, installId) {
+async function verifyPayment(txHash, userId) {
     try {
         // Get transaction details
         const txData = await fetchBlockfrost(`/txs/${txHash}/utxos`, 'fetch transaction UTXOs');
@@ -447,9 +471,9 @@ async function verifyPayment(txHash, installId) {
         }
 
         // Get payment details from cache
-        const paymentId = await getFromCache(`install_payment:${installId}`);
+        const paymentId = await getFromCache(`user_payment:${userId}`);
         if (!paymentId) {
-            console.log('No payment ID found for install ID');
+            console.log('No payment ID found for user ID');
             return false;
         }
 
@@ -509,29 +533,17 @@ async function verifyPayment(txHash, installId) {
     }
 }
 
-// Helper function to get user slots
-async function getUserSlots(installId) {
+// Get user slots endpoint
+app.get('/api/slots/:userId', async (req, res) => {
   try {
-    const slots = await getFromCache(`slots:${installId}`);
-    return slots || MAX_FREE_SLOTS;
+    const { userId } = req.params;
+    const slots = await getUserSlots(userId);
+    res.json({ slots });
   } catch (error) {
-    console.error('Error getting user slots:', error);
-    return MAX_FREE_SLOTS;
+    console.error('Error getting slots:', error);
+    res.status(500).json({ error: 'Failed to get slots' });
   }
-}
-
-// Helper function to update user slots
-async function updateUserSlots(installId, additionalSlots) {
-  try {
-    const currentSlots = await getUserSlots(installId);
-    const newSlots = Math.min(currentSlots + additionalSlots, MAX_TOTAL_SLOTS);
-    await setInCache(`slots:${installId}`, newSlots);
-    return newSlots;
-  } catch (error) {
-    console.error('Error updating user slots:', error);
-    throw error;
-  }
-}
+});
 
 // Payment verification endpoint
 app.get('/api/verify-payment/:paymentId', async (req, res) => {
@@ -546,7 +558,7 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
 
     if (payment.verified) {
       // Get current slots for verified payment
-      const slots = await getUserSlots(payment.installId);
+      const slots = await getUserSlots(payment.userId);
       return res.json({ 
         verified: true,
         slots,
@@ -556,9 +568,9 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
 
     // If not verified, check blockchain for verification
     if (payment.txHash) {
-      const verified = await verifyPayment(payment.txHash, payment.installId);
+      const verified = await verifyPayment(payment.txHash, payment.userId);
       if (verified) {
-        const slots = await getUserSlots(payment.installId);
+        const slots = await getUserSlots(payment.userId);
         return res.json({ 
           verified: true,
           slots,
@@ -571,18 +583,6 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
   } catch (error) {
     console.error('Error verifying payment:', error);
     res.status(500).json({ error: 'Failed to verify payment' });
-  }
-});
-
-// Get user slots endpoint
-app.get('/api/slots/:installId', async (req, res) => {
-  try {
-    const { installId } = req.params;
-    const slots = await getUserSlots(installId);
-    res.json({ slots });
-  } catch (error) {
-    console.error('Error getting slots:', error);
-    res.status(500).json({ error: 'Failed to get slots' });
   }
 });
 
@@ -732,9 +732,9 @@ app.post('/webhook', express.json(), async (req, res) => {
           verifiedPayment = true;
 
           // Update slots in cache
-          const currentSlots = await getFromCache(`slots:${payment.installId}`) || MAX_FREE_SLOTS;
+          const currentSlots = await getFromCache(`slots:${payment.userId}`) || MAX_FREE_SLOTS;
           const newSlots = currentSlots + SLOTS_PER_PAYMENT;
-          await setInCache(`slots:${payment.installId}`, newSlots);
+          await setInCache(`slots:${payment.userId}`, newSlots);
           
           // Notify all clients watching this payment
           if (global.clients) {
@@ -795,8 +795,8 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
       // Mark payment as used
       payment.used = true;
       await setInCache(`payment:${paymentId}`, payment);
-      // Remove the installation ID payment reference
-      await cache.del(`install_payment:${payment.installId}`);
+      // Remove the user ID payment reference
+      await cache.del(`user_payment:${payment.userId}`);
       return res.json({ verified: true, used: false });
     }
 

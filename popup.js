@@ -32,6 +32,8 @@ let currentPaymentId = null;
 let eventSource = null;
 let customIconData = null;
 
+import { auth } from './js/auth.js';
+
 // API Functions
 async function fetchWalletData(address) {
   try {
@@ -96,13 +98,20 @@ async function verifyPayment(paymentId) {
 
 async function requestPayment() {
   try {
+    // Get user ID for payment
+    const userId = await auth.getUserId();
+    
     const response = await fetch(`${API_BASE_URL}/api/initiate-payment`, {
       method: 'POST',
       headers: {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
         'Origin': chrome.runtime.getURL('')
-      }
+      },
+      body: JSON.stringify({
+        userId,
+        installId: chrome.runtime.id
+      })
     });
 
     if (!response.ok) {
@@ -134,7 +143,11 @@ async function requestPayment() {
     return data;
   } catch (error) {
     console.error('Error requesting payment:', error);
-    throw error;
+    if (error.message.includes('OAuth')) {
+      showError('Please sign in with your Google account to continue');
+    } else {
+      throw error;
+    }
   }
 }
 
@@ -824,13 +837,28 @@ window.addEventListener('unload', cleanup);
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {
+    // Get user ID first
+    const userId = await auth.getUserId();
+    
+    // Then load slots from server
+    const response = await fetch(`${API_BASE_URL}/api/slots/${userId}`);
+    if (response.ok) {
+      const data = await response.json();
+      unlockedSlots = data.slots;
+      await chrome.storage.sync.set({ unlockedSlots });
+    }
+    
+    // Load wallets and update UI
     await loadWallets();
-    updateUI();  
+    updateUI();
     setupEventListeners();
-    setupCustomIconUpload();
   } catch (error) {
-    console.error('Error initializing popup:', error);
-    showError('Failed to initialize. Please try again.');
+    console.error('Error initializing extension:', error);
+    if (error.message.includes('OAuth')) {
+      showError('Please sign in with your Google account to use this extension');
+    } else {
+      showError('Failed to initialize extension');
+    }
   }
 });
 
