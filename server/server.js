@@ -518,82 +518,108 @@ async function verifyPayment(txHash) {
         const boneAmount = paymentOutput.amount.find(a => a.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)?.quantity || '0';
         console.log(' BONE amount:', boneAmount);
 
-        // Get all payment keys to find matching payment
+        // Find pending payment with this lovelace amount
         const keys = await cache.keys('payment:*');
         console.log(' Found payment keys:', keys);
 
-        // Check each payment record
+        let paymentVerified = false;
+
         for (const key of keys) {
-            const payment = await getFromCache(key);
-            if (!payment) {
-              console.log(` No payment found for key: ${key}`);
-              continue;
+            // Skip if not a payment key
+            if (!key.startsWith('payment:')) {
+                console.log(` Skipping non-payment key: ${key}`);
+                continue;
             }
 
+            const payment = await getFromCache(key);
+            if (!payment) {
+                console.log(` No payment found for key: ${key}`);
+                continue;
+            }
+
+            // Skip if already verified with this tx hash
+            if (payment.verified && payment.txHash === txHash) {
+                console.log(` Payment ${key} already verified with this tx hash, skipping`);
+                paymentVerified = true;
+                break;
+            }
+
+            // Skip if verified with different tx hash
             if (payment.verified) {
-              console.log(` Payment ${key} already verified, skipping`);
-              continue;
+                console.log(` Payment ${key} already verified with different tx hash, skipping`);
+                continue;
             }
 
             console.log(' Checking payment record:', {
-              expected: payment.adaAmount,
-              received: lovelaceAmount,
-              userId: payment.userId,
-              paymentId: key.split(':')[1]
+                key,
+                expected: payment.adaAmount,
+                received: lovelaceAmount,
+                userId: payment.userId,
+                paymentId: key.split(':')[1]
             });
 
             // Compare raw lovelace values
             if (lovelaceAmount === payment.adaAmount) {
-              // Check BONE amount
-              const boneAmount = parseInt(paymentOutput.amount.find(asset => 
-                asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
-              )?.quantity || '0');
+                // Check BONE amount
+                const boneAmount = parseInt(paymentOutput.amount.find(asset => 
+                    asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
+                )?.quantity || '0');
 
-              console.log(' BONE amount check:', {
-                expected: payment.boneAmount,
-                received: boneAmount
-              });
-
-              if (boneAmount >= payment.boneAmount) {
-                console.log(' Payment matched! Updating user slots:', {
-                  userId: payment.userId,
-                  txHash: txHash
+                console.log(' BONE amount check:', {
+                    expected: payment.boneAmount,
+                    received: boneAmount
                 });
 
-                // Mark payment as verified
-                payment.verified = true;
-                payment.txHash = txHash;
-                payment.verifiedAt = Date.now();
-                await setInCache(key, payment, 24 * 60 * 60);
+                if (boneAmount >= payment.boneAmount) {
+                    console.log(' Payment matched! Updating user slots:', {
+                        userId: payment.userId,
+                        txHash: txHash
+                    });
 
-                // Update user slots
-                const userId = payment.userId;
-                const currentSlots = await getUserSlots(userId);
-                const newSlots = currentSlots + SLOTS_PER_PAYMENT;
-                await updateUserSlots(userId, newSlots);
+                    // Mark payment as verified
+                    payment.verified = true;
+                    payment.txHash = txHash;
+                    payment.verifiedAt = Date.now();
+                    await setInCache(key, payment, 24 * 60 * 60);
 
-                // Notify clients
-                if (global.clients) {
-                  for (const [clientId, client] of global.clients) {
-                    if (client.paymentId === key.split(':')[1]) {
-                      try {
-                        client.res.write(`data: ${JSON.stringify({
-                          verified: true,
-                          slots: newSlots,
-                          txHash: txHash
-                        })}\n\n`);
-                      } catch (error) {
-                        console.error('Error notifying client:', error);
-                      }
+                    // Update user slots
+                    const userId = payment.userId;
+                    const currentSlots = await getUserSlots(userId);
+                    const newSlots = currentSlots + SLOTS_PER_PAYMENT;
+                    await updateUserSlots(userId, SLOTS_PER_PAYMENT);
+                    console.log(' Updated slots:', {
+                        userId,
+                        currentSlots,
+                        newSlots,
+                        added: SLOTS_PER_PAYMENT
+                    });
+
+                    // Notify clients
+                    if (global.clients) {
+                        for (const [clientId, client] of global.clients) {
+                            if (client.paymentId === key.split(':')[1]) {
+                                try {
+                                    client.res.write(`data: ${JSON.stringify({
+                                        verified: true,
+                                        slots: newSlots,
+                                        txHash: txHash
+                                    })}\n\n`);
+                                } catch (error) {
+                                    console.error('Error notifying client:', error);
+                                }
+                            }
+                        }
                     }
-                  }
+
+                    paymentVerified = true;
+                    break;
                 }
-              }
             }
         }
 
-        console.log(' No matching unverified payment found');
-        return false;
+        if (!paymentVerified) {
+            console.log(' No matching unverified payment found for tx:', txHash);
+        }
     } catch (error) {
         console.error('Error verifying payment:', error);
         return false;
@@ -773,19 +799,38 @@ app.post('/', express.json({
 
       // Find pending payment with this lovelace amount
       const keys = await cache.keys('payment:*');
+      console.log(' Found payment keys:', keys);
+
+      let paymentVerified = false;
+
       for (const key of keys) {
+        // Skip if not a payment key
+        if (!key.startsWith('payment:')) {
+          console.log(` Skipping non-payment key: ${key}`);
+          continue;
+        }
+
         const payment = await getFromCache(key);
         if (!payment) {
           console.log(` No payment found for key: ${key}`);
           continue;
         }
 
+        // Skip if already verified with this tx hash
+        if (payment.verified && payment.txHash === txData.tx.hash) {
+          console.log(` Payment ${key} already verified with this tx hash, skipping`);
+          paymentVerified = true;
+          break;
+        }
+
+        // Skip if verified with different tx hash
         if (payment.verified) {
-          console.log(` Payment ${key} already verified, skipping`);
+          console.log(` Payment ${key} already verified with different tx hash, skipping`);
           continue;
         }
 
         console.log(' Checking payment record:', {
+          key,
           expected: payment.adaAmount,
           received: lovelaceAmount,
           userId: payment.userId,
@@ -820,7 +865,13 @@ app.post('/', express.json({
             const userId = payment.userId;
             const currentSlots = await getUserSlots(userId);
             const newSlots = currentSlots + SLOTS_PER_PAYMENT;
-            await updateUserSlots(userId, newSlots);
+            await updateUserSlots(userId, SLOTS_PER_PAYMENT);
+            console.log(' Updated slots:', {
+              userId,
+              currentSlots,
+              newSlots,
+              added: SLOTS_PER_PAYMENT
+            });
 
             // Notify clients
             if (global.clients) {
@@ -838,8 +889,15 @@ app.post('/', express.json({
                 }
               }
             }
+
+            paymentVerified = true;
+            break;
           }
         }
+      }
+
+      if (!paymentVerified) {
+        console.log(' No matching unverified payment found for tx:', txData.tx.hash);
       }
     }
 
