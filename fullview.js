@@ -1443,224 +1443,67 @@ async function refreshWallet(index) {
   }
 }
 
-function createAssetModal() {
-  const modalOverlay = document.createElement('div');
-  modalOverlay.className = 'asset-modal-overlay';
-  modalOverlay.style.cssText = `
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.85);
-    display: none;
-    justify-content: center;
-    align-items: center;
-    z-index: ${MODAL_Z_INDEX};
-    backdrop-filter: blur(5px);
-  `;
-
-  const modalContent = document.createElement('div');
-  modalContent.className = 'asset-modal-content';
-  modalContent.style.cssText = `
-    background: var(--bg-secondary);
-    padding: 25px;
-    border-radius: 16px;
-    width: 90%;
-    max-width: 500px;
-    max-height: 90vh;
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-    overflow-y: auto;
-  `;
-
-  const closeButton = document.createElement('button');
-  closeButton.innerHTML = '×';
-  closeButton.style.cssText = `
-    position: absolute;
-    top: 15px;
-    right: 15px;
-    background: none;
-    border: none;
-    color: var(--text-primary);
-    font-size: 24px;
-    cursor: pointer;
-    padding: 0;
-    width: 30px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    transition: background 0.2s;
-    &:hover {
-      background: rgba(255, 255, 255, 0.1);
+async function handlePaymentSuccess(paymentStatus) {
+  try {
+    if (!paymentStatus || typeof paymentStatus.slots !== 'number') {
+      throw new Error('Invalid payment data received');
     }
-  `;
 
-  const imageContainer = document.createElement('div');
-  imageContainer.className = 'asset-modal-image-container';
-  imageContainer.style.cssText = `
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 150px;
-    max-height: 50vh;
-    overflow: hidden;
-    border-radius: 8px;
-  `;
+    // Update storage with server's slot count
+    await chrome.storage.sync.set({ unlockedSlots: paymentStatus.slots });
+    console.log('Updated storage with new slot count:', paymentStatus.slots);
 
-  const assetInfo = document.createElement('div');
-  assetInfo.style.cssText = `
-    color: var(--text-primary);
-    font-size: 14px;
-  `;
+    // Update UI with success
+    const statusDiv = modal.querySelector('.payment-status');
+    const detailsDiv = modal.querySelector('.payment-details');
 
-  modalContent.appendChild(closeButton);
-  modalContent.appendChild(imageContainer);
-  modalContent.appendChild(assetInfo);
-  modalOverlay.appendChild(modalContent);
-  document.body.appendChild(modalOverlay);
-
-  closeButton.addEventListener('click', () => {
-    modalOverlay.style.display = 'none';
-  });
-
-  modalOverlay.addEventListener('click', (e) => {
-    if (e.target === modalOverlay) {
-      modalOverlay.style.display = 'none';
+    if (statusDiv) {
+      statusDiv.textContent = 'Payment Successful!';
+      statusDiv.classList.add('success');
     }
-  });
 
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && modalOverlay.style.display === 'flex') {
-      modalOverlay.style.display = 'none';
-    }
-  });
-
-  return {
-    show: (asset) => {
-      imageContainer.innerHTML = '';
-      
-      const imageUrl = getAssetImage(asset);
-      
-      if (imageUrl) {
-        const img = document.createElement('img');
-        img.src = imageUrl;
-        img.alt = asset.name || asset.unit;
-        img.style.cssText = `
-          width: 300px;
-          height: 300px;
-          object-fit: contain;
-          border-radius: 8px;
-        `;
-        imageContainer.appendChild(img);
-      } else {
-        const placeholder = document.createElement('div');
-        placeholder.style.cssText = `
-          width: 300px;
-          height: 300px;
-          background-color: ${getRandomColor(asset.name)};
-          border-radius: 8px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 72px;
-          color: white;
-        `;
-        placeholder.textContent = getFirstLetter(asset.name || asset.unit);
-        imageContainer.appendChild(placeholder);
-      }
-
-      // Format the asset information
-      const quantity = asset.quantity;
-      const ticker = asset.ticker ? ` (${asset.ticker})` : '';
-      const displayName = asset.name || 'Unnamed Asset';
-      
-      // Create a truncated version of long IDs
-      const truncateId = (id) => {
-        if (!id) return '';
-        if (id.length <= 20) return id;
-        return `${id.slice(0, 8)}...${id.slice(-8)}`;
-      };
-
-      assetInfo.innerHTML = `
-        <div style="
-          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-          padding-bottom: 15px;
-          margin-bottom: 15px;
-        ">
-          <div style="font-size: 20px; font-weight: 600; margin-bottom: 5px;">
-            ${displayName}${ticker}
-          </div>
-          <div style="font-size: 16px; color: var(--text-secondary);">
-            Quantity: ${quantity}
-          </div>
+    if (detailsDiv) {
+      detailsDiv.innerHTML = `
+        <div class="success-message">
+          <p>Thank you for your payment!</p>
+          <p>You now have ${paymentStatus.slots} slots available.</p>
+          <p>Transaction: <a href="https://cardanoscan.io/transaction/${paymentStatus.txHash}" target="_blank">${paymentStatus.txHash.substring(0,8)}...</a></p>
         </div>
-        
-        <div style="
-          display: grid;
-          gap: 12px;
-          font-family: monospace;
-          background: rgba(0, 0, 0, 0.2);
-          padding: 15px;
-          border-radius: 8px;
-        ">
-          ${asset.fingerprint ? `
-            <div>
-              <div style="color: var(--text-secondary); font-size: 12px;">Fingerprint</div>
-              <div class="copyable-text" data-copy="${asset.fingerprint}" style="word-break: break-all; cursor: pointer;">${asset.fingerprint}</div>
-            </div>
-          ` : ''}
-          
-          <div>
-            <div style="color: var(--text-secondary); font-size: 12px;">Policy ID</div>
-            <div class="copyable-text" data-copy="${asset.unit}" style="word-break: break-all; cursor: pointer;">${asset.unit}</div>
-          </div>
-          
-          ${asset.policy ? `
-            <div>
-              <div style="color: var(--text-secondary); font-size: 12px;">Policy ID</div>
-              <div class="copyable-text" data-copy="${asset.policy}" style="word-break: break-all; cursor: pointer;">${asset.policy}</div>
-            </div>
-          ` : ''}
-        </div>
-        
-        ${asset.description ? `
-          <div style="margin-top: 15px; color: var(--text-secondary);">
-            ${asset.description}
-          </div>
-        ` : ''}
       `;
-
-      // Add click handlers for copyable text elements
-      const copyableElements = assetInfo.querySelectorAll('.copyable-text');
-      copyableElements.forEach(element => {
-        element.addEventListener('click', async () => {
-          const textToCopy = element.getAttribute('data-copy');
-          await navigator.clipboard.writeText(textToCopy);
-          
-          // Visual feedback
-          const originalText = element.textContent;
-          element.textContent = 'Copied!';
-          element.style.color = '#00b894';
-          
-          setTimeout(() => {
-            element.textContent = originalText;
-            element.style.color = '';
-          }, 1000);
-        });
-      });
-
-      modalOverlay.style.display = 'flex';
     }
-  };
+
+    // Update slot display
+    await updateSlotCount();
+  } catch (error) {
+    console.error('Error handling payment success:', error);
+    showError('Error updating slots. Please refresh the page.');
+  }
 }
 
-let assetModal = createAssetModal();
+async function updateSlotCount() {
+  try {
+    // Always get latest from storage
+    const data = await chrome.storage.sync.get(['unlockedSlots']);
+    const unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
+    
+    // Update UI elements
+    const slotCountElement = document.getElementById('slotCount');
+    if (slotCountElement) {
+      slotCountElement.textContent = unlockedSlots;
+    }
+
+    // Update buy button visibility
+    const buyButton = document.getElementById('buySlots');
+    if (buyButton) {
+      buyButton.style.display = unlockedSlots >= MAX_TOTAL_SLOTS ? 'none' : 'block';
+    }
+
+    return unlockedSlots;
+  } catch (error) {
+    console.error('Error updating slot count:', error);
+    throw error;
+  }
+}
 
 // Modal elements
 let modal;
@@ -1877,7 +1720,7 @@ function setupBuyButton() {
           })
         });
 
-    if (!response.ok) {
+        if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
           if (response.status === 429) {
             throw new Error('Rate limit exceeded. Please wait a moment before trying again.');
@@ -2299,6 +2142,13 @@ async function init() {
   console.log('init() called');
   
   try {
+    // Get unlocked slots from storage first
+    console.log('Loading unlocked slots...');
+    const data = await chrome.storage.sync.get(['unlockedSlots']);
+    console.log('Raw storage data:', data);
+    unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
+    console.log('Loaded unlocked slots:', unlockedSlots);
+    
     console.log('Initializing modal...');
     initializeModal(); // Initialize modal first
     
@@ -2317,81 +2167,45 @@ async function init() {
     // Find all refresh buttons after rendering
     const refreshButtons = document.querySelectorAll('.refresh-btn');
     
-    // Only refresh wallets that need it
-    if (walletsNeedingRefresh.length > 0) {
-      console.log('Refreshing wallets with expired/no cache:', walletsNeedingRefresh);
-      
-      // Start spinning only buttons for wallets being refreshed
-      wallets.forEach((wallet, index) => {
-        if (walletsNeedingRefresh.includes(wallet.address)) {
-          const button = refreshButtons[index];
-          if (button) {
-            const icon = button.querySelector('i');
-            if (icon) icon.classList.add('rotating');
-          }
-        }
-      });
-      
-      // Refresh only the wallets that need it
-      const refreshResults = await Promise.all(
-        wallets.map((wallet, index) => 
-          walletsNeedingRefresh.includes(wallet.address) 
-            ? refreshWallet(index) 
-            : Promise.resolve(false)
-        )
-      );
-      
-      // Save and re-render if any wallet was updated
-      if (refreshResults.some(result => result)) {
-        await saveWallets();
-        await renderWallets();
-      }
-    } else {
-      console.log('All wallets have valid cache, no refresh needed');
-    }
+    // Update slot display
+    await updateSlotCount();
     
-    // Setup remaining UI elements
-    console.log('Setting up UI elements...');
+    // Setup other UI components
+    setupEventListeners();
+    setupAssetsPanelListeners();
     setupGlobalTabs();
     setupAssetSearch();
+    
+    // Start cache monitor
     startCacheRefreshMonitor();
-    setupTabSwitching();
     
-    // Add initial storage update with a small delay to ensure all data is loaded
-    setTimeout(async () => {
-      await updateStorageUsage();
-    }, 1000);
-    
-    // Add periodic storage update (every 30 seconds)
-    setInterval(updateStorageUsage, 30000);
-    
-    console.log('Initialization complete!');
   } catch (error) {
-    console.error('Error during initialization:', error);
-    showError('Failed to initialize application');
+    console.error('Error in init():', error);
   }
 }
 
 async function updateSlotCount() {
   try {
-    // Get current slots from storage
+    // Always get latest from storage
     const data = await chrome.storage.sync.get(['unlockedSlots']);
     const unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
     
     // Update UI elements
     const slotCountElement = document.getElementById('slotCount');
-    const slotProgressBar = document.getElementById('slotProgressBar');
-    
     if (slotCountElement) {
-      slotCountElement.textContent = `${unlockedSlots} slots`;
+      slotCountElement.textContent = unlockedSlots;
     }
-    
-    if (slotProgressBar) {
-      const percentage = (unlockedSlots / MAX_SLOTS) * 100;
-      slotProgressBar.style.width = `${percentage}%`;
+
+    // Update buy button visibility
+    const buyButton = document.getElementById('buySlots');
+    if (buyButton) {
+      buyButton.style.display = unlockedSlots >= MAX_TOTAL_SLOTS ? 'none' : 'block';
     }
+
+    return unlockedSlots;
   } catch (error) {
     console.error('Error updating slot count:', error);
+    throw error;
   }
 }
 
