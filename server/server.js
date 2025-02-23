@@ -524,32 +524,71 @@ async function verifyPayment(txHash) {
 
         // Check each payment record
         for (const key of keys) {
-            const paymentRecord = await getFromCache(key);
-            if (!paymentRecord) continue;
-
-            console.log(' Checking payment record:', {
-                expected: paymentRecord.adaAmount,
-                received: lovelaceAmount,
-                userId: paymentRecord.userId
-            });
-
-            // Skip if already verified
-            if (paymentRecord.verified || paymentRecord.txHash) {
-                console.log(' Payment already verified');
-                continue;
+            const payment = await getFromCache(key);
+            if (!payment) {
+              console.log(` No payment found for key: ${key}`);
+              continue;
             }
 
-            // Verify payment amount matches (comparing as strings since these are large numbers)
-            if (paymentRecord.adaAmount.toString() === lovelaceAmount.toString() && 
-                paymentRecord.boneAmount.toString() === boneAmount.toString()) {
-                
-                // Update payment record with tx hash
-                paymentRecord.txHash = txHash;
-                paymentRecord.verified = true;
-                await setInCache(key, paymentRecord, 24 * 60 * 60); // 24 hour TTL
-                
-                console.log(' Payment verified successfully');
-                return true;
+            if (payment.verified) {
+              console.log(` Payment ${key} already verified, skipping`);
+              continue;
+            }
+
+            console.log(' Checking payment record:', {
+              expected: payment.adaAmount,
+              received: lovelaceAmount,
+              userId: payment.userId,
+              paymentId: key.split(':')[1]
+            });
+
+            // Compare raw lovelace values
+            if (lovelaceAmount === payment.adaAmount) {
+              // Check BONE amount
+              const boneAmount = parseInt(paymentOutput.amount.find(asset => 
+                asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
+              )?.quantity || '0');
+
+              console.log(' BONE amount check:', {
+                expected: payment.boneAmount,
+                received: boneAmount
+              });
+
+              if (boneAmount >= payment.boneAmount) {
+                console.log(' Payment matched! Updating user slots:', {
+                  userId: payment.userId,
+                  txHash: txHash
+                });
+
+                // Mark payment as verified
+                payment.verified = true;
+                payment.txHash = txHash;
+                payment.verifiedAt = Date.now();
+                await setInCache(key, payment, 24 * 60 * 60);
+
+                // Update user slots
+                const userId = payment.userId;
+                const currentSlots = await getUserSlots(userId);
+                const newSlots = currentSlots + SLOTS_PER_PAYMENT;
+                await updateUserSlots(userId, newSlots);
+
+                // Notify clients
+                if (global.clients) {
+                  for (const [clientId, client] of global.clients) {
+                    if (client.paymentId === key.split(':')[1]) {
+                      try {
+                        client.res.write(`data: ${JSON.stringify({
+                          verified: true,
+                          slots: newSlots,
+                          txHash: txHash
+                        })}\n\n`);
+                      } catch (error) {
+                        console.error('Error notifying client:', error);
+                      }
+                    }
+                  }
+                }
+              }
             }
         }
 
@@ -736,12 +775,21 @@ app.post('/', express.json({
       const keys = await cache.keys('payment:*');
       for (const key of keys) {
         const payment = await getFromCache(key);
-        if (!payment || payment.verified) continue;
+        if (!payment) {
+          console.log(` No payment found for key: ${key}`);
+          continue;
+        }
+
+        if (payment.verified) {
+          console.log(` Payment ${key} already verified, skipping`);
+          continue;
+        }
 
         console.log(' Checking payment record:', {
           expected: payment.adaAmount,
           received: lovelaceAmount,
-          userId: payment.userId
+          userId: payment.userId,
+          paymentId: key.split(':')[1]
         });
 
         // Compare raw lovelace values
@@ -750,6 +798,11 @@ app.post('/', express.json({
           const boneAmount = parseInt(paymentOutput.amount.find(asset => 
             asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
           )?.quantity || '0');
+
+          console.log(' BONE amount check:', {
+            expected: payment.boneAmount,
+            received: boneAmount
+          });
 
           if (boneAmount >= payment.boneAmount) {
             console.log(' Payment matched! Updating user slots:', {
