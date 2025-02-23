@@ -692,7 +692,7 @@ app.get('/api/payment-updates/:paymentId', async (req, res) => {
   });
 });
 
-// Function to verify Blockfrost webhook signaturee
+// Function to verify Blockfrost webhook signature
 function verifyBlockfrostSignature(signatureHeader, payload, webhookToken) {
   try {
     if (!signatureHeader) {
@@ -703,40 +703,47 @@ function verifyBlockfrostSignature(signatureHeader, payload, webhookToken) {
     // Parse the header
     const elements = signatureHeader.split(',');
     let timestamp = null;
-    const signatures = [];
+    let signature = null;
 
     for (const element of elements) {
       const [key, value] = element.split('=');
       if (key === 't') {
         timestamp = value;
       } else if (key === 'v1') {
-        signatures.push(value);
+        signature = value;
       }
     }
 
-    if (!timestamp || signatures.length === 0) {
-      console.error('Invalid signature format');
+    if (!timestamp || !signature) {
+      console.error('Missing timestamp or signature');
       return false;
     }
 
-    // Check timestamp is within tolerance (10 minutes)
-    const now = Math.floor(Date.now() / 1000);
-    if (Math.abs(now - parseInt(timestamp)) > 600) {
-      console.error('Signature timestamp too old');
-      return false;
-    }
+    // Create the string to sign
+    const payloadString = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    const stringToSign = `${timestamp}.${payloadString}`;
 
-    // Prepare signature payload
-    const signaturePayload = `${timestamp}.${JSON.stringify(payload)}`;
-
-    // Compute expected signature
-    const expectedSignature = crypto
-      .createHmac('sha256', webhookToken)
-      .update(signaturePayload)
-      .digest('hex');
+    // Create HMAC
+    const hmac = crypto.createHmac('sha256', webhookToken);
+    hmac.update(stringToSign);
+    const expectedSignature = hmac.digest('hex');
 
     // Compare signatures
-    return signatures.includes(expectedSignature);
+    const isValid = crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
+
+    if (!isValid) {
+      console.error('Signature mismatch:', {
+        received: signature,
+        expected: expectedSignature,
+        timestamp,
+        stringToSign: stringToSign.substring(0, 100) + '...' // Log only first 100 chars
+      });
+    }
+
+    return isValid;
   } catch (error) {
     console.error('Error verifying signature:', error);
     return false;
@@ -782,7 +789,7 @@ app.post('/', express.json(), async (req, res) => {
       console.log('💰 Found payment to our address:', paymentOutput);
 
       // Get ADA amount
-      const adaAmount = parseInt(paymentOutput.amount.find(asset => asset.unit === 'lovelace')?.quantity || '0');
+      const adaAmount = parseInt(paymentOutput.amount.find(a => a.unit === 'lovelace')?.quantity || '0');
       console.log('💵 ADA amount:', adaAmount / 1000000);
 
       // Find pending payment with this ADA amount
