@@ -820,27 +820,39 @@ function verifyBlockfrostSignature(signatureHeader, rawPayload, webhookToken) {
 
     // Parse the header
     const elements = signatureHeader.split(',');
-    let timestamp = null;
-    let signature = null;
+    const signatures = new Map(); // Store multiple timestamp-signature pairs
 
+    // Extract all timestamp-signature pairs
     for (const element of elements) {
       const [key, value] = element.split('=');
       if (key === 't') {
-        timestamp = value;
-      } else if (key === 'v1') {
-        signature = value;
+        signatures.set('timestamp', value);
+      } else if (key.startsWith('v')) { // Support multiple signature versions
+        signatures.set(key, value);
       }
     }
 
-    if (!timestamp || !signature) {
-      console.error('Missing timestamp or signature');
+    const timestamp = signatures.get('timestamp');
+    if (!timestamp) {
+      console.error('Missing timestamp in signature header');
+      return false;
+    }
+
+    if (!signatures.has('v1')) {
+      console.error('Missing v1 signature in header');
       return false;
     }
 
     // Check timestamp tolerance (10 minutes)
     const now = Math.floor(Date.now() / 1000);
-    if (Math.abs(now - parseInt(timestamp)) > 600) {
-      console.error('Signature timestamp too old');
+    const timeDiff = Math.abs(now - parseInt(timestamp));
+    if (timeDiff > 600) {
+      console.error('Signature timestamp too old:', {
+        now,
+        timestamp,
+        difference: timeDiff,
+        maxAllowed: 600
+      });
       return false;
     }
 
@@ -854,7 +866,7 @@ function verifyBlockfrostSignature(signatureHeader, rawPayload, webhookToken) {
       formattedPayload = rawPayload; // Fallback to raw payload if parsing fails
     }
 
-    // Create signature payload with formatted request body
+    // Create signature payload
     const signaturePayload = `${timestamp}.${formattedPayload}`;
 
     // Compute expected signature using HMAC-SHA256
@@ -862,22 +874,48 @@ function verifyBlockfrostSignature(signatureHeader, rawPayload, webhookToken) {
     hmac.update(signaturePayload);
     const expectedSignature = hmac.digest('hex');
 
-    // Compare signatures using timing-safe comparison
-    const isValid = crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expectedSignature)
-    );
+    // Log detailed debug information
+    console.log('Webhook verification details:', {
+      timestamp,
+      receivedSignatures: Object.fromEntries(signatures),
+      expectedSignature,
+      payloadLength: formattedPayload.length,
+      payloadPreview: formattedPayload.substring(0, 100) + '...',
+      webhookTokenLength: webhookToken.length
+    });
 
-    if (!isValid) {
-      console.error('Signature mismatch:', {
-        received: signature,
-        expected: expectedSignature,
-        timestamp,
-        signaturePayload: signaturePayload.substring(0, 100) + '...' // Log only first 100 chars
-      });
+    // Check all supported signature versions
+    for (const [version, signature] of signatures) {
+      if (version === 'timestamp') continue;
+
+      try {
+        // Compare signatures using timing-safe comparison
+        const isValid = crypto.timingSafeEqual(
+          Buffer.from(signature),
+          Buffer.from(expectedSignature)
+        );
+
+        if (isValid) {
+          console.log('Valid signature found:', { version });
+          return true;
+        }
+      } catch (e) {
+        console.error('Error comparing signatures:', {
+          version,
+          error: e.message
+        });
+      }
     }
 
-    return isValid;
+    // If we get here, no valid signatures were found
+    console.error('No valid signatures found:', {
+      received: Object.fromEntries(signatures),
+      expected: expectedSignature,
+      timestamp,
+      signaturePayload: signaturePayload.substring(0, 100) + '...' // Log only first 100 chars
+    });
+
+    return false;
   } catch (error) {
     console.error('Error verifying signature:', error);
     return false;
