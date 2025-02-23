@@ -52,10 +52,19 @@ app.use(limiter);
 app.use(cors({
   origin: '*', // Allow all origins in development
   methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type']
+  allowedHeaders: ['Content-Type', 'Blockfrost-Signature', 'Origin', 'Accept']
 }));
 
 app.use(express.json());
+
+// Test webhook endpoint
+app.post('/test-webhook', express.json(), (req, res) => {
+  console.log('📝 Test webhook received:', {
+    headers: req.headers,
+    body: JSON.stringify(req.body, null, 2)
+  });
+  res.status(200).json({ status: 'ok', received: true });
+});
 
 // Serve favicon
 app.get('/favicon.ico', (req, res) => {
