@@ -572,31 +572,17 @@ app.get('/api/slots/:userId', async (req, res) => {
   }
 });
 
-// Payment verification endpoint
-app.get('/api/verify-payment/:paymentId', async (req, res) => {
+// Payment verification endpoint - supports both payment IDs and tx hashes
+app.get('/api/verify-payment/:id', async (req, res) => {
   try {
-    const { paymentId } = req.params;
-    console.log('Manual verification request for payment:', paymentId);
+    const { id } = req.params;
+    console.log('Verification request for:', id);
     
-    const payment = await getFromCache(`payment:${paymentId}`);
-    if (!payment) {
-      return res.status(404).json({ error: 'Payment not found' });
-    }
-
-    if (payment.verified) {
-      // Get current slots for verified payment
-      const slots = await getUserSlots(payment.userId);
-      return res.json({ 
-        verified: true,
-        slots,
-        txHash: payment.txHash
-      });
-    }
-
-    // If not verified, check blockchain for verification
-    if (payment.txHash) {
-      const verified = await verifyPayment(payment.txHash, payment.userId);
-      if (verified) {
+    // First try to find by payment ID
+    const payment = await getFromCache(`payment:${id}`);
+    
+    if (payment) {
+      if (payment.verified) {
         const slots = await getUserSlots(payment.userId);
         return res.json({ 
           verified: true,
@@ -604,9 +590,35 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
           txHash: payment.txHash
         });
       }
+      
+      // If not verified but has txHash, verify it
+      if (payment.txHash) {
+        const verified = await verifyPayment(payment.txHash, payment.userId);
+        if (verified) {
+          const slots = await getUserSlots(payment.userId);
+          return res.json({ 
+            verified: true,
+            slots,
+            txHash: payment.txHash
+          });
+        }
+      }
+      
+      return res.json({ verified: false });
     }
-
-    return res.json({ verified: false });
+    
+    // If no payment found, try to verify the ID as a transaction hash
+    if (id.length === 64) { // Transaction hashes are 64 characters
+      const verified = await verifyPayment(id);
+      if (verified) {
+        return res.json({ 
+          verified: true,
+          txHash: id
+        });
+      }
+    }
+    
+    return res.status(404).json({ error: 'Payment not found' });
   } catch (error) {
     console.error('Error verifying payment:', error);
     res.status(500).json({ error: 'Failed to verify payment' });
@@ -729,73 +741,6 @@ app.post('/webhook', async (req, res) => {
   } catch (error) {
     console.error('Error processing webhook:', error);
     res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Manual payment verification endpoint
-app.get('/api/verify-payment/:paymentId', async (req, res) => {
-  try {
-    const { paymentId } = req.params;
-    console.log('Manual verification request for payment:', paymentId);
-    
-    const payment = await getFromCache(`payment:${paymentId}`);
-
-    if (!payment) {
-      console.log('Payment not found or expired');
-      return res.status(404).json({ error: 'Payment request not found or expired' });
-    }
-
-    if (payment.verified) {
-      console.log('Payment already verified');
-      if (payment.used) {
-        return res.json({ verified: true, used: true });
-      }
-      // Mark payment as used
-      payment.used = true;
-      await setInCache(`payment:${paymentId}`, payment);
-      // Remove the user ID payment reference
-      await cache.del(`user_payment:${payment.userId}`);
-      return res.json({ verified: true, used: false });
-    }
-
-    // If not verified, check blockchain
-    try {
-      const txs = await fetchBlockfrost(`/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`);
-      console.log('Recent transactions:', JSON.stringify(txs, null, 2));
-
-      // Check last 10 transactions
-      for (const tx of txs.slice(0, 10)) {
-        const txDetails = await fetchBlockfrost(`/txs/${tx.tx_hash}/utxos`);
-        console.log('Transaction details:', JSON.stringify(txDetails, null, 2));
-
-        // Find output to our address
-        const output = txDetails.outputs.find(o => 
-          o.address === PAYMENT_ADDRESS && 
-          o.amount.some(a => a.unit === 'lovelace')
-        );
-
-        if (output) {
-          const amountAda = parseInt(output.amount.find(a => a.unit === 'lovelace').quantity) / 1000000;
-          console.log('Found payment:', amountAda, 'ADA');
-
-          if (amountAda >= parseFloat(payment.adaAmount / 1000000)) {
-            payment.verified = true;
-            await setInCache(`payment:${paymentId}`, payment);
-            console.log('Payment verified through blockchain check');
-            return res.json({ verified: true, used: false });
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error checking blockchain:', error);
-    }
-
-    // Not verified
-    return res.json({ verified: false });
-
-  } catch (error) {
-    console.error('Error verifying payment:', error);
-    res.status(500).json({ error: 'Failed to verify payment' });
   }
 });
 
