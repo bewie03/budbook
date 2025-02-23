@@ -10,6 +10,11 @@ const crypto = require('crypto');
 
 dotenv.config();
 
+// Slot configuration
+const MAX_FREE_SLOTS = 5;
+const SLOTS_PER_PAYMENT = 5;
+const MAX_TOTAL_SLOTS = 500;
+
 const app = express();
 
 // Trust proxy - required for Heroku
