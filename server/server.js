@@ -512,63 +512,52 @@ async function verifyPayment(txHash, userId) {
             return false;
         }
 
-        // Get payment details from cache
+        // Get ADA amount in lovelace (1 ADA = 1,000,000 lovelace)
+        const lovelaceAmount = paymentOutput.amount.find(a => a.unit === 'lovelace')?.quantity || '0';
+        console.log(' Lovelace amount:', lovelaceAmount);
+
+        // Get BONE token amount
+        const boneAmount = paymentOutput.amount.find(a => a.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)?.quantity || '0';
+        console.log(' BONE amount:', boneAmount);
+
+        // Check if this matches any pending payments
         const paymentId = await getFromCache(`user_payment:${userId}`);
-        if (!paymentId) {
-            console.log('No payment ID found for user ID');
-            return false;
-        }
+        if (paymentId) {
+          const paymentRecord = await getFromCache(`payment:${paymentId}`);
+          if (paymentRecord) {
+            console.log(' Checking payment record:', {
+              expected: paymentRecord.adaAmount,
+              received: lovelaceAmount,
+              userId: paymentRecord.userId
+            });
 
-        const payment = await getFromCache(`payment:${paymentId}`);
-        if (!payment) {
-            console.log('No payment details found');
-            return false;
-        }
+            // Verify payment amount matches (comparing as strings since these are large numbers)
+            if (paymentRecord.adaAmount.toString() === lovelaceAmount.toString() && 
+                paymentRecord.boneAmount.toString() === boneAmount.toString()) {
+              // Get all payment keys from cache
+              const keys = await cache.keys('payment:*');
+              console.log('Found payment keys:', keys);
+              
+              // Check each payment for matching tx hash
+              for (const key of keys) {
+                const existingPayment = await getFromCache(key);
+                if (existingPayment && existingPayment.txHash === txHash) {
+                  console.log('Payment already processed');
+                  return false;
+                }
+              }
 
-        // Check ADA amount matches exactly
-        const adaReceived = parseInt(paymentOutput.amount[0].quantity);
-        if (adaReceived !== payment.adaAmount) {
-            console.log('ADA amount mismatch:', { expected: payment.adaAmount, received: adaReceived });
-            return false;
-        }
+              // Update payment record with tx hash
+              paymentRecord.txHash = txHash;
+              paymentRecord.verified = true;
+              await setInCache(`payment:${paymentId}`, paymentRecord, 24 * 60 * 60); // 24 hour TTL
 
-        // Check for BONE token payment
-        const boneAsset = paymentOutput.amount.find(asset => 
-            asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
-        );
-
-        if (!boneAsset) {
-            console.log('No BONE token payment found');
-            return false;
-        }
-
-        const boneAmount = parseInt(boneAsset.quantity);
-        console.log('BONE payment received:', boneAmount, 'BONE');
-
-        if (boneAmount < payment.boneAmount) {
-            console.log('Insufficient BONE payment');
-            return false;
-        }
-
-        // Get all payment keys from cache
-        const keys = await cache.keys('payment:*');
-        console.log('Found payment keys:', keys);
-        
-        // Check each payment for matching tx hash
-        for (const key of keys) {
-            const existingPayment = await getFromCache(key);
-            if (existingPayment && existingPayment.txHash === txHash) {
-                console.log('Payment already processed');
-                return false;
+              return true;
             }
+          }
         }
 
-        // Update payment record with tx hash
-        payment.txHash = txHash;
-        payment.verified = true;
-        await setInCache(`payment:${paymentId}`, payment, 24 * 60 * 60); // 24 hour TTL
-
-        return true;
+        return false;
     } catch (error) {
         console.error('Error verifying payment:', error);
         return false;
