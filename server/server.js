@@ -844,8 +844,18 @@ function verifyBlockfrostSignature(signatureHeader, rawPayload, webhookToken) {
       return false;
     }
 
-    // Create signature payload with raw request body
-    const signaturePayload = `${timestamp}.${rawPayload}`;
+    // Parse and re-stringify the JSON payload to ensure consistent formatting
+    let formattedPayload;
+    try {
+      const parsedPayload = JSON.parse(rawPayload);
+      formattedPayload = JSON.stringify(parsedPayload);
+    } catch (e) {
+      console.error('Failed to parse/format payload:', e);
+      formattedPayload = rawPayload; // Fallback to raw payload if parsing fails
+    }
+
+    // Create signature payload with formatted request body
+    const signaturePayload = `${timestamp}.${formattedPayload}`;
 
     // Compute expected signature using HMAC-SHA256
     const hmac = crypto.createHmac('sha256', webhookToken);
