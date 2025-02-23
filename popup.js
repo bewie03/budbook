@@ -98,9 +98,6 @@ async function verifyPayment(paymentId) {
 
 async function requestPayment() {
   try {
-    // Get user ID for payment
-    const userId = await auth.getUserId();
-    
     const response = await fetch(`${API_BASE_URL}/api/initiate-payment`, {
       method: 'POST',
       headers: {
@@ -109,13 +106,13 @@ async function requestPayment() {
         'Origin': chrome.runtime.getURL('')
       },
       body: JSON.stringify({
-        userId,
-        installId: chrome.runtime.id
+        userId: chrome.runtime.id // Temporarily use extension ID as user ID
       })
     });
 
     if (!response.ok) {
-      throw new Error('Failed to generate payment request');
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || 'Failed to generate payment request');
     }
 
     const data = await response.json();
@@ -143,11 +140,7 @@ async function requestPayment() {
     return data;
   } catch (error) {
     console.error('Error requesting payment:', error);
-    if (error.message.includes('OAuth')) {
-      showError('Please sign in with your Google account to continue');
-    } else {
-      throw error;
-    }
+    showError(error.message || 'Failed to initiate payment');
   }
 }
 
@@ -339,81 +332,6 @@ function showError(message) {
   }, 3000);
 }
 
-function showMessage(message, type = 'info') {
-  const container = document.getElementById('messageContainer');
-  if (!container) return;
-
-  // Remove any existing messages
-  while (container.firstChild) {
-    container.firstChild.remove();
-  }
-
-  const messageDiv = document.createElement('div');
-  messageDiv.className = `message ${type}`;
-  messageDiv.textContent = message;
-  container.appendChild(messageDiv);
-
-  // Auto-remove after 3 seconds
-  setTimeout(() => {
-    if (messageDiv.parentNode === container) {
-      messageDiv.remove();
-    }
-  }, 3000);
-}
-
-function validateAddress(address) {
-  // Basic validation - let the API handle detailed validation
-  if (!address || typeof address !== 'string') return false;
-  
-  // Just check if it starts with a valid prefix
-  const validPrefixes = ['addr1', 'Ae2', 'DdzFF', 'stake1'];
-  const hasValidPrefix = validPrefixes.some(prefix => address.startsWith(prefix));
-  
-  // Minimum length check (reasonable minimum for any Cardano address)
-  const hasValidLength = address.length >= 50;
-  
-  console.log('Address validation:', {
-    address,
-    hasValidPrefix,
-    hasValidLength,
-    length: address.length
-  });
-
-  return hasValidPrefix && hasValidLength;
-}
-
-function convertIpfsUrl(url) {
-  if (!url || typeof url !== 'string') return '';
-  
-  // Handle ipfs:// protocol
-  if (url.startsWith('ipfs://')) {
-    const hash = url.replace('ipfs://', '');
-    return `https://ipfs.io/ipfs/${hash}`;
-  }
-  
-  // If it's already a gateway URL, return as is
-  if (url.includes('/ipfs/')) {
-    return url;
-  }
-  
-  // If it looks like a raw IPFS hash, add the gateway prefix
-  if (url.startsWith('Qm') || url.startsWith('bafy')) {
-    return `https://ipfs.io/ipfs/${url}`;
-  }
-  
-  return url;
-}
-
-function formatBalance(balance) {
-  if (!balance) return '0';
-  // Convert from lovelace to ADA (1 ADA = 1,000,000 lovelace)
-  const adaValue = parseFloat(balance) / 1000000;
-  return adaValue.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }) + ' ₳';
-}
-
 function renderWallets() {
   if (!wallets.length) {
     return '<p class="no-wallets">No wallets added yet</p>';
@@ -505,12 +423,12 @@ function updateUI() {
   const slotsDisplay = document.getElementById('availableSlots');
   if (slotsDisplay) {
     const usedSlots = wallets.length;
-    slotsDisplay.textContent = `${usedSlots} / ${MAX_FREE_SLOTS}`;
+    slotsDisplay.textContent = `${usedSlots} / ${unlockedSlots}`;
   }
 
   const addWalletBtn = document.getElementById('addWallet');
   if (addWalletBtn) {
-    addWalletBtn.disabled = wallets.length >= MAX_FREE_SLOTS;
+    addWalletBtn.disabled = wallets.length >= unlockedSlots;
   }
 
   const walletTypeSelect = document.getElementById('walletTypeSelector');
@@ -529,12 +447,12 @@ function updateSlotDisplay() {
   const slotDisplay = document.getElementById('slotDisplay');
   if (slotDisplay) {
     const usedSlots = wallets.length;
-    slotDisplay.textContent = `${usedSlots}/${MAX_FREE_SLOTS}`;
+    slotDisplay.textContent = `${usedSlots}/${unlockedSlots}`;
     
     // Update slot warning visibility
     const slotWarning = document.getElementById('slotWarning');
     if (slotWarning) {
-      slotWarning.style.display = usedSlots >= MAX_FREE_SLOTS ? 'block' : 'none';
+      slotWarning.style.display = usedSlots >= unlockedSlots ? 'block' : 'none';
     }
   }
 }
@@ -774,7 +692,7 @@ function setupCustomIconUpload() {
     try {
       // Show loading state
       newUploadButton.disabled = true;
-      showMessage('Processing image...', 'info');
+      showError('Processing image...', 'info');
 
       // Pre-check file size
       if (file.size > MAX_FILE_SIZE) {
@@ -811,7 +729,7 @@ function setupCustomIconUpload() {
       iconPreview.src = customIconData;
       selectedIcon.style.display = 'block';
       
-      showMessage('Icon selected successfully!', 'success');
+      showError('Icon selected successfully!', 'success');
     } catch (error) {
       showError(error.message || 'Failed to process image');
       customIconData = null;
@@ -837,54 +755,22 @@ window.addEventListener('unload', cleanup);
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    // Get user ID first
-    const userId = await auth.getUserId();
-    
-    // Then load slots from server
-    const response = await fetch(`${API_BASE_URL}/api/slots/${userId}`);
-    if (response.ok) {
-      const data = await response.json();
-      unlockedSlots = data.slots;
-      await chrome.storage.sync.set({ unlockedSlots });
-    }
-    
-    // Load wallets and update UI
+    // Load wallets from storage first
     await loadWallets();
+    
+    // Set initial unlocked slots
+    unlockedSlots = MAX_FREE_SLOTS; // Temporarily use MAX_FREE_SLOTS
+    
+    // Update UI
     updateUI();
     setupEventListeners();
   } catch (error) {
     console.error('Error initializing extension:', error);
-    if (error.message.includes('OAuth')) {
-      showError('Please sign in with your Google account to use this extension');
-    } else {
-      showError('Failed to initialize extension');
-    }
+    showError('Failed to initialize extension');
   }
 });
 
 // Helper Functions
-function showMessage(message, type = 'info') {
-  const container = document.getElementById('messageContainer');
-  if (!container) return;
-
-  // Remove any existing messages
-  while (container.firstChild) {
-    container.firstChild.remove();
-  }
-
-  const messageDiv = document.createElement('div');
-  messageDiv.className = `message ${type}`;
-  messageDiv.textContent = message;
-  container.appendChild(messageDiv);
-
-  // Auto-remove after 3 seconds
-  setTimeout(() => {
-    if (messageDiv.parentNode === container) {
-      messageDiv.remove();
-    }
-  }, 3000);
-}
-
 function setLoading(element, isLoading) {
   if (isLoading) {
     element.classList.add('loading');
@@ -948,13 +834,13 @@ async function addWallet() {
       return;
     }
 
-    if (wallets.length >= MAX_FREE_SLOTS) {
+    if (wallets.length >= unlockedSlots) {
       showError('No available slots. Please unlock more slots.');
       return;
     }
 
     addButton.disabled = true;
-    showMessage('Adding wallet...', 'info');
+    showError('Adding wallet...', 'info');
 
     // Create the wallet object
     const newWallet = {
@@ -980,7 +866,7 @@ async function addWallet() {
     await saveWallets();
 
     // Show success and update UI
-    showMessage('Wallet added successfully!', 'success');
+    showError('Wallet added successfully!', 'success');
     updateSlotDisplay();
 
     // Clear form
@@ -1024,4 +910,57 @@ function getImageDimensions(file) {
     reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsDataURL(file);
   });
+}
+
+function validateAddress(address) {
+  // Basic validation - let the API handle detailed validation
+  if (!address || typeof address !== 'string') return false;
+  
+  // Just check if it starts with a valid prefix
+  const validPrefixes = ['addr1', 'Ae2', 'DdzFF', 'stake1'];
+  const hasValidPrefix = validPrefixes.some(prefix => address.startsWith(prefix));
+  
+  // Minimum length check (reasonable minimum for any Cardano address)
+  const hasValidLength = address.length >= 50;
+  
+  console.log('Address validation:', {
+    address,
+    hasValidPrefix,
+    hasValidLength,
+    length: address.length
+  });
+
+  return hasValidPrefix && hasValidLength;
+}
+
+function convertIpfsUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  
+  // Handle ipfs:// protocol
+  if (url.startsWith('ipfs://')) {
+    const hash = url.replace('ipfs://', '');
+    return `https://ipfs.io/ipfs/${hash}`;
+  }
+  
+  // If it's already a gateway URL, return as is
+  if (url.includes('/ipfs/')) {
+    return url;
+  }
+  
+  // If it looks like a raw IPFS hash, add the gateway prefix
+  if (url.startsWith('Qm') || url.startsWith('bafy')) {
+    return `https://ipfs.io/ipfs/${url}`;
+  }
+  
+  return url;
+}
+
+function formatBalance(balance) {
+  if (!balance) return '0';
+  // Convert from lovelace to ADA (1 ADA = 1,000,000 lovelace)
+  const adaValue = parseFloat(balance) / 1000000;
+  return adaValue.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }) + ' ₳';
 }
