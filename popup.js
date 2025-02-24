@@ -1,7 +1,7 @@
 // Constants
 const MAX_FREE_SLOTS = 5;
 const SLOTS_PER_PAYMENT = 5;
-const MAX_TOTAL_SLOTS = 100;
+const MAX_TOTAL_SLOTS = 500;
 const BONE_PAYMENT_AMOUNT = 100;
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 const MAX_STORED_ASSETS = 5; // Store only top 5 assets by value
@@ -475,21 +475,24 @@ async function updateUI() {
 function updateSlotDisplay() {
   const slotDisplay = document.getElementById('slotDisplay');
   if (slotDisplay) {
-    const usedSlots = wallets.length;
-    slotDisplay.textContent = `${usedSlots}/${unlockedSlots}`;
-    
-    // Update progress bar if it exists
-    const progressBar = document.querySelector('.slot-progress');
-    if (progressBar) {
-      const percent = (usedSlots / unlockedSlots) * 100;
-      progressBar.style.width = `${percent}%`;
-    }
-    
-    // Update slot warning visibility
-    const slotWarning = document.getElementById('slotWarning');
-    if (slotWarning) {
-      slotWarning.style.display = usedSlots >= unlockedSlots ? 'block' : 'none';
-    }
+    chrome.storage.sync.get(['unlockedSlots'], (result) => {
+      const totalSlots = result.unlockedSlots || MAX_FREE_SLOTS;
+      const usedSlots = wallets.length;
+      slotDisplay.textContent = `${usedSlots}/${totalSlots}`;
+      
+      // Update progress bar if it exists
+      const progressBar = document.querySelector('.slot-progress');
+      if (progressBar) {
+        const percent = (usedSlots / totalSlots) * 100;
+        progressBar.style.width = `${percent}%`;
+      }
+      
+      // Update slot warning visibility
+      const slotWarning = document.getElementById('slotWarning');
+      if (slotWarning) {
+        slotWarning.style.display = usedSlots >= totalSlots ? 'block' : 'none';
+      }
+    });
   }
 }
 
@@ -503,29 +506,51 @@ async function checkPaymentStatus() {
     const result = await verifyPayment(currentPaymentId);
     
     if (result.verified) {
-      await handlePaymentSuccess(result);
+      // Update unlocked slots
+      unlockedSlots += SLOTS_PER_PAYMENT;
+      
+      // Save to storage
+      await chrome.storage.sync.set({ unlockedSlots });
+      
+      // Update UI
+      updateUI();
+      
+      showSuccess(`Payment verified! You now have ${SLOTS_PER_PAYMENT} more wallet slots available.`);
+      
+      // Close payment instructions if open
+      const instructions = document.querySelector('.modal');
+      if (instructions) {
+        instructions.remove();
+      }
+
+      // Reset payment ID
+      currentPaymentId = null;
     } else {
-      showError('Payment not detected yet. Please try again in a few moments.');
+      showError('Payment not yet verified. Please make sure you sent the exact amount and try verifying again.');
     }
   } catch (error) {
     console.error('Error checking payment:', error);
-    showError(error.message || 'Failed to verify payment');
+    showError('Failed to verify payment. Please try again.');
   }
 }
 
 async function handlePaymentSuccess(data) {
   try {
-    if (!data || typeof data.slots !== 'number') {
-      throw new Error('Invalid payment data received');
+    // Update unlocked slots from server response
+    if (data && typeof data.slots === 'number') {
+      unlockedSlots = data.slots;
+    } else {
+      // Fallback to adding SLOTS_PER_PAYMENT
+      unlockedSlots += SLOTS_PER_PAYMENT;
     }
-
-    // Update storage with server's slot count
-    await chrome.storage.sync.set({ unlockedSlots: data.slots });
+    
+    // Save to storage
+    await chrome.storage.sync.set({ unlockedSlots });
     
     // Update UI
-    await updateUI();
+    updateUI();
     
-    showSuccess(`Payment verified! You now have ${data.slots} wallet slots available.`);
+    showSuccess(`Payment verified! You now have ${unlockedSlots} wallet slots available.`);
     
     // Close payment instructions if open
     const instructions = document.querySelector('.modal');
@@ -533,7 +558,7 @@ async function handlePaymentSuccess(data) {
       instructions.remove();
     }
 
-    // Reset payment state
+    // Reset payment ID and close SSE connection
     currentPaymentId = null;
     if (eventSource) {
       eventSource.close();
@@ -541,7 +566,7 @@ async function handlePaymentSuccess(data) {
     }
   } catch (error) {
     console.error('Error handling payment success:', error);
-    showError('Error updating slots. Please refresh the page.');
+    showError('Error updating slots. Please contact support.');
   }
 }
 
@@ -781,9 +806,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateUI();
     setupEventListeners();
     setupCustomIconUpload();
+
+    // Add listener for storage changes to update UI
+    chrome.storage.onChanged.addListener((changes, namespace) => {
+      if (namespace === 'sync' && changes.unlockedSlots) {
+        console.log('Slots updated in storage:', changes.unlockedSlots);
+        unlockedSlots = changes.unlockedSlots.newValue;
+        updateSlotDisplay();
+        updateUI();
+      }
+    });
   } catch (error) {
     console.error('Error initializing extension:', error);
     showError('Failed to initialize extension');
+  }
+});
+
+// Listen for slot count updates from fullview
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'UPDATE_SLOT_COUNT') {
+    const { current, total } = message.data;
+    const walletCount = document.getElementById('walletCount');
+    if (walletCount) {
+      walletCount.textContent = `Wallets: ${current}/${total}`;
+    }
   }
 });
 

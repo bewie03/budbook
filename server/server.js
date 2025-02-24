@@ -599,7 +599,7 @@ async function verifyPayment(txHash) {
                 // Update user slots
                 const userId = payment.userId;
                 const currentSlots = await getUserSlots(userId);
-                const newSlots = currentSlots + SLOTS_PER_PAYMENT;
+                const newSlots = Math.min(currentSlots + SLOTS_PER_PAYMENT, MAX_TOTAL_SLOTS);
                 await updateUserSlots(userId, SLOTS_PER_PAYMENT);
                 console.log(' Updated slots:', {
                     userId,
@@ -651,6 +651,24 @@ app.get('/api/slots/:userId', async (req, res) => {
   } catch (error) {
     console.error('Error getting slots:', error);
     res.status(500).json({ error: 'Failed to get slots' });
+  }
+});
+
+// Update user slots endpoint
+app.post('/api/slots/:userId/sync', express.json(), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { slots } = req.body;
+    
+    if (typeof slots !== 'number' || slots < MAX_FREE_SLOTS || slots > MAX_TOTAL_SLOTS) {
+      return res.status(400).json({ error: 'Invalid slots value' });
+    }
+
+    await setInCache(`slots:${userId}`, slots);
+    res.json({ slots });
+  } catch (error) {
+    console.error('Error syncing user slots:', error);
+    res.status(500).json({ error: 'Failed to sync user slots' });
   }
 });
 
@@ -906,7 +924,7 @@ app.post('/', express.json({
             // Update user slots
             const userId = payment.userId;
             const currentSlots = await getUserSlots(userId);
-            const newSlots = currentSlots + SLOTS_PER_PAYMENT;
+            const newSlots = Math.min(currentSlots + SLOTS_PER_PAYMENT, MAX_TOTAL_SLOTS);
             await updateUserSlots(userId, SLOTS_PER_PAYMENT);
             console.log(' Updated slots:', {
               userId,
