@@ -6,15 +6,25 @@
   "permissions": [
     "storage",
     "unlimitedStorage",
-    "tabs"
+    "tabs",
+    "identity"
   ],
   "host_permissions": [
     "https://budbook-2410440cbb61.herokuapp.com/*",
     "https://cdnjs.cloudflare.com/*",
-    "https://ipfs.io/*"
+    "https://ipfs.io/*",
+    "https://accounts.google.com/*",
+    "https://www.googleapis.com/*"
   ],
+  "oauth2": {
+    "client_id": "495558772621-3k53biabl2gq6sg786a9v9uafnm74iv2.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/userinfo.profile",
+      "https://www.googleapis.com/auth/userinfo.email"
+    ]
+  },
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com https://ipfs.io; img-src 'self' data: https://ipfs.io;"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com https://ipfs.io https://accounts.google.com https://www.googleapis.com; img-src 'self' data: https://ipfs.io https://*.googleusercontent.com;"
   },
   "action": {
     "default_popup": "popup.html",
@@ -36,5 +46,9 @@
       "resources": ["fullview.html", "fullview.js", "styles.css", "icons/*"],
       "matches": ["<all_urls>"]
     }
-  ]
+  ],
+  "background": {
+    "service_worker": "js/auth.js",
+    "type": "module"
+  }
 }

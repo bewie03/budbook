@@ -2342,8 +2342,8 @@ class SlotManager {
   async getSlots(userId) {
     try {
       await rateLimit();
-      const response = await chrome.storage.sync.get(['unlockedSlots']);
-      return response.unlockedSlots || 0;
+      const response = await chrome.storage.sync.get([`slots:${userId}`]);
+      return response[`slots:${userId}`] || 0;
     } catch (error) {
       console.error('Error getting slots:', error);
       return 0;
@@ -2353,24 +2353,32 @@ class SlotManager {
   async updateSlots(userId, newCount) {
     try {
       await rateLimit();
-      await chrome.storage.sync.set({ unlockedSlots: newCount });
+      await chrome.storage.sync.set({ [`slots:${userId}`]: newCount });
+      
+      // Update UI elements that show slot count
+      const slotCountElements = document.querySelectorAll('.slot-count');
+      slotCountElements.forEach(element => {
+        element.textContent = newCount;
+      });
+      
       return true;
     } catch (error) {
       console.error('Error updating slots:', error);
       return false;
     }
   }
-}
 
-// Initialize the slot manager
-const slotManager = new SlotManager();
-
-async function init() {
-  console.log('init() called');
-  
-  try {
-    console.log('Initializing modal...');
-    initializeModal(); // Initialize modal first
+  async syncWithServer(userId) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/slots/${userId}`);
+      if (!response.ok) throw new Error('Failed to fetch slots from server');
+      
+      const data = await response.json();
+      await this.updateSlots(userId, data.slots);
+      return data.slots;
+    } catch (error) {
+      console.error('Error initializing user profile:', error);
+    }
     
     console.log('Loading wallets...');
     // Load wallets and get list of ones needing refresh
@@ -3345,6 +3353,38 @@ document.querySelectorAll('.cancel-delete').forEach(button => {
   });
 });
 
+// Add initialization code for user profile
+async function initializeUserProfile() {
+  try {
+    // Send message to background script to get user info
+    const userInfo = await chrome.runtime.sendMessage({ type: 'GET_USER_INFO' });
+    if (!userInfo) {
+      console.error('No user info available');
+      return;
+    }
+
+    const userProfile = document.getElementById('userProfile');
+    if (userProfile) {
+      userProfile.innerHTML = `
+        <img src="${userInfo.picture}" alt="Profile" class="profile-pic">
+        <span class="user-name">${userInfo.name}</span>
+      `;
+    }
+  } catch (error) {
+    console.error('Error initializing user profile:', error);
+  }
+}
+
+// Add initialization to DOMContentLoaded
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await initializeUserProfile();
+    await initializePage();
+  } catch (error) {
+    console.error('Error during initialization:', error);
+  }
+});
+
 // Try both DOMContentLoaded and window.onload
 document.addEventListener('DOMContentLoaded', () => {
   console.log('DOMContentLoaded fired');
@@ -3390,3 +3430,74 @@ function setupGlobalTabs() {
 };
 
 // Add semicolon after setupGlobalTabs function
+
+// Initialize user profile
+async function initializeUserProfile() {
+  try {
+    // Send message to background script to get user info
+    const userInfo = await chrome.runtime.sendMessage({ type: 'GET_USER_INFO' });
+    if (!userInfo) {
+      console.error('No user info available');
+      return;
+    }
+
+    const userProfile = document.getElementById('userProfile');
+    if (userProfile) {
+      userProfile.innerHTML = `
+        <img src="${userInfo.picture}" alt="Profile" class="profile-pic">
+        <span class="user-name">${userInfo.name}</span>
+      `;
+    }
+  } catch (error) {
+    console.error('Error initializing user profile:', error);
+  }
+}
+
+// Initialize page
+async function initializePage() {
+  try {
+    console.log('Initializing modal...');
+    initializeModal(); // Initialize modal first
+    
+    console.log('Loading wallets...');
+    // Load wallets and get list of ones needing refresh
+    const walletsNeedingRefresh = await loadWallets();
+    if (walletsNeedingRefresh === null) {
+      console.log('No wallets to refresh');
+      return;
+    }
+    
+    console.log('Rendering wallets...');
+    // Render wallets with any cached data we have
+    await renderWallets();
+    
+    // Setup remaining UI elements
+    console.log('Setting up UI elements...');
+    setupGlobalTabs();
+    setupAssetSearch();
+    startCacheRefreshMonitor();
+    setupTabSwitching();
+    
+    // Add initial storage update with a small delay to ensure all data is loaded
+    setTimeout(async () => {
+      await updateStorageUsage();
+    }, 1000);
+    
+    // Add periodic storage update (every 30 seconds)
+    setInterval(updateStorageUsage, 30000);
+    
+    console.log('Initialization complete!');
+  } catch (error) {
+    console.error('Error during initialization:', error);
+  }
+}
+
+// Add initialization to DOMContentLoaded
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await initializeUserProfile();
+    await initializePage();
+  } catch (error) {
+    console.error('Error during initialization:', error);
+  }
+});

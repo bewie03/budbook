@@ -405,21 +405,16 @@
       display: flex;
       align-items: center;
       gap: 16px;
-      margin: 0;
-      padding: 0;
-      white-space: nowrap;
+      margin-left: auto;
+      padding: 8px;
     }
 
     .wallet-slots, .storage-info {
-      display: inline-flex;
+      display: flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 12px;
-      background: rgba(255, 255, 255, 0.05);
-      border-radius: 8px;
+      color: #fff;
       font-size: 14px;
-      line-height: 20px;
-      color: var(--text-primary);
     }
 
     .storage-info {
@@ -879,6 +874,33 @@
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
     }
+
+    .user-profile {
+      display: flex;
+      align-items: center;
+      padding: 4px 12px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      transition: background 0.2s;
+      cursor: pointer;
+    }
+
+    .user-profile:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .profile-pic {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+
+    .user-name {
+      color: #fff;
+      font-size: 14px;
+      margin-right: 4px;
+    }
   </style>
 </head>
 <body>
@@ -910,6 +932,9 @@
             </div>
             <div class="storage-info">
               <i class="fas fa-database"></i><span id="storageUsed">0%</span>
+            </div>
+            <div id="userProfile" class="user-profile">
+              <!-- Will be populated by JavaScript -->
             </div>
           </div>
         </div>

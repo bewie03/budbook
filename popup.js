@@ -1,3 +1,6 @@
+// Import auth first
+import { auth } from './js/auth.js';
+
 // Constants
 const MAX_FREE_SLOTS = 5;
 const SLOTS_PER_PAYMENT = 5;
@@ -27,12 +30,91 @@ const WALLET_LOGOS = {
 
 // Global state
 let wallets = [];
-let unlockedSlots = 0;
 let currentPaymentId = null;
 let eventSource = null;
 let customIconData = null;
 
-import { auth } from './js/auth.js';
+// Slot Manager class definition
+class SlotManager {
+  async syncWithServer(userId) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/slots/${userId}`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Origin': chrome.runtime.getURL('')
+        }
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('Received slot data:', data);
+      
+      // Update available slots
+      const availableSlots = data.availableSlots;
+      await chrome.storage.sync.set({ availableSlots });
+      
+      return availableSlots;
+    } catch (error) {
+      console.error('Error syncing slots:', error);
+      throw error;
+    }
+  }
+
+  async addSlots(slots) {
+    try {
+      const userId = await auth.getUserId();
+      if (!userId) {
+        console.error('No user ID found');
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/add-slots/${userId}`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Origin': chrome.runtime.getURL('')
+        },
+        body: JSON.stringify({
+          slots
+        })
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || `Server error: ${response.status}`);
+      }
+
+      // Update available slots
+      const availableSlots = data.availableSlots;
+      await chrome.storage.sync.set({ availableSlots });
+      
+      return availableSlots;
+    } catch (error) {
+      console.error('Error adding slots:', error);
+      throw error;
+    }
+  }
+
+  async getAvailableSlots() {
+    const result = await chrome.storage.sync.get(['availableSlots']);
+    return result.availableSlots || MAX_FREE_SLOTS;
+  }
+
+  async getTotalSlots() {
+    const result = await chrome.storage.sync.get(['totalSlots']);
+    return result.totalSlots || MAX_TOTAL_SLOTS;
+  }
+}
+
+// Create slot manager instance
+const slotManager = new SlotManager();
 
 // API Functions
 async function fetchWalletData(address) {
@@ -151,7 +233,7 @@ async function loadWallets() {
   return new Promise((resolve, reject) => {
     try {
       // Load wallet index and slots data
-      chrome.storage.sync.get(['wallet_index', 'unlockedSlots', 'slots_version', 'wallet_order'], async (result) => {
+      chrome.storage.sync.get(['wallet_index', 'slots_version', 'wallet_order'], async (result) => {
         if (chrome.runtime.lastError) {
           reject(chrome.runtime.lastError);
           return;
@@ -164,12 +246,8 @@ async function loadWallets() {
         if (!result.slots_version || result.slots_version < 1) {
           console.log('Resetting slots to new default of 5');
           await chrome.storage.sync.set({ 
-            unlockedSlots: MAX_FREE_SLOTS,
             slots_version: 1
           });
-          unlockedSlots = MAX_FREE_SLOTS;
-        } else {
-          unlockedSlots = result.unlockedSlots || MAX_FREE_SLOTS;
         }
 
         if (walletIndex.length === 0) {
@@ -294,8 +372,7 @@ async function saveWallets() {
           // Store wallet index and order in sync storage
           chrome.storage.sync.set({ 
             wallet_index: walletIndex,
-            wallet_order: walletIndex,
-            unlockedSlots: MAX_FREE_SLOTS
+            wallet_order: walletIndex
           }, () => {
             if (chrome.runtime.lastError) {
               reject(chrome.runtime.lastError);
@@ -445,45 +522,40 @@ async function refreshWallet(index) {
 
 async function updateUI() {
   try {
-    // Get latest unlocked slots from storage
-    const data = await chrome.storage.sync.get(['unlockedSlots']);
-    unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
-    console.log('Current unlocked slots:', unlockedSlots);
-    
     // Update slot display
-    updateSlotDisplay();
+    await updateSlotDisplay();
     
     // Render wallets
-    await renderWallets();
+    const walletList = renderWallets();
     
     // Update add wallet button visibility
     const addWalletBtn = document.getElementById('addWalletBtn');
     if (addWalletBtn) {
-      addWalletBtn.style.display = wallets.length >= unlockedSlots ? 'none' : 'block';
+      const availableSlots = await slotManager.getAvailableSlots();
+      addWalletBtn.style.display = wallets.length >= availableSlots ? 'none' : 'block';
     }
     
     // Update buy slots button visibility
-    const buyButton = document.getElementById('buySlots');
+    const buyButton = document.getElementById('buyMoreSlotsBtn');
     if (buyButton) {
-      buyButton.style.display = unlockedSlots >= MAX_TOTAL_SLOTS ? 'none' : 'block';
+      const totalSlots = await slotManager.getTotalSlots();
+      buyButton.style.display = totalSlots >= MAX_TOTAL_SLOTS ? 'none' : 'block';
     }
   } catch (error) {
     console.error('Error updating UI:', error);
   }
 }
 
-function updateSlotDisplay() {
-  const slotDisplay = document.getElementById('slotDisplay');
-  if (slotDisplay) {
-    chrome.storage.sync.get(['unlockedSlots'], (result) => {
-      console.log('Retrieved slots from storage:', result);
-      const totalSlots = result.unlockedSlots || MAX_FREE_SLOTS;
+async function updateSlotDisplay() {
+  try {
+    const slotDisplay = document.getElementById('slotDisplay');
+    if (slotDisplay) {
+      const totalSlots = await slotManager.getTotalSlots();
       const usedSlots = wallets.length;
       
       console.log('Updating slot display:', {
         totalSlots,
-        usedSlots,
-        unlockedSlots: result.unlockedSlots
+        usedSlots
       });
       
       slotDisplay.textContent = `${usedSlots}/${totalSlots}`;
@@ -500,7 +572,9 @@ function updateSlotDisplay() {
       if (slotWarning) {
         slotWarning.style.display = usedSlots >= totalSlots ? 'block' : 'none';
       }
-    });
+    }
+  } catch (error) {
+    console.error('Error updating slot display:', error);
   }
 }
 
@@ -515,10 +589,7 @@ async function checkPaymentStatus() {
     
     if (result.verified) {
       // Update unlocked slots
-      unlockedSlots += SLOTS_PER_PAYMENT;
-      
-      // Save to storage
-      await chrome.storage.sync.set({ unlockedSlots });
+      await slotManager.addSlots(SLOTS_PER_PAYMENT);
       
       // Update UI
       updateUI();
@@ -544,72 +615,32 @@ async function checkPaymentStatus() {
 
 async function handlePaymentSuccess(data) {
   try {
-    console.log('Payment success data:', data);
-    
-    // Get current slots from storage first
-    const currentStorage = await chrome.storage.sync.get(['unlockedSlots']);
-    console.log('Current storage state:', currentStorage);
-    
-    // Update unlocked slots from server response
-    if (data && typeof data.slots === 'number') {
-      console.log('Using slots from server response:', data.slots);
-      
-      // Ensure we don't decrease slots
-      const newSlots = Math.max(data.slots, currentStorage.unlockedSlots || MAX_FREE_SLOTS);
-      unlockedSlots = newSlots;
-      
-      // Save to storage with retry
-      const maxRetries = 3;
-      for (let i = 0; i < maxRetries; i++) {
-        try {
-          await chrome.storage.sync.set({ unlockedSlots });
-          
-          // Verify storage update
-          const result = await chrome.storage.sync.get(['unlockedSlots']);
-          console.log('Verified storage update:', result);
-          
-          if (result.unlockedSlots === unlockedSlots) {
-            // Storage updated successfully
-            break;
-          }
-        } catch (err) {
-          console.error(`Storage update attempt ${i + 1} failed:`, err);
-          if (i === maxRetries - 1) throw err;
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-      
-      // Update UI
-      await updateUI();
-      await updateSlotDisplay();
-      
-      // Notify fullview to update
-      chrome.runtime.sendMessage({
-        type: 'UPDATE_SLOT_COUNT',
-        data: { slots: unlockedSlots }
-      }).catch(err => console.error('Error notifying fullview:', err));
-      
-      showSuccess(`Payment verified! You now have ${unlockedSlots} wallet slots available.`);
-    } else {
-      showError('Failed to get updated slot count from server');
+    if (!data || !data.verified) {
+      console.log('Payment not yet verified');
       return;
     }
-    
-    // Close payment instructions if open
-    const instructions = document.querySelector('.modal');
-    if (instructions) {
-      instructions.remove();
+
+    const userId = await auth.getUserId();
+    if (!userId) {
+      console.error('No user ID found');
+      return;
     }
 
-    // Reset payment ID and close SSE connection
-    currentPaymentId = null;
+    // Sync slots with server to get updated count
+    await slotManager.syncWithServer(userId);
+    
+    showSuccess(`Payment verified! Added ${SLOTS_PER_PAYMENT} slots.`);
+    
+    // Clean up payment monitoring
     if (eventSource) {
       eventSource.close();
       eventSource = null;
     }
+    currentPaymentId = null;
+    
   } catch (error) {
-    console.error('Error in handlePaymentSuccess:', error);
-    showError('Failed to update slots. Please refresh the page.');
+    console.error('Error handling payment success:', error);
+    showError('Error processing payment. Please contact support.');
   }
 }
 
@@ -837,31 +868,53 @@ window.addEventListener('unload', cleanup);
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    // Get unlocked slots from storage first
-    console.log('Loading unlocked slots...');
-    const data = await chrome.storage.sync.get(['unlockedSlots']);
-    console.log('Raw storage data:', data);
-    unlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
-    console.log('Loaded unlocked slots:', unlockedSlots);
+    // Wait for auth to initialize
+    await auth.init();
     
-    // Then initialize everything else
+    // Get current user ID
+    const userId = await auth.getUserId();
+    if (!userId) {
+      showError('Please sign in to continue');
+      // Hide main content and show sign-in button if exists
+      const mainContent = document.querySelector('.main-content');
+      const signInBtn = document.querySelector('.sign-in-btn');
+      if (mainContent) mainContent.style.display = 'none';
+      if (signInBtn) signInBtn.style.display = 'block';
+      return;
+    }
+
+    console.log('Authenticated user:', userId);
+
+    // Show main content and hide sign-in button if exists
+    const mainContent = document.querySelector('.main-content');
+    const signInBtn = document.querySelector('.sign-in-btn');
+    if (mainContent) mainContent.style.display = 'block';
+    if (signInBtn) signInBtn.style.display = 'none';
+
+    // Sync slots with server and update UI
+    await slotManager.syncWithServer(userId);
+    
+    // Load wallets and set up UI
     await loadWallets();
-    updateUI();
+    await updateUI();
     setupEventListeners();
     setupCustomIconUpload();
 
     // Add listener for storage changes to update UI
     chrome.storage.onChanged.addListener((changes, namespace) => {
-      if (namespace === 'sync' && changes.unlockedSlots) {
-        console.log('Slots updated in storage:', changes.unlockedSlots);
-        unlockedSlots = changes.unlockedSlots.newValue;
+      if (namespace === 'sync' && (changes.availableSlots || changes.totalSlots)) {
+        console.log('Slots updated in storage:', changes);
         updateSlotDisplay();
         updateUI();
       }
     });
   } catch (error) {
-    console.error('Error initializing extension:', error);
-    showError('Failed to initialize extension');
+    console.error('Error during initialization:', error);
+    if (error.message.includes('auth')) {
+      showError('Authentication failed. Please try signing in again.');
+    } else {
+      showError('Failed to initialize. Please try again.');
+    }
   }
 });
 
@@ -911,12 +964,9 @@ async function addWallet() {
       return;
     }
     
-    // Get latest unlocked slots from storage
-    const data = await chrome.storage.sync.get(['unlockedSlots']);
-    const currentUnlockedSlots = data.unlockedSlots || MAX_FREE_SLOTS;
-    
     // Check if we have available slots
-    if (wallets.length >= currentUnlockedSlots) {
+    const availableSlots = await slotManager.getAvailableSlots();
+    if (wallets.length >= availableSlots) {
       showError('No available slots. Please purchase more slots to add additional wallets.');
       return;
     }
