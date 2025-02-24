@@ -673,6 +673,51 @@ async function verifyPayment(txHash, retryCount = 0) {
     }
 }
 
+// Get user slots endpoint
+app.get('/api/slots/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    console.log('Getting slots for user:', userId);
+    const slots = await getUserSlots(userId);
+    console.log('Current slots for user:', { userId, slots });
+    res.json({ slots });
+  } catch (error) {
+    console.error('Error getting slots:', error);
+    res.status(500).json({ error: 'Failed to get slots' });
+  }
+});
+
+// Update user slots endpoint
+app.post('/api/slots/:userId/sync', express.json(), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { slots } = req.body;
+    
+    if (typeof slots !== 'number' || slots < MAX_FREE_SLOTS || slots > MAX_TOTAL_SLOTS) {
+      return res.status(400).json({ error: 'Invalid slots value' });
+    }
+
+    await updateUserSlots(userId, slots - await getUserSlots(userId));
+    res.json({ slots });
+  } catch (error) {
+    console.error('Error syncing user slots:', error);
+    res.status(500).json({ error: 'Failed to sync user slots' });
+  }
+});
+
+// Get current slot count endpoint
+app.get('/api/slot-count', async (req, res) => {
+  try {
+    const slots = await cache.keys('slots:*');
+    const slotCount = slots.length;
+    console.log('Current slot count:', slotCount);
+    res.json({ slotCount });
+  } catch (error) {
+    console.error('Error getting slot count:', error);
+    res.status(500).json({ error: 'Failed to get slot count' });
+  }
+});
+
 // Payment verification endpoint - supports both payment IDs and tx hashes
 app.get('/api/verify-payment/:paymentId', async (req, res) => {
   try {
@@ -764,49 +809,110 @@ app.post('/webhook', async (req, res) => {
         method: req.method,
         url: req.url,
         headers: req.headers,
-        body: req.body
+        signature: req.headers['blockfrost-signature'],
+        bodyLength: req.rawBody?.length,
+        timestamp: new Date().toISOString()
     });
 
     try {
-        // Verify Blockfrost webhook signature
+        // Verify webhook signature
         const signature = req.headers['blockfrost-signature'];
         if (!signature) {
-            console.error('No Blockfrost signature found');
-            return res.status(401).json({ error: 'No signature' });
+            console.error('Missing Blockfrost signature header');
+            return res.status(401).json({ error: 'Missing signature' });
         }
 
-        const rawBody = JSON.stringify(req.body);
-        const isValid = verifyBlockfrostSignature(signature, rawBody, BLOCKFROST_WEBHOOK_TOKEN);
-        if (!isValid) {
-            console.error('Invalid Blockfrost signature');
+        if (!verifyBlockfrostSignature(signature, req.rawBody, BLOCKFROST_WEBHOOK_TOKEN)) {
+            console.error('Invalid webhook signature');
             return res.status(401).json({ error: 'Invalid signature' });
         }
 
-        // Process the webhook payload
-        const { payload } = req.body;
-        if (!payload || !payload.tx) {
-            console.error('Invalid webhook payload');
+        // Process webhook payload
+        const payload = req.body;
+        if (!payload || !payload.type) {
+            console.error('Invalid webhook payload:', payload);
             return res.status(400).json({ error: 'Invalid payload' });
         }
 
-        const txHash = payload.tx.hash;
-        console.log('Processing transaction:', txHash);
+        console.log('Processing webhook payload:', {
+            type: payload.type,
+            payloadCount: payload.payload?.length || 0,
+            timestamp: new Date().toISOString()
+        });
+
+        // Handle transaction events
+        if (payload.type === 'transaction') {
+            if (!Array.isArray(payload.payload)) {
+                console.error('Invalid transaction payload format');
+                return res.status(400).json({ error: 'Invalid payload format' });
+            }
+
+            const results = [];
+            for (const tx of payload.payload) {
+                try {
+                    console.log('Processing transaction:', {
+                        hash: tx.tx.hash,
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    // Find outputs to our payment address
+                    const outputs = tx.outputs.filter(o => o.address === PAYMENT_ADDRESS);
+                    if (outputs.length > 0) {
+                        console.log('Found outputs to payment address:', outputs.length);
+                        
+                        // Process each output
+                        for (const output of outputs) {
+                            const lovelaceAmount = output.amount.find(a => a.unit === 'lovelace')?.quantity;
+                            const boneAmount = output.amount.find(a => a.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)?.quantity;
+                            
+                            console.log('Payment received:', {
+                                tx: tx.tx.hash,
+                                lovelace: lovelaceAmount,
+                                bone: boneAmount,
+                                timestamp: new Date().toISOString()
+                            });
 
         // Verify the payment
-        const paymentResult = await verifyPayment(txHash);
-        if (paymentResult.success) {
-            const { userId } = paymentResult;
-            // Award 5 new slots
-            const newSlots = await updateUserSlots(userId, SLOTS_PER_PAYMENT);
-            console.log('Payment verified and slots updated:', { userId, newSlots });
-            return res.json({ success: true, slots: newSlots });
-        } else {
-            console.error('Payment verification failed:', paymentResult.error);
-            return res.status(400).json({ error: paymentResult.error });
+                            const verified = await verifyPayment(tx.tx.hash);
+                            results.push({
+                                txHash: tx.tx.hash,
+                                verified,
+                                timestamp: new Date().toISOString()
+                            });
+                        }
+                    }
+                } catch (txError) {
+                    console.error('Error processing transaction:', tx.tx.hash, txError);
+                    results.push({
+                        txHash: tx.tx.hash,
+                        error: txError.message,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+            }
+
+            return res.json({
+                status: 'ok',
+                processed: results.length,
+                results,
+                timestamp: new Date().toISOString()
+            });
         }
+
+        // Handle other webhook types
+        console.log('Unhandled webhook type:', payload.type);
+        res.json({ 
+            status: 'ok',
+            message: `Received ${payload.type} webhook`,
+            timestamp: new Date().toISOString()
+        });
     } catch (error) {
         console.error('Error processing webhook:', error);
-        return res.status(500).json({ error: 'Webhook processing failed' });
+        res.status(500).json({ 
+            error: 'Failed to process webhook',
+            message: error.message,
+            timestamp: new Date().toISOString()
+        });
     }
 });
 
