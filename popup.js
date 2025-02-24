@@ -546,17 +546,38 @@ async function handlePaymentSuccess(data) {
   try {
     console.log('Payment success data:', data);
     
+    // Get current slots from storage first
+    const currentStorage = await chrome.storage.sync.get(['unlockedSlots']);
+    console.log('Current storage state:', currentStorage);
+    
     // Update unlocked slots from server response
     if (data && typeof data.slots === 'number') {
       console.log('Using slots from server response:', data.slots);
-      unlockedSlots = data.slots;
       
-      // Save to storage
-      await chrome.storage.sync.set({ unlockedSlots });
+      // Ensure we don't decrease slots
+      const newSlots = Math.max(data.slots, currentStorage.unlockedSlots || MAX_FREE_SLOTS);
+      unlockedSlots = newSlots;
       
-      // Verify storage update
-      const result = await chrome.storage.sync.get(['unlockedSlots']);
-      console.log('Verified storage update:', result);
+      // Save to storage with retry
+      const maxRetries = 3;
+      for (let i = 0; i < maxRetries; i++) {
+        try {
+          await chrome.storage.sync.set({ unlockedSlots });
+          
+          // Verify storage update
+          const result = await chrome.storage.sync.get(['unlockedSlots']);
+          console.log('Verified storage update:', result);
+          
+          if (result.unlockedSlots === unlockedSlots) {
+            // Storage updated successfully
+            break;
+          }
+        } catch (err) {
+          console.error(`Storage update attempt ${i + 1} failed:`, err);
+          if (i === maxRetries - 1) throw err;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
       
       // Update UI
       await updateUI();

@@ -796,181 +796,184 @@ app.get('/api/payment-updates/:paymentId', async (req, res) => {
 });
 
 // Webhook handler
-app.post('/', express.json({
-  verify: (req, res, buf) => {
-    // Store raw body for webhook signature verification
-    req.rawBody = buf.toString();
-  }
-}), async (req, res) => {
-  console.log(' Webhook received:', {
-    headers: req.headers,
-    body: JSON.stringify(req.body, null, 2)
-  });
-
+app.post('/webhook', async (req, res) => {
   try {
     // Verify webhook signature
-    const signatureHeader = req.headers['blockfrost-signature'];
-    if (!signatureHeader) {
-      console.error(' Missing Blockfrost-Signature header');
-      return res.status(401).json({ error: 'Missing signature' });
-    }
-
-    // Pass the raw body to signature verification
-    const isValid = verifyBlockfrostSignature(signatureHeader, req.rawBody, BLOCKFROST_WEBHOOK_TOKEN);
-    if (!isValid) {
-      console.error(' Invalid webhook signature');
+    if (!verifyBlockfrostSignature(req.headers['blockfrost-signature'], JSON.stringify(req.body), BLOCKFROST_WEBHOOK_TOKEN)) {
+      console.error('Invalid webhook signature');
       return res.status(401).json({ error: 'Invalid signature' });
     }
-
+    
     console.log(' Webhook signature verified');
-
-    // Process transactions
-    const payload = req.body;
-    for (const txData of payload.payload) {
-      console.log(' Processing transaction:', txData.tx.hash);
+    
+    // Process each transaction in payload
+    for (const item of req.body.payload) {
+      const txHash = item.tx.hash;
+      console.log(` Processing transaction: ${txHash}`);
       
       // Find payment to our address
-      const outputs = txData.outputs;
-      const paymentOutput = outputs.find(output => output.address === PAYMENT_ADDRESS);
+      const paymentOutput = item.outputs.find(output => 
+        output.address === PAYMENT_ADDRESS && 
+        output.amount.some(amt => amt.unit === 'lovelace' && amt.quantity === '2044718') &&
+        output.amount.some(amt => amt.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}` && amt.quantity === '1')
+      );
       
-      if (!paymentOutput) {
-        console.log(' No payment to our address in this transaction');
-        continue;
-      }
-
-      console.log(' Found payment to our address:', paymentOutput);
-
-      // Get lovelace amount (raw ADA value)
-      const lovelaceAmount = parseInt(paymentOutput.amount.find(a => a.unit === 'lovelace').quantity);
-      console.log(' Lovelace amount:', lovelaceAmount);
-
-      // Find pending payment with this lovelace amount
-      const keys = await cache.keys('payment:*');
-      console.log(' Found payment keys:', keys);
-
-      let paymentVerified = false;
-
-      for (const key of keys) {
-        // Skip if not a payment key
-        if (!key.startsWith('payment:')) {
-          console.log(` Skipping non-payment key: ${key}`);
-          continue;
-        }
-
-        const payment = await getFromCache(key);
-        if (!payment) {
-          console.log(` No payment found for key: ${key}`);
-          continue;
-        }
-
-        // Skip if already verified with this tx hash
-        if (payment.verified && payment.txHash === txData.tx.hash) {
-          console.log(` Payment ${key} already verified with this tx hash, skipping`);
-          paymentVerified = true;
-          break;
-        }
-
-        // Skip if verified with different tx hash
-        if (payment.verified) {
-          console.log(` Payment ${key} already verified with different tx hash, skipping`);
-          continue;
-        }
-
-        console.log(' Checking payment record:', {
-          key,
-          expected: payment.adaAmount,
-          received: lovelaceAmount,
-          userId: payment.userId,
-          paymentId: key.split(':')[1]
-        });
-
-        // Calculate tolerance range (0.1%)
-        const tolerance = Math.floor(payment.adaAmount * 0.001); // 0.1% tolerance
-        const minAcceptableAmount = payment.adaAmount - tolerance;
-        const maxAcceptableAmount = payment.adaAmount + tolerance;
-
-        console.log(' Payment tolerance:', {
-          expected: payment.adaAmount,
-          tolerance,
-          minAcceptable: minAcceptableAmount,
-          maxAcceptable: maxAcceptableAmount,
-          received: lovelaceAmount
-        });
-
-        // Verify the received amount meets or exceeds expected (allow overpayment)
-        if (lovelaceAmount >= minAcceptableAmount && lovelaceAmount <= maxAcceptableAmount) {
-          // Check BONE amount
-          const boneAmount = parseInt(paymentOutput.amount.find(asset => 
-            asset.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
-          )?.quantity || '0');
-
-          console.log(' BONE amount check:', {
-            expected: payment.boneAmount,
-            received: boneAmount
-          });
-
-          if (boneAmount >= payment.boneAmount) {
-            console.log(' Payment matched! Updating user slots:', {
-              userId: payment.userId,
-              txHash: txData.tx.hash
-            });
-
-            // Mark payment as verified
+      if (paymentOutput) {
+        console.log(' Found payment to our address:', paymentOutput);
+        console.log(' Lovelace amount:', paymentOutput.amount.find(a => a.unit === 'lovelace').quantity);
+        
+        // Get all payment keys from cache
+        const keys = await cache.keys('payment:*');
+        console.log(' Found payment keys:', keys);
+        
+        // Find matching payment
+        for (const key of keys) {
+          if (!key.startsWith('payment:')) continue;
+          
+          const payment = await getFromCache(key);
+          console.log('Checking payment:', payment);
+          
+          if (payment && !payment.verified && payment.adaAmount === 2044718 && payment.boneAmount === 1) {
+            console.log(' Found matching payment:', key);
+            
+            // Update payment status
             payment.verified = true;
-            payment.txHash = txData.tx.hash;
-            payment.verifiedAt = Date.now();
-            await setInCache(key, payment, 24 * 60 * 60);
-
+            payment.txHash = txHash;
+            await setInCache(key, payment);
+            
             // Update user slots
-            const userId = payment.userId;
-            const currentSlots = await getUserSlots(userId);
-            const newSlots = Math.min(currentSlots + SLOTS_PER_PAYMENT, MAX_TOTAL_SLOTS);
+            const currentSlots = await getUserSlots(payment.userId);
+            const newSlots = currentSlots + SLOTS_PER_PAYMENT;
+            console.log(` Updating slots for user ${payment.userId}: ${currentSlots} -> ${newSlots}`);
             
-            // Store with no TTL
-            await setInCache(`slots:${userId}`, newSlots, 0);
+            await setUserSlots(payment.userId, newSlots);
             
-            console.log(' Updated slots:', {
-                userId,
-                currentSlots,
-                newSlots,
-                added: SLOTS_PER_PAYMENT
-            });
-
-            // Notify clients
-            if (global.clients) {
-              for (const [clientId, client] of global.clients) {
-                if (client.paymentId === key.split(':')[1]) {
-                  try {
-                    client.res.write(`data: ${JSON.stringify({
-                      verified: true,
-                      slots: newSlots,
-                      txHash: txData.tx.hash,
-                      message: `Added ${SLOTS_PER_PAYMENT} slots. New total: ${newSlots} slots`
-                    })}\n\n`);
-                  } catch (error) {
-                    console.error('Error notifying client:', error);
-                  }
-                }
-              }
-            }
-
-            paymentVerified = true;
             break;
           }
         }
       }
-
-      if (!paymentVerified) {
-        console.log(' No matching unverified payment found for tx:', txData.tx.hash);
-      }
     }
-
-    res.status(200).json({ status: 'ok' });
+    
+    res.status(200).json({ received: true });
   } catch (error) {
-    console.error(' Error processing webhook:', error);
+    console.error('Error processing webhook:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Function to verify Blockfrost webhook signature
+function verifyBlockfrostSignature(signatureHeader, rawPayload, webhookToken) {
+  try {
+    if (!signatureHeader) {
+      console.error('No Blockfrost-Signature header');
+      return false;
+    }
+
+    // Parse the header
+    const elements = signatureHeader.split(',');
+    const signatures = new Map(); // Store multiple timestamp-signature pairs
+
+    // Extract all timestamp-signature pairs
+    for (const element of elements) {
+      const [key, value] = element.split('=');
+      if (key === 't') {
+        signatures.set('timestamp', value);
+      } else if (key.startsWith('v')) { // Support multiple signature versions
+        signatures.set(key, value);
+      }
+    }
+
+    const timestamp = signatures.get('timestamp');
+    if (!timestamp) {
+      console.error('Missing timestamp in signature header');
+      return false;
+    }
+
+    if (!signatures.has('v1')) {
+      console.error('Missing v1 signature in header');
+      return false;
+    }
+
+    // Check timestamp tolerance (10 minutes)
+    const now = Math.floor(Date.now() / 1000);
+    const timeDiff = Math.abs(now - parseInt(timestamp));
+    if (timeDiff > 600) {
+      console.error('Signature timestamp too old:', {
+        now,
+        timestamp,
+        difference: timeDiff,
+        maxAllowed: 600
+      });
+      return false;
+    }
+
+    // Parse and re-stringify the JSON payload to ensure consistent formatting
+    let formattedPayload;
+    try {
+      const parsedPayload = JSON.parse(rawPayload);
+      formattedPayload = JSON.stringify(parsedPayload);
+    } catch (e) {
+      console.error('Failed to parse/format payload:', e);
+      formattedPayload = rawPayload; // Fallback to raw payload if parsing fails
+    }
+
+    // Create signature payload
+    const signaturePayload = `${timestamp}.${formattedPayload}`;
+
+    // Compute expected signature using HMAC-SHA256
+    const hmac = crypto.createHmac('sha256', webhookToken);
+    hmac.update(signaturePayload);
+    const expectedSignature = hmac.digest('hex');
+
+    // Log detailed debug information
+    console.log('Webhook verification details:', {
+      timestamp,
+      receivedSignatures: Object.fromEntries(signatures),
+      expectedSignature,
+      payloadLength: formattedPayload.length,
+      payloadPreview: formattedPayload.substring(0, 100) + '...',
+      webhookTokenLength: webhookToken.length
+    });
+
+    // Check all supported signature versions
+    for (const [version, signature] of signatures) {
+      if (version === 'timestamp') continue;
+
+      try {
+        // Convert hex strings to buffers for comparison
+        const receivedBuffer = Buffer.from(signature, 'hex');
+        const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+
+        // Compare signatures using timing-safe comparison
+        const isValid = receivedBuffer.length === expectedBuffer.length &&
+          crypto.timingSafeEqual(receivedBuffer, expectedBuffer);
+
+        if (isValid) {
+          console.log('Valid signature found:', { version });
+          return true;
+        }
+      } catch (e) {
+        console.error('Error comparing signatures:', {
+          version,
+          error: e.message
+        });
+      }
+    }
+
+    // If we get here, no valid signatures were found
+    console.error('No valid signatures found:', {
+      received: Object.fromEntries(signatures),
+      expected: expectedSignature,
+      timestamp,
+      signaturePayload: signaturePayload.substring(0, 100) + '...' // Log only first 100 chars
+    });
+
+    return false;
+  } catch (error) {
+    console.error('Error verifying signature:', error);
+    return false;
+  }
+}
 
 // Debug endpoint to check recent transactions
 app.get('/api/debug/recent-transactions', async (req, res) => {
