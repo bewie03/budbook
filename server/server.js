@@ -81,17 +81,31 @@ app.get('/favicon.ico', (req, res) => {
   res.sendFile(path.join(__dirname, 'favicon.ico'));
 });
 
-// Root route
-app.get('/', (req, res) => {
-  res.json({
-    status: 'ok',
-    message: 'Cardano Address Book API Server',
-    endpoints: {
-      '/api/wallet/:address': 'Get wallet information',
-      '/api/verify-payment/:paymentId': 'Verify payment for slot unlock'
-    }
+// Root route - handle both GET and POST
+app.route('/')
+  .get((req, res) => {
+    res.json({
+      status: 'ok',
+      message: 'Cardano Address Book API Server',
+      endpoints: {
+        '/webhook': 'Blockfrost webhook endpoint',
+        '/api/wallet/:address': 'Get wallet information',
+        '/api/verify-payment/:paymentId': 'Verify payment for slot unlock'
+      }
+    });
+  })
+  .post((req, res) => {
+    console.error('Received POST to root path instead of /webhook. Headers:', req.headers);
+    console.error('Body:', JSON.stringify(req.body, null, 2));
+    res.status(404).json({ 
+      error: 'Not Found',
+      message: 'Webhook endpoint is at /webhook, not /',
+      received: {
+        headers: req.headers,
+        body: req.body
+      }
+    });
   });
-});
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
@@ -719,101 +733,58 @@ app.get('/api/payment-updates/:paymentId', async (req, res) => {
   });
 });
 
-// Webhook handler
+// Webhook endpoint
 app.post('/webhook', async (req, res) => {
+  console.log('Webhook received:', {
+    headers: req.headers,
+    signature: req.headers['blockfrost-signature'],
+    bodyLength: req.rawBody?.length,
+    body: JSON.stringify(req.body, null, 2)
+  });
+
   try {
     // Verify webhook signature
-    if (!verifyBlockfrostSignature(req.headers['blockfrost-signature'], JSON.stringify(req.body), BLOCKFROST_WEBHOOK_TOKEN)) {
+    if (!verifyBlockfrostSignature(req.headers['blockfrost-signature'], req.rawBody, BLOCKFROST_WEBHOOK_TOKEN)) {
       console.error('Invalid webhook signature');
       return res.status(401).json({ error: 'Invalid signature' });
     }
-    
-    console.log(' Webhook signature verified');
-    
-    // Process each transaction in payload
-    for (const item of req.body.payload) {
-      const txHash = item.tx.hash;
-      console.log(` Processing transaction: ${txHash}`);
-      
-      // Find payment to our address with more flexible matching
-      const paymentOutputs = item.outputs.filter(output => output.address === PAYMENT_ADDRESS);
-      
-      for (const output of paymentOutputs) {
-        console.log(' Checking output:', output);
+
+    // Process webhook payload
+    const payload = req.body;
+    console.log('Processing webhook payload:', JSON.stringify(payload, null, 2));
+
+    // Handle transaction events
+    if (payload.type === 'transaction') {
+      for (const tx of payload.payload) {
+        console.log('Processing transaction:', tx.tx.hash);
         
-        // Check for both BONE and ADA amounts
-        const boneAmount = output.amount.find(amt => 
-          amt.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
-        );
-        
-        const adaAmount = output.amount.find(amt => amt.unit === 'lovelace');
-        
-        if (boneAmount && adaAmount) {
-          console.log(' Found payment with BONE and ADA:', {
-            bone: boneAmount.quantity,
-            ada: adaAmount.quantity
-          });
+        // Find outputs to our payment address
+        const outputs = tx.outputs.filter(o => o.address === PAYMENT_ADDRESS);
+        if (outputs.length > 0) {
+          console.log('Found outputs to payment address:', outputs);
           
-          // Get all payment keys from cache
-          const keys = await cache.keys('payment:*');
-          console.log(' Found payment keys:', keys);
-          
-          // Find matching payment
-          for (const key of keys) {
-            if (!key.startsWith('payment:')) continue;
+          // Process each output
+          for (const output of outputs) {
+            const lovelaceAmount = output.amount.find(a => a.unit === 'lovelace')?.quantity || '0';
+            const boneAmount = output.amount.find(a => a.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)?.quantity || '0';
             
-            const payment = await getFromCache(key);
-            console.log('Checking payment:', payment);
+            console.log('Payment received:', {
+              tx: tx.tx.hash,
+              lovelace: lovelaceAmount,
+              bone: boneAmount
+            });
             
-            if (payment && !payment.verified) {
-              // Check exact BONE amount
-              const receivedBone = parseInt(boneAmount.quantity);
-              const expectedBone = payment.boneAmount;
-              
-              // Check ADA amount with tolerance
-              const receivedAda = parseInt(adaAmount.quantity);
-              const expectedAda = payment.adaAmount;
-              const tolerance = Math.ceil(expectedAda * 0.000001); // 0.0001% tolerance
-              const adaDiff = Math.abs(receivedAda - expectedAda);
-              
-              console.log(' Payment verification:', {
-                receivedBone,
-                expectedBone,
-                receivedAda,
-                expectedAda,
-                tolerance,
-                adaDiff
-              });
-              
-              if (receivedBone === expectedBone && adaDiff <= tolerance) {
-                console.log(' Payment verified successfully');
-                
-                // Update payment status
-                payment.verified = true;
-                payment.txHash = txHash;
-                await setInCache(key, payment);
-                
-                // Update user slots
-                const currentSlots = await getUserSlots(payment.userId);
-                const newSlots = currentSlots + SLOTS_PER_PAYMENT;
-                console.log(` Updating slots for user ${payment.userId}: ${currentSlots} -> ${newSlots}`);
-                
-                await updateUserSlots(payment.userId, SLOTS_PER_PAYMENT);
-                
-                break;
-              } else {
-                console.log(' Payment amounts do not match requirements');
-              }
-            }
+            // Verify the payment
+            await verifyPayment(tx.tx.hash);
           }
         }
       }
     }
-    
-    res.status(200).json({ received: true });
+
+    res.json({ status: 'ok' });
   } catch (error) {
     console.error('Error processing webhook:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Failed to process webhook' });
   }
 });
 
