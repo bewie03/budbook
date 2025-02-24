@@ -614,7 +614,10 @@ async function verifyPayment(txHash) {
                 const userId = payment.userId;
                 const currentSlots = await getUserSlots(userId);
                 const newSlots = Math.min(currentSlots + SLOTS_PER_PAYMENT, MAX_TOTAL_SLOTS);
-                await updateUserSlots(userId, SLOTS_PER_PAYMENT);
+                
+                // Store with no TTL
+                await setInCache(`slots:${userId}`, newSlots, 0);
+                
                 console.log(' Updated slots:', {
                     userId,
                     currentSlots,
@@ -939,12 +942,15 @@ app.post('/', express.json({
             const userId = payment.userId;
             const currentSlots = await getUserSlots(userId);
             const newSlots = Math.min(currentSlots + SLOTS_PER_PAYMENT, MAX_TOTAL_SLOTS);
-            await updateUserSlots(userId, SLOTS_PER_PAYMENT);
+            
+            // Store with no TTL
+            await setInCache(`slots:${userId}`, newSlots, 0);
+            
             console.log(' Updated slots:', {
-              userId,
-              currentSlots,
-              newSlots,
-              added: SLOTS_PER_PAYMENT
+                userId,
+                currentSlots,
+                newSlots,
+                added: SLOTS_PER_PAYMENT
             });
 
             // Notify clients

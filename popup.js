@@ -553,7 +553,8 @@ async function handlePaymentSuccess(data) {
     } else {
       // Fallback to adding SLOTS_PER_PAYMENT
       console.log('No slots in response, using fallback');
-      unlockedSlots += SLOTS_PER_PAYMENT;
+      const currentSlots = await chrome.storage.sync.get(['unlockedSlots']);
+      unlockedSlots = (currentSlots.unlockedSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT;
     }
     
     console.log('Saving to storage:', { unlockedSlots });
@@ -566,7 +567,8 @@ async function handlePaymentSuccess(data) {
     console.log('Verified storage update:', result);
     
     // Update UI
-    updateUI();
+    await updateUI();
+    await updateSlotDisplay();
     
     showSuccess(`Payment verified! You now have ${unlockedSlots} wallet slots available.`);
     
@@ -582,6 +584,14 @@ async function handlePaymentSuccess(data) {
       eventSource.close();
       eventSource = null;
     }
+
+    // Notify fullview to update
+    chrome.runtime.sendMessage({
+      type: 'UPDATE_SLOT_COUNT',
+      data: { slots: unlockedSlots }
+    }).catch(() => {
+      // Ignore error if fullview is not open
+    });
   } catch (error) {
     console.error('Error handling payment success:', error);
     showError('Error updating slots. Please contact support.');
