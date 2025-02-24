@@ -2353,18 +2353,28 @@ class SlotManager {
 
   async getSlots(userId) {
     try {
-      await rateLimit();
-      const response = await chrome.storage.sync.get([`slots:${userId}`]);
-      return response[`slots:${userId}`] || 0;
+      // First try to get from server
+      const response = await fetch(`${API_BASE_URL}/api/slots/${userId}`);
+      if (response.ok) {
+        const data = await response.json();
+        const slots = data.slots;
+        // Update sync storage with server value
+        await chrome.storage.sync.set({ [`slots:${userId}`]: slots });
+        return slots;
+      }
+      
+      // If server fails, fall back to sync storage
+      const storage = await chrome.storage.sync.get([`slots:${userId}`]);
+      return storage[`slots:${userId}`] || MAX_FREE_SLOTS;
     } catch (error) {
       console.error('Error getting slots:', error);
-      return 0;
+      return MAX_FREE_SLOTS;
     }
   }
 
   async updateSlots(userId, newCount) {
     try {
-      await rateLimit();
+      // Update sync storage
       await chrome.storage.sync.set({ [`slots:${userId}`]: newCount });
       
       // Update UI elements that show slot count

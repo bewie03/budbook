@@ -5,7 +5,6 @@ const dotenv = require('dotenv');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
 const NodeCache = require('node-cache');
-const fs = require('fs').promises;
 const crypto = require('crypto');
 
 dotenv.config();
@@ -425,120 +424,29 @@ app.get('/api/wallet/:address', async (req, res) => {
     }
 });
 
-// Constants for file paths
-const SLOTS_FILE_PATH = path.join(__dirname, 'slots.json');
-const DEFAULT_SLOTS = {
-  "default": MAX_FREE_SLOTS,  // Everyone starts with 5 free slots
-  "110690064951904641068": 35  // This specific user has earned 35 slots through payments
-};
-
-// Helper function to get user slots
-async function getUserSlots(userId) {
+// Get user slots endpoint
+app.get('/api/slots/:userId', async (req, res) => {
   try {
-    // First try to get from cache
-    let slots = await getFromCache(`slots:${userId}`);
-    
-    if (slots === undefined) {
-      console.log('Cache miss for slots, checking persistent storage');
-      // Try to get from persistent storage
-      try {
-        const data = await fs.readFile(SLOTS_FILE_PATH);
-        const slotsData = JSON.parse(data);
-        
-        // Try user-specific slots first, then fall back to default free slots
-        slots = slotsData[userId] || MAX_FREE_SLOTS;
-        console.log('Loaded slots from persistent storage:', { userId, slots, source: 'slots.json' });
-      } catch (readError) {
-        if (readError.code === 'ENOENT') {
-          // File doesn't exist, create it with default values
-          console.log('Creating slots.json with default values');
-          try {
-            await fs.writeFile(SLOTS_FILE_PATH, JSON.stringify(DEFAULT_SLOTS, null, 2));
-            // Use user-specific slots if available, otherwise use free slots
-            slots = DEFAULT_SLOTS[userId] || MAX_FREE_SLOTS;
-            console.log('Created slots.json with defaults:', DEFAULT_SLOTS);
-          } catch (writeError) {
-            console.error('Failed to create slots.json:', writeError);
-            slots = MAX_FREE_SLOTS;
-          }
-        } else {
-          console.warn('Error reading slots.json:', readError);
-          slots = MAX_FREE_SLOTS;
-        }
-        console.log('Using slots:', { 
-          userId, 
-          slots, 
-          source: readError.code === 'ENOENT' ? 'new_file' : 'default',
-          explanation: slots === MAX_FREE_SLOTS ? 'Using free slots' : 'Using saved slot count'
-        });
-      }
-      
-      // Update cache
-      await setInCache(`slots:${userId}`, slots, 0);
-      console.log('Updated cache with slots:', { userId, slots });
-    } else {
-      console.log('Retrieved slots from cache:', { userId, slots });
-    }
-    
-    return slots;
+    const { userId } = req.params;
+    const slots = await getFromCache(`slots:${userId}`) || MAX_FREE_SLOTS;
+    console.log('Returning slots for user:', { userId, slots });
+    res.json({ slots });
   } catch (error) {
-    console.error('Error getting user slots:', error);
-    return MAX_FREE_SLOTS;
+    console.error('Error getting slots:', error);
+    res.status(500).json({ error: 'Failed to get slots' });
   }
-}
+});
 
-// Helper function to update user slots
+// Update slots after payment verification
 async function updateUserSlots(userId, additionalSlots) {
   try {
-    console.log('Updating slots for user:', { userId, additionalSlots });
-    const currentSlots = await getUserSlots(userId);
+    const currentSlots = await getFromCache(`slots:${userId}`) || MAX_FREE_SLOTS;
     const newSlots = Math.min(currentSlots + additionalSlots, MAX_TOTAL_SLOTS);
-    
-    // Read existing data
-    let slotsData = {};
-    try {
-      const data = await fs.readFile(SLOTS_FILE_PATH);
-      slotsData = JSON.parse(data);
-    } catch (readError) {
-      if (readError.code === 'ENOENT') {
-        // File doesn't exist, use default values
-        slotsData = { ...DEFAULT_SLOTS };
-      } else {
-        console.warn('Error reading slots.json:', readError);
-      }
-    }
-    
-    // Update data
-    if (userId === 'default') {
-      slotsData.default = newSlots;
-    } else {
-      slotsData[userId] = newSlots;
-    }
-    
-    // Write back to file
-    try {
-      await fs.writeFile(SLOTS_FILE_PATH, JSON.stringify(slotsData, null, 2));
-      console.log('Saved slots to persistent storage:', { userId, newSlots, path: SLOTS_FILE_PATH });
-    } catch (writeError) {
-      console.error('Failed to save slots to persistent storage:', writeError);
-      // Don't throw here, we can still update the cache
-    }
-    
-    // Update cache
-    await setInCache(`slots:${userId}`, newSlots, 0);
-    
-    console.log('Updated slots:', {
-      userId,
-      previousSlots: currentSlots,
-      newSlots,
-      added: additionalSlots,
-      maxSlots: MAX_TOTAL_SLOTS,
-      path: SLOTS_FILE_PATH
-    });
-    
+    await setInCache(`slots:${userId}`, newSlots);
+    console.log('Updated slots:', { userId, oldSlots: currentSlots, newSlots });
     return newSlots;
   } catch (error) {
-    console.error('Error updating user slots:', error);
+    console.error('Error updating slots:', error);
     throw error;
   }
 }
@@ -741,11 +649,11 @@ async function verifyPayment(txHash, retryCount = 0) {
                 await setInCache(key, payment);
                 
                 // Update user slots
-                const currentSlots = await getUserSlots(payment.userId);
+                const currentSlots = await getFromCache(`slots:${payment.userId}`) || MAX_FREE_SLOTS;
                 const newSlots = currentSlots + SLOTS_PER_PAYMENT;
                 console.log(`Updating slots for user ${payment.userId}: ${currentSlots} -> ${newSlots}`);
                 
-                await updateUserSlots(payment.userId, SLOTS_PER_PAYMENT);
+                await setInCache(`slots:${payment.userId}`, newSlots);
                 return true;
             }
         }
@@ -765,51 +673,6 @@ async function verifyPayment(txHash, retryCount = 0) {
     }
 }
 
-// Get user slots endpoint
-app.get('/api/slots/:userId', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    console.log('Getting slots for user:', userId);
-    const slots = await getUserSlots(userId);
-    console.log('Current slots for user:', { userId, slots });
-    res.json({ slots });
-  } catch (error) {
-    console.error('Error getting slots:', error);
-    res.status(500).json({ error: 'Failed to get slots' });
-  }
-});
-
-// Update user slots endpoint
-app.post('/api/slots/:userId/sync', express.json(), async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { slots } = req.body;
-    
-    if (typeof slots !== 'number' || slots < MAX_FREE_SLOTS || slots > MAX_TOTAL_SLOTS) {
-      return res.status(400).json({ error: 'Invalid slots value' });
-    }
-
-    await updateUserSlots(userId, slots - await getUserSlots(userId));
-    res.json({ slots });
-  } catch (error) {
-    console.error('Error syncing user slots:', error);
-    res.status(500).json({ error: 'Failed to sync user slots' });
-  }
-});
-
-// Get current slot count endpoint
-app.get('/api/slot-count', async (req, res) => {
-  try {
-    const slots = await cache.keys('slots:*');
-    const slotCount = slots.length;
-    console.log('Current slot count:', slotCount);
-    res.json({ slotCount });
-  } catch (error) {
-    console.error('Error getting slot count:', error);
-    res.status(500).json({ error: 'Failed to get slot count' });
-  }
-});
-
 // Payment verification endpoint - supports both payment IDs and tx hashes
 app.get('/api/verify-payment/:paymentId', async (req, res) => {
   try {
@@ -823,7 +686,7 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
 
     // If already verified, return the current slots
     if (payment.verified) {
-      const currentSlots = await getUserSlots(payment.userId);
+      const currentSlots = await getFromCache(`slots:${payment.userId}`) || MAX_FREE_SLOTS;
       return res.json({ 
         verified: true,
         slots: currentSlots,
@@ -901,110 +764,49 @@ app.post('/webhook', async (req, res) => {
         method: req.method,
         url: req.url,
         headers: req.headers,
-        signature: req.headers['blockfrost-signature'],
-        bodyLength: req.rawBody?.length,
-        timestamp: new Date().toISOString()
+        body: req.body
     });
 
     try {
-        // Verify webhook signature
+        // Verify Blockfrost webhook signature
         const signature = req.headers['blockfrost-signature'];
         if (!signature) {
-            console.error('Missing Blockfrost signature header');
-            return res.status(401).json({ error: 'Missing signature' });
+            console.error('No Blockfrost signature found');
+            return res.status(401).json({ error: 'No signature' });
         }
 
-        if (!verifyBlockfrostSignature(signature, req.rawBody, BLOCKFROST_WEBHOOK_TOKEN)) {
-            console.error('Invalid webhook signature');
+        const rawBody = JSON.stringify(req.body);
+        const isValid = verifyBlockfrostSignature(signature, rawBody, BLOCKFROST_WEBHOOK_TOKEN);
+        if (!isValid) {
+            console.error('Invalid Blockfrost signature');
             return res.status(401).json({ error: 'Invalid signature' });
         }
 
-        // Process webhook payload
-        const payload = req.body;
-        if (!payload || !payload.type) {
-            console.error('Invalid webhook payload:', payload);
+        // Process the webhook payload
+        const { payload } = req.body;
+        if (!payload || !payload.tx) {
+            console.error('Invalid webhook payload');
             return res.status(400).json({ error: 'Invalid payload' });
         }
 
-        console.log('Processing webhook payload:', {
-            type: payload.type,
-            payloadCount: payload.payload?.length || 0,
-            timestamp: new Date().toISOString()
-        });
+        const txHash = payload.tx.hash;
+        console.log('Processing transaction:', txHash);
 
-        // Handle transaction events
-        if (payload.type === 'transaction') {
-            if (!Array.isArray(payload.payload)) {
-                console.error('Invalid transaction payload format');
-                return res.status(400).json({ error: 'Invalid payload format' });
-            }
-
-            const results = [];
-            for (const tx of payload.payload) {
-                try {
-                    console.log('Processing transaction:', {
-                        hash: tx.tx.hash,
-                        timestamp: new Date().toISOString()
-                    });
-                    
-                    // Find outputs to our payment address
-                    const outputs = tx.outputs.filter(o => o.address === PAYMENT_ADDRESS);
-                    if (outputs.length > 0) {
-                        console.log('Found outputs to payment address:', outputs.length);
-                        
-                        // Process each output
-                        for (const output of outputs) {
-                            const lovelaceAmount = output.amount.find(a => a.unit === 'lovelace')?.quantity;
-                            const boneAmount = output.amount.find(a => a.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)?.quantity;
-                            
-                            console.log('Payment received:', {
-                                tx: tx.tx.hash,
-                                lovelace: lovelaceAmount,
-                                bone: boneAmount,
-                                timestamp: new Date().toISOString()
-                            });
-                            
-                            // Verify the payment
-                            const verified = await verifyPayment(tx.tx.hash);
-                            results.push({
-                                txHash: tx.tx.hash,
-                                verified,
-                                timestamp: new Date().toISOString()
-                            });
-                        }
-                    }
-                } catch (txError) {
-                    console.error('Error processing transaction:', tx.tx.hash, txError);
-                    results.push({
-                        txHash: tx.tx.hash,
-                        error: txError.message,
-                        timestamp: new Date().toISOString()
-                    });
-                }
-            }
-
-            return res.json({
-                status: 'ok',
-                processed: results.length,
-                results,
-                timestamp: new Date().toISOString()
-            });
+        // Verify the payment
+        const paymentResult = await verifyPayment(txHash);
+        if (paymentResult.success) {
+            const { userId } = paymentResult;
+            // Award 5 new slots
+            const newSlots = await updateUserSlots(userId, SLOTS_PER_PAYMENT);
+            console.log('Payment verified and slots updated:', { userId, newSlots });
+            return res.json({ success: true, slots: newSlots });
+        } else {
+            console.error('Payment verification failed:', paymentResult.error);
+            return res.status(400).json({ error: paymentResult.error });
         }
-
-        // Handle other webhook types
-        console.log('Unhandled webhook type:', payload.type);
-        res.json({ 
-            status: 'ok',
-            message: `Received ${payload.type} webhook`,
-            timestamp: new Date().toISOString()
-        });
     } catch (error) {
         console.error('Error processing webhook:', error);
-        res.status(500).json({ 
-            error: 'Failed to process webhook',
-            message: error.message,
-            timestamp: new Date().toISOString()
-        });
+        return res.status(500).json({ error: 'Webhook processing failed' });
     }
 });
 
