@@ -2061,6 +2061,17 @@ async function initializePage() {
   console.log('Starting initialization...');
   initialized = true;
   await init();
+  
+  // After initialization, refresh any wallets that need it
+  const walletsNeedingRefresh = await loadWallets();
+  if (walletsNeedingRefresh && walletsNeedingRefresh.length > 0) {
+    console.log('Refreshing wallets that need updating...');
+    for (let i = 0; i < wallets.length; i++) {
+      if (walletsNeedingRefresh.includes(wallets[i].address)) {
+        await refreshWallet(i);
+      }
+    }
+  }
 }
 
 // Setup event listeners first
@@ -3163,6 +3174,10 @@ function setupAssetSearch() {
 
         const hasMatchingAsset = matchingAssets.length > 0;
 
+        const walletName = (wallet.name || '').toLowerCase();
+        const walletAddress = (wallet.address || '').toLowerCase();
+        const hasMatchingWallet = walletName.includes(searchTerm) || walletAddress.includes(searchTerm);
+
         if (searchTerm === '') {
           walletItem.classList.remove('hidden');
           hasVisibleWallets = true;
@@ -3171,7 +3186,7 @@ function setupAssetSearch() {
           walletItem.querySelectorAll('.asset-thumbnail').forEach(asset => {
             asset.classList.remove('hidden');
           });
-        } else if (hasMatchingAsset) {
+        } else if (hasMatchingAsset || hasMatchingWallet) {
           walletItem.classList.remove('hidden');
           hasVisibleWallets = true;
           

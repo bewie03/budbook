@@ -564,7 +564,7 @@ async function verifyPayment(txHash) {
               const payment = await getFromCache(key);
               console.log('Checking payment:', payment);
               
-              if (payment && !payment.verified && payment.adaAmount === 2044718 && payment.boneAmount === 1) {
+              if (payment && !payment.verified) {
                 console.log(' Found matching payment:', key);
                 
                 // Update payment status
@@ -735,44 +735,76 @@ app.post('/webhook', async (req, res) => {
       const txHash = item.tx.hash;
       console.log(` Processing transaction: ${txHash}`);
       
-      // Find payment to our address
-      const paymentOutput = item.outputs.find(output => 
-        output.address === PAYMENT_ADDRESS && 
-        output.amount.some(amt => amt.unit === 'lovelace' && amt.quantity === '2044718') &&
-        output.amount.some(amt => amt.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}` && amt.quantity === '1')
-      );
+      // Find payment to our address with more flexible matching
+      const paymentOutputs = item.outputs.filter(output => output.address === PAYMENT_ADDRESS);
       
-      if (paymentOutput) {
-        console.log(' Found payment to our address:', paymentOutput);
-        console.log(' Lovelace amount:', paymentOutput.amount.find(a => a.unit === 'lovelace').quantity);
+      for (const output of paymentOutputs) {
+        console.log(' Checking output:', output);
         
-        // Get all payment keys from cache
-        const keys = await cache.keys('payment:*');
-        console.log(' Found payment keys:', keys);
+        // Check for both BONE and ADA amounts
+        const boneAmount = output.amount.find(amt => 
+          amt.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`
+        );
         
-        // Find matching payment
-        for (const key of keys) {
-          if (!key.startsWith('payment:')) continue;
+        const adaAmount = output.amount.find(amt => amt.unit === 'lovelace');
+        
+        if (boneAmount && adaAmount) {
+          console.log(' Found payment with BONE and ADA:', {
+            bone: boneAmount.quantity,
+            ada: adaAmount.quantity
+          });
           
-          const payment = await getFromCache(key);
-          console.log('Checking payment:', payment);
+          // Get all payment keys from cache
+          const keys = await cache.keys('payment:*');
+          console.log(' Found payment keys:', keys);
           
-          if (payment && !payment.verified && payment.adaAmount === 2044718 && payment.boneAmount === 1) {
-            console.log(' Found matching payment:', key);
+          // Find matching payment
+          for (const key of keys) {
+            if (!key.startsWith('payment:')) continue;
             
-            // Update payment status
-            payment.verified = true;
-            payment.txHash = txHash;
-            await setInCache(key, payment);
+            const payment = await getFromCache(key);
+            console.log('Checking payment:', payment);
             
-            // Update user slots
-            const currentSlots = await getUserSlots(payment.userId);
-            const newSlots = currentSlots + SLOTS_PER_PAYMENT;
-            console.log(` Updating slots for user ${payment.userId}: ${currentSlots} -> ${newSlots}`);
-            
-            await updateUserSlots(payment.userId, SLOTS_PER_PAYMENT);
-            
-            break;
+            if (payment && !payment.verified) {
+              // Check exact BONE amount
+              const receivedBone = parseInt(boneAmount.quantity);
+              const expectedBone = payment.boneAmount;
+              
+              // Check ADA amount with tolerance
+              const receivedAda = parseInt(adaAmount.quantity);
+              const expectedAda = payment.adaAmount;
+              const tolerance = Math.ceil(expectedAda * 0.000001); // 0.0001% tolerance
+              const adaDiff = Math.abs(receivedAda - expectedAda);
+              
+              console.log(' Payment verification:', {
+                receivedBone,
+                expectedBone,
+                receivedAda,
+                expectedAda,
+                tolerance,
+                adaDiff
+              });
+              
+              if (receivedBone === expectedBone && adaDiff <= tolerance) {
+                console.log(' Payment verified successfully');
+                
+                // Update payment status
+                payment.verified = true;
+                payment.txHash = txHash;
+                await setInCache(key, payment);
+                
+                // Update user slots
+                const currentSlots = await getUserSlots(payment.userId);
+                const newSlots = currentSlots + SLOTS_PER_PAYMENT;
+                console.log(` Updating slots for user ${payment.userId}: ${currentSlots} -> ${newSlots}`);
+                
+                await updateUserSlots(payment.userId, SLOTS_PER_PAYMENT);
+                
+                break;
+              } else {
+                console.log(' Payment amounts do not match requirements');
+              }
+            }
           }
         }
       }
@@ -784,120 +816,6 @@ app.post('/webhook', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
-// Function to verify Blockfrost webhook signature
-function verifyBlockfrostSignature(signatureHeader, rawPayload, webhookToken) {
-  try {
-    if (!signatureHeader) {
-      console.error('No Blockfrost-Signature header');
-      return false;
-    }
-
-    // Parse the header
-    const elements = signatureHeader.split(',');
-    const signatures = new Map(); // Store multiple timestamp-signature pairs
-
-    // Extract all timestamp-signature pairs
-    for (const element of elements) {
-      const [key, value] = element.split('=');
-      if (key === 't') {
-        signatures.set('timestamp', value);
-      } else if (key.startsWith('v')) { // Support multiple signature versions
-        signatures.set(key, value);
-      }
-    }
-
-    const timestamp = signatures.get('timestamp');
-    if (!timestamp) {
-      console.error('Missing timestamp in signature header');
-      return false;
-    }
-
-    if (!signatures.has('v1')) {
-      console.error('Missing v1 signature in header');
-      return false;
-    }
-
-    // Check timestamp tolerance (10 minutes)
-    const now = Math.floor(Date.now() / 1000);
-    const timeDiff = Math.abs(now - parseInt(timestamp));
-    if (timeDiff > 600) {
-      console.error('Signature timestamp too old:', {
-        now,
-        timestamp,
-        difference: timeDiff,
-        maxAllowed: 600
-      });
-      return false;
-    }
-
-    // Parse and re-stringify the JSON payload to ensure consistent formatting
-    let formattedPayload;
-    try {
-      const parsedPayload = JSON.parse(rawPayload);
-      formattedPayload = JSON.stringify(parsedPayload);
-    } catch (e) {
-      console.error('Failed to parse/format payload:', e);
-      formattedPayload = rawPayload; // Fallback to raw payload if parsing fails
-    }
-
-    // Create signature payload
-    const signaturePayload = `${timestamp}.${formattedPayload}`;
-
-    // Compute expected signature using HMAC-SHA256
-    const hmac = crypto.createHmac('sha256', webhookToken);
-    hmac.update(signaturePayload);
-    const expectedSignature = hmac.digest('hex');
-
-    // Log detailed debug information
-    console.log('Webhook verification details:', {
-      timestamp,
-      receivedSignatures: Object.fromEntries(signatures),
-      expectedSignature,
-      payloadLength: formattedPayload.length,
-      payloadPreview: formattedPayload.substring(0, 100) + '...',
-      webhookTokenLength: webhookToken.length
-    });
-
-    // Check all supported signature versions
-    for (const [version, signature] of signatures) {
-      if (version === 'timestamp') continue;
-
-      try {
-        // Convert hex strings to buffers for comparison
-        const receivedBuffer = Buffer.from(signature, 'hex');
-        const expectedBuffer = Buffer.from(expectedSignature, 'hex');
-
-        // Compare signatures using timing-safe comparison
-        const isValid = receivedBuffer.length === expectedBuffer.length &&
-          crypto.timingSafeEqual(receivedBuffer, expectedBuffer);
-
-        if (isValid) {
-          console.log('Valid signature found:', { version });
-          return true;
-        }
-      } catch (e) {
-        console.error('Error comparing signatures:', {
-          version,
-          error: e.message
-        });
-      }
-    }
-
-    // If we get here, no valid signatures were found
-    console.error('No valid signatures found:', {
-      received: Object.fromEntries(signatures),
-      expected: expectedSignature,
-      timestamp,
-      signaturePayload: signaturePayload.substring(0, 100) + '...' // Log only first 100 chars
-    });
-
-    return false;
-  } catch (error) {
-    console.error('Error verifying signature:', error);
-    return false;
-  }
-}
 
 // Debug endpoint to check recent transactions
 app.get('/api/debug/recent-transactions', async (req, res) => {
