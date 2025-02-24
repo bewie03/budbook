@@ -1241,7 +1241,13 @@ async function messageListener(message, sender, sendResponse) {
 // Add the single message listener
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('Received message in fullview:', message);
-  if (message.action === 'REFRESH_ALL_WALLETS') {
+  
+  if (message.type === 'UPDATE_SLOT_COUNT') {
+    console.log('Updating slot count from message:', message.data);
+    if (message.data && typeof message.data.slots === 'number') {
+      updateSlotCount().catch(err => console.error('Error updating slot count:', err));
+    }
+  } else if (message.action === 'REFRESH_ALL_WALLETS') {
     console.log('Refreshing all wallets...');
     loadWallets().then(async (walletsNeedingRefresh) => {
       // First load wallets from storage

@@ -550,27 +550,29 @@ async function handlePaymentSuccess(data) {
     if (data && typeof data.slots === 'number') {
       console.log('Using slots from server response:', data.slots);
       unlockedSlots = data.slots;
+      
+      // Save to storage
+      await chrome.storage.sync.set({ unlockedSlots });
+      
+      // Verify storage update
+      const result = await chrome.storage.sync.get(['unlockedSlots']);
+      console.log('Verified storage update:', result);
+      
+      // Update UI
+      await updateUI();
+      await updateSlotDisplay();
+      
+      // Notify fullview to update
+      chrome.runtime.sendMessage({
+        type: 'UPDATE_SLOT_COUNT',
+        data: { slots: unlockedSlots }
+      }).catch(err => console.error('Error notifying fullview:', err));
+      
+      showSuccess(`Payment verified! You now have ${unlockedSlots} wallet slots available.`);
     } else {
-      // Fallback to adding SLOTS_PER_PAYMENT
-      console.log('No slots in response, using fallback');
-      const currentSlots = await chrome.storage.sync.get(['unlockedSlots']);
-      unlockedSlots = (currentSlots.unlockedSlots || MAX_FREE_SLOTS) + SLOTS_PER_PAYMENT;
+      showError('Failed to get updated slot count from server');
+      return;
     }
-    
-    console.log('Saving to storage:', { unlockedSlots });
-    
-    // Save to storage
-    await chrome.storage.sync.set({ unlockedSlots });
-    
-    // Verify storage update
-    const result = await chrome.storage.sync.get(['unlockedSlots']);
-    console.log('Verified storage update:', result);
-    
-    // Update UI
-    await updateUI();
-    await updateSlotDisplay();
-    
-    showSuccess(`Payment verified! You now have ${unlockedSlots} wallet slots available.`);
     
     // Close payment instructions if open
     const instructions = document.querySelector('.modal');
@@ -584,17 +586,9 @@ async function handlePaymentSuccess(data) {
       eventSource.close();
       eventSource = null;
     }
-
-    // Notify fullview to update
-    chrome.runtime.sendMessage({
-      type: 'UPDATE_SLOT_COUNT',
-      data: { slots: unlockedSlots }
-    }).catch(() => {
-      // Ignore error if fullview is not open
-    });
   } catch (error) {
-    console.error('Error handling payment success:', error);
-    showError('Error updating slots. Please contact support.');
+    console.error('Error in handlePaymentSuccess:', error);
+    showError('Failed to update slots. Please refresh the page.');
   }
 }
 

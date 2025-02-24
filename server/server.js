@@ -711,52 +711,27 @@ app.get('/api/slot-count', async (req, res) => {
 });
 
 // Payment verification endpoint - supports both payment IDs and tx hashes
-app.get('/api/verify-payment/:id', async (req, res) => {
+app.get('/api/verify-payment/:paymentId', async (req, res) => {
   try {
-    const { id } = req.params;
-    console.log('Verification request for:', id);
+    const { paymentId } = req.params;
+    console.log('Verification request for:', paymentId);
     
-    // First try to find by payment ID
-    const payment = await getFromCache(`payment:${id}`);
-    
-    if (payment) {
-      if (payment.verified) {
-        const slots = await getUserSlots(payment.userId);
-        return res.json({ 
-          verified: true,
-          slots,
-          txHash: payment.txHash
-        });
-      }
-      
-      // If not verified but has txHash, verify it
-      if (payment.txHash) {
-        const verified = await verifyPayment(payment.txHash, payment.userId);
-        if (verified) {
-          const slots = await getUserSlots(payment.userId);
-          return res.json({ 
-            verified: true,
-            slots,
-            txHash: payment.txHash
-          });
-        }
-      }
-      
-      return res.json({ verified: false });
+    const payment = await getFromCache(`payment:${paymentId}`);
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment not found' });
     }
-    
-    // If no payment found, try to verify the ID as a transaction hash
-    if (id.length === 64) { // Transaction hashes are 64 characters
-      const verified = await verifyPayment(id);
-      if (verified) {
-        return res.json({ 
-          verified: true,
-          txHash: id
-        });
-      }
+
+    // If already verified, return the current slots
+    if (payment.verified) {
+      const currentSlots = await getUserSlots(payment.userId);
+      return res.json({ 
+        verified: true,
+        slots: currentSlots,
+        txHash: payment.txHash 
+      });
     }
-    
-    return res.status(404).json({ error: 'Payment not found' });
+
+    res.json({ verified: false });
   } catch (error) {
     console.error('Error verifying payment:', error);
     res.status(500).json({ error: 'Failed to verify payment' });
@@ -996,120 +971,6 @@ app.post('/', express.json({
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
-// Function to verify Blockfrost webhook signature
-function verifyBlockfrostSignature(signatureHeader, rawPayload, webhookToken) {
-  try {
-    if (!signatureHeader) {
-      console.error('No Blockfrost-Signature header');
-      return false;
-    }
-
-    // Parse the header
-    const elements = signatureHeader.split(',');
-    const signatures = new Map(); // Store multiple timestamp-signature pairs
-
-    // Extract all timestamp-signature pairs
-    for (const element of elements) {
-      const [key, value] = element.split('=');
-      if (key === 't') {
-        signatures.set('timestamp', value);
-      } else if (key.startsWith('v')) { // Support multiple signature versions
-        signatures.set(key, value);
-      }
-    }
-
-    const timestamp = signatures.get('timestamp');
-    if (!timestamp) {
-      console.error('Missing timestamp in signature header');
-      return false;
-    }
-
-    if (!signatures.has('v1')) {
-      console.error('Missing v1 signature in header');
-      return false;
-    }
-
-    // Check timestamp tolerance (10 minutes)
-    const now = Math.floor(Date.now() / 1000);
-    const timeDiff = Math.abs(now - parseInt(timestamp));
-    if (timeDiff > 600) {
-      console.error('Signature timestamp too old:', {
-        now,
-        timestamp,
-        difference: timeDiff,
-        maxAllowed: 600
-      });
-      return false;
-    }
-
-    // Parse and re-stringify the JSON payload to ensure consistent formatting
-    let formattedPayload;
-    try {
-      const parsedPayload = JSON.parse(rawPayload);
-      formattedPayload = JSON.stringify(parsedPayload);
-    } catch (e) {
-      console.error('Failed to parse/format payload:', e);
-      formattedPayload = rawPayload; // Fallback to raw payload if parsing fails
-    }
-
-    // Create signature payload
-    const signaturePayload = `${timestamp}.${formattedPayload}`;
-
-    // Compute expected signature using HMAC-SHA256
-    const hmac = crypto.createHmac('sha256', webhookToken);
-    hmac.update(signaturePayload);
-    const expectedSignature = hmac.digest('hex');
-
-    // Log detailed debug information
-    console.log('Webhook verification details:', {
-      timestamp,
-      receivedSignatures: Object.fromEntries(signatures),
-      expectedSignature,
-      payloadLength: formattedPayload.length,
-      payloadPreview: formattedPayload.substring(0, 100) + '...',
-      webhookTokenLength: webhookToken.length
-    });
-
-    // Check all supported signature versions
-    for (const [version, signature] of signatures) {
-      if (version === 'timestamp') continue;
-
-      try {
-        // Convert hex strings to buffers for comparison
-        const receivedBuffer = Buffer.from(signature, 'hex');
-        const expectedBuffer = Buffer.from(expectedSignature, 'hex');
-
-        // Compare signatures using timing-safe comparison
-        const isValid = receivedBuffer.length === expectedBuffer.length &&
-          crypto.timingSafeEqual(receivedBuffer, expectedBuffer);
-
-        if (isValid) {
-          console.log('Valid signature found:', { version });
-          return true;
-        }
-      } catch (e) {
-        console.error('Error comparing signatures:', {
-          version,
-          error: e.message
-        });
-      }
-    }
-
-    // If we get here, no valid signatures were found
-    console.error('No valid signatures found:', {
-      received: Object.fromEntries(signatures),
-      expected: expectedSignature,
-      timestamp,
-      signaturePayload: signaturePayload.substring(0, 100) + '...' // Log only first 100 chars
-    });
-
-    return false;
-  } catch (error) {
-    console.error('Error verifying signature:', error);
-    return false;
-  }
-}
 
 // Debug endpoint to check recent transactions
 app.get('/api/debug/recent-transactions', async (req, res) => {
@@ -1461,3 +1322,117 @@ app.listen(port, () => {
   console.log('Blockfrost API configured:', !!process.env.BLOCKFROST_API_KEY);
   console.log('Payment address configured:', !!process.env.PAYMENT_ADDRESS);
 });
+
+// Function to verify Blockfrost webhook signature
+function verifyBlockfrostSignature(signatureHeader, rawPayload, webhookToken) {
+  try {
+    if (!signatureHeader) {
+      console.error('No Blockfrost-Signature header');
+      return false;
+    }
+
+    // Parse the header
+    const elements = signatureHeader.split(',');
+    const signatures = new Map(); // Store multiple timestamp-signature pairs
+
+    // Extract all timestamp-signature pairs
+    for (const element of elements) {
+      const [key, value] = element.split('=');
+      if (key === 't') {
+        signatures.set('timestamp', value);
+      } else if (key.startsWith('v')) { // Support multiple signature versions
+        signatures.set(key, value);
+      }
+    }
+
+    const timestamp = signatures.get('timestamp');
+    if (!timestamp) {
+      console.error('Missing timestamp in signature header');
+      return false;
+    }
+
+    if (!signatures.has('v1')) {
+      console.error('Missing v1 signature in header');
+      return false;
+    }
+
+    // Check timestamp tolerance (10 minutes)
+    const now = Math.floor(Date.now() / 1000);
+    const timeDiff = Math.abs(now - parseInt(timestamp));
+    if (timeDiff > 600) {
+      console.error('Signature timestamp too old:', {
+        now,
+        timestamp,
+        difference: timeDiff,
+        maxAllowed: 600
+      });
+      return false;
+    }
+
+    // Parse and re-stringify the JSON payload to ensure consistent formatting
+    let formattedPayload;
+    try {
+      const parsedPayload = JSON.parse(rawPayload);
+      formattedPayload = JSON.stringify(parsedPayload);
+    } catch (e) {
+      console.error('Failed to parse/format payload:', e);
+      formattedPayload = rawPayload; // Fallback to raw payload if parsing fails
+    }
+
+    // Create signature payload
+    const signaturePayload = `${timestamp}.${formattedPayload}`;
+
+    // Compute expected signature using HMAC-SHA256
+    const hmac = crypto.createHmac('sha256', webhookToken);
+    hmac.update(signaturePayload);
+    const expectedSignature = hmac.digest('hex');
+
+    // Log detailed debug information
+    console.log('Webhook verification details:', {
+      timestamp,
+      receivedSignatures: Object.fromEntries(signatures),
+      expectedSignature,
+      payloadLength: formattedPayload.length,
+      payloadPreview: formattedPayload.substring(0, 100) + '...',
+      webhookTokenLength: webhookToken.length
+    });
+
+    // Check all supported signature versions
+    for (const [version, signature] of signatures) {
+      if (version === 'timestamp') continue;
+
+      try {
+        // Convert hex strings to buffers for comparison
+        const receivedBuffer = Buffer.from(signature, 'hex');
+        const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+
+        // Compare signatures using timing-safe comparison
+        const isValid = receivedBuffer.length === expectedBuffer.length &&
+          crypto.timingSafeEqual(receivedBuffer, expectedBuffer);
+
+        if (isValid) {
+          console.log('Valid signature found:', { version });
+          return true;
+        }
+      } catch (e) {
+        console.error('Error comparing signatures:', {
+          version,
+          error: e.message
+        });
+      }
+    }
+
+    // If we get here, no valid signatures were found
+    console.error('No valid signatures found:', {
+      received: Object.fromEntries(signatures),
+      expected: expectedSignature,
+      timestamp,
+      signaturePayload: signaturePayload.substring(0, 100) + '...' // Log only first 100 chars
+    });
+
+    return false;
+  } catch (error) {
+    console.error('Error verifying signature:', error);
+    return false;
+  }
+}
