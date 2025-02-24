@@ -415,7 +415,14 @@ app.get('/api/wallet/:address', async (req, res) => {
 async function getUserSlots(userId) {
   try {
     const slots = await getFromCache(`slots:${userId}`);
-    return slots || MAX_FREE_SLOTS;
+    console.log('Retrieved slots for user:', { userId, slots });
+    // If no slots in cache, check if they've made payments before
+    if (slots === undefined) {
+      // Start with free slots
+      console.log('No slots found, starting with free slots');
+      return MAX_FREE_SLOTS;
+    }
+    return slots;
   } catch (error) {
     console.error('Error getting user slots:', error);
     return MAX_FREE_SLOTS;
@@ -426,8 +433,15 @@ async function getUserSlots(userId) {
 async function updateUserSlots(userId, additionalSlots) {
   try {
     const currentSlots = await getUserSlots(userId);
+    console.log('Updating slots:', { userId, currentSlots, additionalSlots });
+    
+    // Calculate new total, ensuring we don't exceed max
     const newSlots = Math.min(currentSlots + additionalSlots, MAX_TOTAL_SLOTS);
-    await setInCache(`slots:${userId}`, newSlots);
+    
+    // Store with no TTL (0 means no expiration)
+    await setInCache(`slots:${userId}`, newSlots, 0);
+    
+    console.log('Updated slots:', { userId, oldSlots: currentSlots, newSlots });
     return newSlots;
   } catch (error) {
     console.error('Error updating user slots:', error);

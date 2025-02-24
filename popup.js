@@ -476,8 +476,16 @@ function updateSlotDisplay() {
   const slotDisplay = document.getElementById('slotDisplay');
   if (slotDisplay) {
     chrome.storage.sync.get(['unlockedSlots'], (result) => {
+      console.log('Retrieved slots from storage:', result);
       const totalSlots = result.unlockedSlots || MAX_FREE_SLOTS;
       const usedSlots = wallets.length;
+      
+      console.log('Updating slot display:', {
+        totalSlots,
+        usedSlots,
+        unlockedSlots: result.unlockedSlots
+      });
+      
       slotDisplay.textContent = `${usedSlots}/${totalSlots}`;
       
       // Update progress bar if it exists
@@ -536,16 +544,26 @@ async function checkPaymentStatus() {
 
 async function handlePaymentSuccess(data) {
   try {
+    console.log('Payment success data:', data);
+    
     // Update unlocked slots from server response
     if (data && typeof data.slots === 'number') {
+      console.log('Using slots from server response:', data.slots);
       unlockedSlots = data.slots;
     } else {
       // Fallback to adding SLOTS_PER_PAYMENT
+      console.log('No slots in response, using fallback');
       unlockedSlots += SLOTS_PER_PAYMENT;
     }
     
+    console.log('Saving to storage:', { unlockedSlots });
+    
     // Save to storage
     await chrome.storage.sync.set({ unlockedSlots });
+    
+    // Verify storage update
+    const result = await chrome.storage.sync.get(['unlockedSlots']);
+    console.log('Verified storage update:', result);
     
     // Update UI
     updateUI();
