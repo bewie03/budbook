@@ -418,31 +418,12 @@ async function getUserSlots(userId) {
     const slots = await getFromCache(`slots:${userId}`);
     console.log('Retrieved slots for user:', { userId, slots });
 
-    // If no slots found in cache, check chrome storage via API
     if (slots === undefined) {
-      console.log('No slots in cache, checking chrome storage');
-      try {
-        const response = await fetch(`${EXTENSION_API_URL}/api/slots/${userId}/sync`, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' }
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          if (data && typeof data.slots === 'number') {
-            console.log('Found slots in chrome storage:', data.slots);
-            // Store in cache with no expiration
-            await setInCache(`slots:${userId}`, data.slots, 0);
-            return data.slots;
-          }
-        }
-      } catch (error) {
-        console.error('Error checking chrome storage:', error);
-      }
-      
-      console.log('Starting with free slots');
-      await setInCache(`slots:${userId}`, MAX_FREE_SLOTS, 0);
-      return MAX_FREE_SLOTS;
+      // Start with free slots if no slots found
+      console.log('No slots found, starting with free slots');
+      const initialSlots = MAX_FREE_SLOTS;
+      await setInCache(`slots:${userId}`, initialSlots, 0); // Store with no expiration
+      return initialSlots;
     }
 
     return slots;
@@ -455,16 +436,20 @@ async function getUserSlots(userId) {
 // Helper function to update user slots
 async function updateUserSlots(userId, additionalSlots) {
   try {
+    console.log('Updating slots for user:', { userId, additionalSlots });
     const currentSlots = await getUserSlots(userId);
-    console.log('Updating slots:', { userId, currentSlots, additionalSlots });
-    
-    // Calculate new total, ensuring we don't exceed max
     const newSlots = Math.min(currentSlots + additionalSlots, MAX_TOTAL_SLOTS);
     
-    // Store with no TTL (0 means no expiration)
+    // Store with no expiration
     await setInCache(`slots:${userId}`, newSlots, 0);
     
-    console.log('Updated slots:', { userId, oldSlots: currentSlots, newSlots });
+    console.log('Updated slots:', {
+      userId,
+      currentSlots,
+      newSlots,
+      added: additionalSlots
+    });
+    
     return newSlots;
   } catch (error) {
     console.error('Error updating user slots:', error);
