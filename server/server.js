@@ -817,236 +817,6 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Function to verify Blockfrost webhook signature
-function verifyBlockfrostSignature(signatureHeader, rawPayload, webhookToken) {
-  try {
-    if (!signatureHeader) {
-      console.error('No Blockfrost-Signature header');
-      return false;
-    }
-
-    // Parse the header
-    const elements = signatureHeader.split(',');
-    const signatures = new Map(); // Store multiple timestamp-signature pairs
-
-    // Extract all timestamp-signature pairs
-    for (const element of elements) {
-      const [key, value] = element.split('=');
-      if (key === 't') {
-        signatures.set('timestamp', value);
-      } else if (key.startsWith('v')) { // Support multiple signature versions
-        signatures.set(key, value);
-      }
-    }
-
-    const timestamp = signatures.get('timestamp');
-    if (!timestamp) {
-      console.error('Missing timestamp in signature header');
-      return false;
-    }
-
-    if (!signatures.has('v1')) {
-      console.error('Missing v1 signature in header');
-      return false;
-    }
-
-    // Check timestamp tolerance (10 minutes)
-    const now = Math.floor(Date.now() / 1000);
-    const timeDiff = Math.abs(now - parseInt(timestamp));
-    if (timeDiff > 600) {
-      console.error('Signature timestamp too old:', {
-        now,
-        timestamp,
-        difference: timeDiff,
-        maxAllowed: 600
-      });
-      return false;
-    }
-
-    // Parse and re-stringify the JSON payload to ensure consistent formatting
-    let formattedPayload;
-    try {
-      const parsedPayload = JSON.parse(rawPayload);
-      formattedPayload = JSON.stringify(parsedPayload);
-    } catch (e) {
-      console.error('Failed to parse/format payload:', e);
-      formattedPayload = rawPayload; // Fallback to raw payload if parsing fails
-    }
-
-    // Create signature payload
-    const signaturePayload = `${timestamp}.${formattedPayload}`;
-
-    // Compute expected signature using HMAC-SHA256
-    const hmac = crypto.createHmac('sha256', webhookToken);
-    hmac.update(signaturePayload);
-    const expectedSignature = hmac.digest('hex');
-
-    // Log detailed debug information
-    console.log('Webhook verification details:', {
-      timestamp,
-      receivedSignatures: Object.fromEntries(signatures),
-      expectedSignature,
-      payloadLength: formattedPayload.length,
-      payloadPreview: formattedPayload.substring(0, 100) + '...',
-      webhookTokenLength: webhookToken.length
-    });
-
-    // Check all supported signature versions
-    for (const [version, signature] of signatures) {
-      if (version === 'timestamp') continue;
-
-      try {
-        // Convert hex strings to buffers for comparison
-        const receivedBuffer = Buffer.from(signature, 'hex');
-        const expectedBuffer = Buffer.from(expectedSignature, 'hex');
-
-        // Compare signatures using timing-safe comparison
-        const isValid = receivedBuffer.length === expectedBuffer.length &&
-          crypto.timingSafeEqual(receivedBuffer, expectedBuffer);
-
-        if (isValid) {
-          console.log('Valid signature found:', { version });
-          return true;
-        }
-      } catch (e) {
-        console.error('Error comparing signatures:', {
-          version,
-          error: e.message
-        });
-      }
-    }
-
-    // If we get here, no valid signatures were found
-    console.error('No valid signatures found:', {
-      received: Object.fromEntries(signatures),
-      expected: expectedSignature,
-      timestamp,
-      signaturePayload: signaturePayload.substring(0, 100) + '...' // Log only first 100 chars
-    });
-
-    return false;
-  } catch (error) {
-    console.error('Error verifying signature:', error);
-    return false;
-  }
-}
-
-// Debug endpoint to check recent transactions
-app.get('/api/debug/recent-transactions', async (req, res) => {
-  try {
-    console.log('Checking recent transactions...');
-    const txs = await fetchBlockfrost(`/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`);
-    console.log('Recent transactions:', JSON.stringify(txs, null, 2));
-
-    const transactions = [];
-    
-    // Check last 10 transactions
-    for (const tx of txs.slice(0, 10)) {
-      const txDetails = await fetchBlockfrost(`/txs/${tx.tx_hash}/utxos`);
-      console.log('Transaction details:', JSON.stringify(txDetails, null, 2));
-
-      // Find output to our address
-      const output = txDetails.outputs.find(o => 
-        o.address === PAYMENT_ADDRESS && 
-        o.amount.some(a => a.unit === 'lovelace')
-      );
-
-      if (output) {
-        const amountAda = parseInt(output.amount.find(a => a.unit === 'lovelace').quantity) / 1000000;
-        transactions.push({
-          tx_hash: tx.tx_hash,
-          amount: amountAda,
-          block_time: tx.block_time
-        });
-      }
-    }
-
-    res.json({
-      address: PAYMENT_ADDRESS,
-      transactions
-    });
-  } catch (error) {
-    console.error('Error checking transactions:', error);
-    res.status(500).json({ error: 'Failed to check transactions' });
-  }
-});
-
-// Add endpoint to view cache
-app.get('/api/cache', async (req, res) => {
-  try {
-    // Get all keys from cache
-    const keys = await cache.keys('*');
-    const cacheData = {};
-
-    // Get data for each key
-    for (const key of keys) {
-      const value = await getFromCache(key);
-      try {
-        const parsed = JSON.parse(value);
-        // Filter out large data fields
-        if (parsed && typeof parsed === 'object') {
-          // For assets, only show essential metadata
-          if (key.startsWith('asset:')) {
-            cacheData[key] = {
-              display_name: parsed.display_name,
-              decimals: parsed.decimals,
-              ticker: parsed.ticker,
-              policy_id: parsed.policy_id,
-              fingerprint: parsed.fingerprint,
-              has_metadata: !!parsed.metadata,
-              has_image: !!(parsed.metadata?.image || parsed.metadata?.logo)
-            };
-          } else {
-            cacheData[key] = parsed;
-          }
-        } else {
-          cacheData[key] = value;
-        }
-      } catch (e) {
-        // If not JSON, store as is
-        cacheData[key] = value;
-      }
-    }
-
-    // Group by type
-    const groupedCache = {
-      assets: {},
-      payments: {},
-      other: {}
-    };
-
-    for (const [key, value] of Object.entries(cacheData)) {
-      if (key.startsWith('asset:')) {
-        groupedCache.assets[key] = value;
-      } else if (key.startsWith('payment:')) {
-        groupedCache.payments[key] = value;
-      } else {
-        groupedCache.other[key] = value;
-      }
-    }
-
-    res.json({
-      totalKeys: keys.length,
-      groupedCache
-    });
-  } catch (error) {
-    console.error('Error viewing cache:', error);
-    res.status(500).json({ error: 'Failed to view cache' });
-  }
-});
-
-// Clear cache
-app.post('/api/clear-cache', async (req, res) => {
-  try {
-    await cache.flushAll();
-    console.log('Cache cleared');
-    res.json({ message: 'Cache cleared successfully' });
-  } catch (error) {
-    console.error('Error clearing cache:', error);
-    res.status(500).json({ error: 'Failed to clear cache' });
-  }
-});
-
 // Get account info
 app.get('/api/accounts/:stake_address', async (req, res) => {
     try {
@@ -1129,24 +899,47 @@ app.get('/api/accounts/:stakeAddress', async (req, res) => {
     const accountInfo = await fetchBlockfrost(`/accounts/${stakeAddress}`, 'fetch account info');
     console.log('Account info received:', accountInfo);
 
-    // Get pool info if the account is delegating
-    let poolInfo = null;
+    // Get pool ticker if staked
+    let ticker = 'Unstaked';
     if (accountInfo.pool_id) {
       try {
         const poolInfo = await fetchBlockfrost(`/pools/${accountInfo.pool_id}`, 'fetch pool info');
         console.log('Pool info received:', poolInfo);
+        
+        // Get pool metadata
+        if (poolInfo.metadata_hash) {
+          const poolMetadata = await fetchBlockfrost(`/pools/${accountInfo.pool_id}/metadata`, 'fetch pool metadata');
+          ticker = poolMetadata?.ticker || 'Unknown Pool';
+          console.log('Pool metadata received:', poolMetadata);
+        }
       } catch (poolError) {
         console.error('Error fetching pool info:', poolError);
+        ticker = 'Unknown Pool';
       }
+    }
+
+    // Get total rewards (convert from Lovelace to ADA)
+    let totalRewards = '0';
+    try {
+      const rewards = await fetchBlockfrost(`/accounts/${stakeAddress}/rewards`, 'fetch rewards');
+      // Get the latest reward
+      const latestReward = rewards[0]?.amount || '0';
+      // Convert from Lovelace to ADA (1 ADA = 1,000,000 Lovelace)
+      totalRewards = (parseInt(latestReward) / 1000000).toString();
+      console.log('Latest reward (ADA):', totalRewards);
+    } catch (rewardsError) {
+      console.error('Error fetching rewards:', rewardsError);
     }
 
     // Format response
     const response = {
-      ...accountInfo,
-      pool_info: poolInfo,
+      stake_address: stakeAddress,
+      ticker,
+      rewards: totalRewards,
       active: !!accountInfo.pool_id
     };
 
+    console.log('Sending response:', response);
     res.json(response);
   } catch (error) {
     console.error('Error in /api/accounts/:stakeAddress:', error);
@@ -1395,3 +1188,119 @@ function verifyBlockfrostSignature(signatureHeader, rawPayload, webhookToken) {
     return false;
   }
 }
+
+// Debug endpoint to check recent transactions
+app.get('/api/debug/recent-transactions', async (req, res) => {
+  try {
+    console.log('Checking recent transactions...');
+    const txs = await fetchBlockfrost(`/addresses/${PAYMENT_ADDRESS}/transactions?order=desc`);
+    console.log('Recent transactions:', JSON.stringify(txs, null, 2));
+
+    const transactions = [];
+    
+    // Check last 10 transactions
+    for (const tx of txs.slice(0, 10)) {
+      const txDetails = await fetchBlockfrost(`/txs/${tx.tx_hash}/utxos`);
+      console.log('Transaction details:', JSON.stringify(txDetails, null, 2));
+
+      // Find output to our address
+      const output = txDetails.outputs.find(o => 
+        o.address === PAYMENT_ADDRESS && 
+        o.amount.some(a => a.unit === 'lovelace')
+      );
+
+      if (output) {
+        const amountAda = parseInt(output.amount.find(a => a.unit === 'lovelace').quantity) / 1000000;
+        transactions.push({
+          tx_hash: tx.tx_hash,
+          amount: amountAda,
+          block_time: tx.block_time
+        });
+      }
+    }
+
+    res.json({
+      address: PAYMENT_ADDRESS,
+      transactions
+    });
+  } catch (error) {
+    console.error('Error checking transactions:', error);
+    res.status(500).json({ error: 'Failed to check transactions' });
+  }
+});
+
+// Add endpoint to view cache
+app.get('/api/cache', async (req, res) => {
+  try {
+    // Get all keys from cache
+    const keys = await cache.keys('*');
+    const cacheData = {};
+
+    // Get data for each key
+    for (const key of keys) {
+      const value = await getFromCache(key);
+      try {
+        const parsed = JSON.parse(value);
+        // Filter out large data fields
+        if (parsed && typeof parsed === 'object') {
+          // For assets, only show essential metadata
+          if (key.startsWith('asset:')) {
+            cacheData[key] = {
+              display_name: parsed.display_name,
+              decimals: parsed.decimals,
+              ticker: parsed.ticker,
+              policy_id: parsed.policy_id,
+              fingerprint: parsed.fingerprint,
+              has_metadata: !!parsed.metadata,
+              has_image: !!(parsed.metadata?.image || parsed.metadata?.logo)
+            };
+          } else {
+            cacheData[key] = parsed;
+          }
+        } else {
+          cacheData[key] = value;
+        }
+      } catch (e) {
+        // If not JSON, store as is
+        cacheData[key] = value;
+      }
+    }
+
+    // Group by type
+    const groupedCache = {
+      assets: {},
+      payments: {},
+      other: {}
+    };
+
+    for (const [key, value] of Object.entries(cacheData)) {
+      if (key.startsWith('asset:')) {
+        groupedCache.assets[key] = value;
+      } else if (key.startsWith('payment:')) {
+        groupedCache.payments[key] = value;
+      } else {
+        groupedCache.other[key] = value;
+      }
+    }
+
+    res.json({
+      totalKeys: keys.length,
+      groupedCache
+    });
+  } catch (error) {
+    console.error('Error viewing cache:', error);
+    res.status(500).json({ error: 'Failed to view cache' });
+  }
+});
+
+// Clear cache
+app.post('/api/clear-cache', async (req, res) => {
+  try {
+    await cache.flushAll();
+    console.log('Cache cleared');
+    res.json({ message: 'Cache cleared successfully' });
+  } catch (error) {
+    console.error('Error clearing cache:', error);
+    res.status(500).json({ error: 'Failed to clear cache' });
+  }
+});
