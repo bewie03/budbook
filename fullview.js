@@ -2466,7 +2466,7 @@ async function updateSlotCount() {
     // Update slot count display
     const slotCountElement = document.getElementById('slotCount');
     if (slotCountElement) {
-      slotCountElement.textContent = `${wallets.length}/${slotCount} slots`;
+      slotCountElement.textContent = `${wallets.length}/${slotCount}`;
     }
 
     // Update progress bar
