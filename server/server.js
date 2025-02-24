@@ -425,6 +425,13 @@ app.get('/api/wallet/:address', async (req, res) => {
     }
 });
 
+// Constants for file paths
+const SLOTS_FILE_PATH = path.join(__dirname, 'slots.json');
+const DEFAULT_SLOTS = {
+  "default": MAX_FREE_SLOTS,  // Everyone starts with 5 free slots
+  "110690064951904641068": 35  // This specific user has earned 35 slots through payments
+};
+
 // Helper function to get user slots
 async function getUserSlots(userId) {
   try {
@@ -435,17 +442,35 @@ async function getUserSlots(userId) {
       console.log('Cache miss for slots, checking persistent storage');
       // Try to get from persistent storage
       try {
-        const data = await fs.readFile('slots.json');
+        const data = await fs.readFile(SLOTS_FILE_PATH);
         const slotsData = JSON.parse(data);
         
-        // Try user-specific slots first, then fall back to default
-        slots = slotsData[userId] || slotsData.default || MAX_FREE_SLOTS;
+        // Try user-specific slots first, then fall back to default free slots
+        slots = slotsData[userId] || MAX_FREE_SLOTS;
         console.log('Loaded slots from persistent storage:', { userId, slots, source: 'slots.json' });
       } catch (readError) {
-        console.warn('Could not read slots.json:', readError.message);
-        // Start with free slots if no slots found
-        slots = MAX_FREE_SLOTS;
-        console.log('Using default free slots:', { userId, slots, source: 'default' });
+        if (readError.code === 'ENOENT') {
+          // File doesn't exist, create it with default values
+          console.log('Creating slots.json with default values');
+          try {
+            await fs.writeFile(SLOTS_FILE_PATH, JSON.stringify(DEFAULT_SLOTS, null, 2));
+            // Use user-specific slots if available, otherwise use free slots
+            slots = DEFAULT_SLOTS[userId] || MAX_FREE_SLOTS;
+            console.log('Created slots.json with defaults:', DEFAULT_SLOTS);
+          } catch (writeError) {
+            console.error('Failed to create slots.json:', writeError);
+            slots = MAX_FREE_SLOTS;
+          }
+        } else {
+          console.warn('Error reading slots.json:', readError);
+          slots = MAX_FREE_SLOTS;
+        }
+        console.log('Using slots:', { 
+          userId, 
+          slots, 
+          source: readError.code === 'ENOENT' ? 'new_file' : 'default',
+          explanation: slots === MAX_FREE_SLOTS ? 'Using free slots' : 'Using saved slot count'
+        });
       }
       
       // Update cache
@@ -472,10 +497,15 @@ async function updateUserSlots(userId, additionalSlots) {
     // Read existing data
     let slotsData = {};
     try {
-      const data = await fs.readFile('slots.json');
+      const data = await fs.readFile(SLOTS_FILE_PATH);
       slotsData = JSON.parse(data);
     } catch (readError) {
-      console.warn('Could not read slots.json, creating new file');
+      if (readError.code === 'ENOENT') {
+        // File doesn't exist, use default values
+        slotsData = { ...DEFAULT_SLOTS };
+      } else {
+        console.warn('Error reading slots.json:', readError);
+      }
     }
     
     // Update data
@@ -487,8 +517,8 @@ async function updateUserSlots(userId, additionalSlots) {
     
     // Write back to file
     try {
-      await fs.writeFile('slots.json', JSON.stringify(slotsData, null, 2));
-      console.log('Saved slots to persistent storage:', { userId, newSlots });
+      await fs.writeFile(SLOTS_FILE_PATH, JSON.stringify(slotsData, null, 2));
+      console.log('Saved slots to persistent storage:', { userId, newSlots, path: SLOTS_FILE_PATH });
     } catch (writeError) {
       console.error('Failed to save slots to persistent storage:', writeError);
       // Don't throw here, we can still update the cache
@@ -502,7 +532,8 @@ async function updateUserSlots(userId, additionalSlots) {
       previousSlots: currentSlots,
       newSlots,
       added: additionalSlots,
-      maxSlots: MAX_TOTAL_SLOTS
+      maxSlots: MAX_TOTAL_SLOTS,
+      path: SLOTS_FILE_PATH
     });
     
     return newSlots;
@@ -574,6 +605,39 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
   }
 });
 
+// Helper function to verify payment amounts
+function verifyPaymentAmounts(received, expected) {
+  // Allow a small variance in lovelace amount for fees
+  const lovelaceVariance = 100000; // Allow 0.1 ADA variance
+  const receivedLovelace = BigInt(received.lovelace || '0');
+  const expectedLovelace = BigInt(expected.lovelace || '0');
+  const lovelaceDiff = receivedLovelace > expectedLovelace ? 
+    receivedLovelace - expectedLovelace : 
+    expectedLovelace - receivedLovelace;
+
+  // Bone amount must match exactly
+  const boneMatches = received.bone === expected.bone;
+  
+  // Lovelace amount can be within variance
+  const lovelaceMatches = lovelaceDiff <= BigInt(lovelaceVariance);
+
+  console.log('Payment amount verification:', {
+    lovelace: {
+      received: receivedLovelace.toString(),
+      expected: expectedLovelace.toString(),
+      difference: lovelaceDiff.toString(),
+      matches: lovelaceMatches
+    },
+    bone: {
+      received: received.bone,
+      expected: expected.bone,
+      matches: boneMatches
+    }
+  });
+
+  return boneMatches && lovelaceMatches;
+}
+
 // Payment verification function
 async function verifyPayment(txHash, retryCount = 0) {
     const MAX_RETRIES = 3;
@@ -601,15 +665,19 @@ async function verifyPayment(txHash, retryCount = 0) {
             if (output.address !== PAYMENT_ADDRESS) return false;
             
             // Get payment amounts
-            const lovelaceAmount = output.amount.find(a => a.unit === 'lovelace')?.quantity;
-            const boneAmount = output.amount.find(a => a.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)?.quantity;
+            const lovelaceAmount = output.amount.find(a => a.unit === 'lovelace')?.quantity || '0';
+            const boneAmount = output.amount.find(a => a.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)?.quantity || '0';
+            
+            // Check payment amounts with allowed variance
+            const received = { lovelace: lovelaceAmount, bone: boneAmount };
+            const expected = { lovelace: '1976642', bone: '1' }; // Updated to match actual payment amount
             
             console.log('Checking payment amounts:', {
-                expected: { lovelace: '2044718', bone: '1' },
-                received: { lovelace: lovelaceAmount, bone: boneAmount }
+                expected,
+                received
             });
             
-            return lovelaceAmount === '2044718' && boneAmount === '1';
+            return verifyPaymentAmounts(received, expected);
         });
         
         if (!paymentOutput) {
@@ -648,6 +716,21 @@ async function verifyPayment(txHash, retryCount = 0) {
             
             if (payment && !payment.verified) {
                 console.log('Found matching unverified payment:', key);
+                
+                // Verify payment amounts match what was expected
+                const received = { 
+                    lovelace: paymentOutput.amount.find(a => a.unit === 'lovelace')?.quantity || '0',
+                    bone: paymentOutput.amount.find(a => a.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)?.quantity || '0'
+                };
+                const expected = {
+                    lovelace: payment.adaAmount.toString(),
+                    bone: payment.boneAmount.toString()
+                };
+                
+                if (!verifyPaymentAmounts(received, expected)) {
+                    console.log('Payment amounts do not match expected values');
+                    continue;
+                }
                 
                 // Update payment status with more details
                 payment.verified = true;
