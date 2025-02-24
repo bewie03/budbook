@@ -414,14 +414,37 @@ app.get('/api/wallet/:address', async (req, res) => {
 // Helper function to get user slots
 async function getUserSlots(userId) {
   try {
+    console.log('Getting from cache:', { key: `slots:${userId}` });
     const slots = await getFromCache(`slots:${userId}`);
     console.log('Retrieved slots for user:', { userId, slots });
-    // If no slots in cache, check if they've made payments before
+
+    // If no slots found in cache, check chrome storage via API
     if (slots === undefined) {
-      // Start with free slots
-      console.log('No slots found, starting with free slots');
+      console.log('No slots in cache, checking chrome storage');
+      try {
+        const response = await fetch(`${EXTENSION_API_URL}/api/slots/${userId}/sync`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data && typeof data.slots === 'number') {
+            console.log('Found slots in chrome storage:', data.slots);
+            // Store in cache with no expiration
+            await setInCache(`slots:${userId}`, data.slots, 0);
+            return data.slots;
+          }
+        }
+      } catch (error) {
+        console.error('Error checking chrome storage:', error);
+      }
+      
+      console.log('Starting with free slots');
+      await setInCache(`slots:${userId}`, MAX_FREE_SLOTS, 0);
       return MAX_FREE_SLOTS;
     }
+
     return slots;
   } catch (error) {
     console.error('Error getting user slots:', error);
