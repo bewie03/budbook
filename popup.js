@@ -5,6 +5,7 @@ import { auth } from './js/auth.js';
 const MAX_FREE_SLOTS = 5;
 const SLOTS_PER_PAYMENT = 5;
 const MAX_TOTAL_SLOTS = 500;
+const DEFAULT_PURCHASED_SLOTS = 35; // Default number of slots purchased by users
 const BONE_PAYMENT_AMOUNT = 100;
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
 const MAX_STORED_ASSETS = 5; // Store only top 5 assets by value
@@ -38,30 +39,43 @@ let customIconData = null;
 class SlotManager {
   async syncWithServer(userId) {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/slots/${userId}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          'Origin': chrome.runtime.getURL('')
+      // First try to get slots from storage
+      const { totalSlots } = await chrome.storage.sync.get(['totalSlots']);
+      
+      try {
+        // Then try to sync with server
+        const response = await fetch(`${API_BASE_URL}/api/slots/${userId}`, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+            'Origin': chrome.runtime.getURL('')
+          }
+        });
+        
+        if (!response.ok) {
+          if (response.status === 429) {
+            console.log('Rate limited, using stored slot count:', totalSlots);
+            return totalSlots || DEFAULT_PURCHASED_SLOTS;
+          }
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        
+        const data = await response.json();
+        console.log('Received slot data:', data);
+        
+        // Update available slots in storage
+        const newSlots = data.availableSlots || DEFAULT_PURCHASED_SLOTS;
+        await chrome.storage.sync.set({ totalSlots: newSlots });
+        
+        return newSlots;
+      } catch (error) {
+        // If server sync fails, fall back to stored value
+        console.log('Server sync failed, using stored slot count:', totalSlots);
+        return totalSlots || DEFAULT_PURCHASED_SLOTS;
       }
-      
-      const data = await response.json();
-      console.log('Received slot data:', data);
-      
-      // Update available slots
-      const availableSlots = data.availableSlots;
-      await chrome.storage.sync.set({ availableSlots });
-      
-      return availableSlots;
     } catch (error) {
       console.error('Error syncing slots:', error);
-      throw error;
+      return DEFAULT_PURCHASED_SLOTS; // Default fallback
     }
   }
 
@@ -70,46 +84,65 @@ class SlotManager {
       const userId = await auth.getUserId();
       if (!userId) {
         console.error('No user ID found');
-        return;
+        return MAX_FREE_SLOTS;
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/add-slots/${userId}`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'Origin': chrome.runtime.getURL('')
-        },
-        body: JSON.stringify({
-          slots
-        })
-      });
+      // First update local storage optimistically
+      const { totalSlots } = await chrome.storage.sync.get(['totalSlots']);
+      const newCount = (totalSlots || MAX_FREE_SLOTS) + slots;
+      await chrome.storage.sync.set({ totalSlots: newCount });
 
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || `Server error: ${response.status}`);
+      try {
+        // Then try to sync with server
+        const response = await fetch(`${API_BASE_URL}/api/add-slots/${userId}`, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'Origin': chrome.runtime.getURL('')
+          },
+          body: JSON.stringify({ slots })
+        });
+
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || `Server error: ${response.status}`);
+        }
+
+        // Update with server's slot count
+        const serverSlots = data.availableSlots;
+        await chrome.storage.sync.set({ totalSlots: serverSlots });
+        
+        return serverSlots;
+      } catch (error) {
+        console.error('Server sync failed, keeping local slot count:', newCount);
+        return newCount;
       }
-
-      // Update available slots
-      const availableSlots = data.availableSlots;
-      await chrome.storage.sync.set({ availableSlots });
-      
-      return availableSlots;
     } catch (error) {
       console.error('Error adding slots:', error);
-      throw error;
+      return MAX_FREE_SLOTS;
+    }
+  }
+
+  async getTotalSlots() {
+    try {
+      const { totalSlots } = await chrome.storage.sync.get(['totalSlots']);
+      return totalSlots || MAX_FREE_SLOTS;
+    } catch (error) {
+      console.error('Error getting total slots:', error);
+      return MAX_FREE_SLOTS;
     }
   }
 
   async getAvailableSlots() {
-    const result = await chrome.storage.sync.get(['availableSlots']);
-    return result.availableSlots || MAX_FREE_SLOTS;
-  }
-
-  async getTotalSlots() {
-    const result = await chrome.storage.sync.get(['totalSlots']);
-    return result.totalSlots || MAX_TOTAL_SLOTS;
+    try {
+      const { totalSlots } = await chrome.storage.sync.get(['totalSlots']);
+      return totalSlots - wallets.length;
+    } catch (error) {
+      console.error('Error getting available slots:', error);
+      return MAX_FREE_SLOTS;
+    }
   }
 }
 
@@ -902,7 +935,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Add listener for storage changes to update UI
     chrome.storage.onChanged.addListener((changes, namespace) => {
-      if (namespace === 'sync' && (changes.availableSlots || changes.totalSlots)) {
+      if (namespace === 'sync' && (changes.totalSlots)) {
         console.log('Slots updated in storage:', changes);
         updateSlotDisplay();
         updateUI();
