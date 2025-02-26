@@ -7,23 +7,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         chrome.tabs.sendMessage(tab.id, {action: "walletAdded"});
       });
     });
-  }
-});
-
-// Listen for storage changes to keep UI in sync
-chrome.storage.onChanged.addListener(async (changes, namespace) => {
-  // If wallet index changes, notify any open tabs
-  if (namespace === 'sync' && (changes.wallet_index || changes.unlockedSlots)) {
-    const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
-    tabs.forEach(tab => {
-      chrome.tabs.sendMessage(tab.id, { type: 'RELOAD_WALLETS' });
+  } else if (message.type === 'SLOTS_UPDATED') {
+    // Forward slot updates to popup
+    chrome.runtime.sendMessage({ type: 'UPDATE_POPUP_SLOTS', slots: message.slots });
+    
+    // Forward to all fullview tabs except sender
+    chrome.tabs.query({url: chrome.runtime.getURL("fullview.html")}, function(tabs) {
+      tabs.forEach(tab => {
+        if (tab.id !== sender.tab?.id) {
+          chrome.tabs.sendMessage(tab.id, { type: 'UPDATE_SLOTS', slots: message.slots });
+        }
+      });
     });
-  }
-});
-
-// Handle messages from content scripts
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'OPEN_FULLVIEW') {
+  } else if (message.type === 'OPEN_FULLVIEW') {
     chrome.tabs.create({
       url: chrome.runtime.getURL('fullview.html')
     });
@@ -36,3 +32,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
   }
 });
+
+// Listen for storage changes to keep UI in sync
+chrome.storage.onChanged.addListener(async (changes, namespace) => {
+  if (namespace === 'sync' && (changes.wallet_index || changes.unlockedSlots || changes[`slots:${chrome.runtime.id}`])) {
+    if (changes.wallet_index || changes.unlockedSlots) {
+      const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
+      tabs.forEach(tab => {
+        chrome.tabs.sendMessage(tab.id, { type: 'RELOAD_WALLETS' });
+      });
+    }
+    if (changes[`slots:${chrome.runtime.id}`]) {
+      const newSlots = changes[`slots:${chrome.runtime.id}`].newValue;
+      
+      // Update popup
+      chrome.runtime.sendMessage({ type: 'UPDATE_POPUP_SLOTS', slots: newSlots });
+      
+      // Update all fullview tabs
+      const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
+      tabs.forEach(tab => {
+        chrome.tabs.sendMessage(tab.id, { type: 'UPDATE_SLOTS', slots: newSlots });
+      });
+    }
+  }
+});
+
+// Initialize slot manager when extension starts
+const slotManager = new SlotManager();
+slotManager.startSync(chrome.runtime.id);

@@ -2349,6 +2349,7 @@ async function rateLimit() {
 class SlotManager {
   constructor() {
     this.cache = new Map();
+    this.syncInterval = null;
   }
 
   async getSlots(userId) {
@@ -2358,117 +2359,61 @@ class SlotManager {
       if (response.ok) {
         const data = await response.json();
         const slots = data.slots;
+        
         // Update sync storage with server value
         await chrome.storage.sync.set({ [`slots:${userId}`]: slots });
+        
+        // Update UI
+        this.updateUI(slots);
+        
         return slots;
       }
       
       // If server fails, fall back to sync storage
       const storage = await chrome.storage.sync.get([`slots:${userId}`]);
-      return storage[`slots:${userId}`] || MAX_FREE_SLOTS;
+      const slots = storage[`slots:${userId}`] || MAX_FREE_SLOTS;
+      
+      // Update UI
+      this.updateUI(slots);
+      
+      return slots;
     } catch (error) {
       console.error('Error getting slots:', error);
       return MAX_FREE_SLOTS;
     }
   }
 
-  async updateSlots(userId, newCount) {
-    try {
-      // Update sync storage
-      await chrome.storage.sync.set({ [`slots:${userId}`]: newCount });
-      
-      // Update UI elements that show slot count
-      const slotCountElements = document.querySelectorAll('.slot-count');
-      slotCountElements.forEach(element => {
-        element.textContent = newCount;
-      });
-      
-      return true;
-    } catch (error) {
-      console.error('Error updating slots:', error);
-      return false;
-    }
+  updateUI(slots) {
+    // Update all UI elements showing slot count
+    const slotCountElements = document.querySelectorAll('.slot-count');
+    slotCountElements.forEach(element => {
+      element.textContent = slots;
+    });
+    
+    // Notify background script to update popup
+    chrome.runtime.sendMessage({ type: 'SLOTS_UPDATED', slots });
   }
 
-  async syncWithServer(userId) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/slots/${userId}`);
-      if (!response.ok) throw new Error('Failed to fetch slots from server');
-      
-      const data = await response.json();
-      await this.updateSlots(userId, data.slots);
-      return data.slots;
-    } catch (error) {
-      console.error('Error initializing user profile:', error);
+  async startSync(userId) {
+    // Clear any existing sync interval
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
     }
     
-    console.log('Loading wallets...');
-    // Load wallets and get list of ones needing refresh
-    const walletsNeedingRefresh = await loadWallets();
-    if (walletsNeedingRefresh === null) {
-      console.log('No wallets to refresh');
-      return;
+    // Sync immediately
+    await this.getSlots(userId);
+    
+    // Then sync every minute
+    this.syncInterval = setInterval(() => {
+      this.getSlots(userId);
+    }, 60000);
+  }
+
+  stopSync() {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = null;
     }
-    
-    console.log('Rendering wallets...');
-    // Render wallets with any cached data we have
-    await renderWallets();
-    
-    // Find all refresh buttons after rendering
-    const refreshButtons = document.querySelectorAll('.refresh-btn');
-    
-    // Only refresh wallets that need it
-    if (walletsNeedingRefresh.length > 0) {
-      console.log('Refreshing wallets with expired/no cache:', walletsNeedingRefresh);
-      
-      // Start spinning only buttons for wallets being refreshed
-      wallets.forEach((wallet, index) => {
-        if (walletsNeedingRefresh.includes(wallet.address)) {
-          const button = refreshButtons[index];
-          if (button) {
-            const icon = button.querySelector('i');
-            if (icon) icon.classList.add('rotating');
-          }
-        }
-      });
-      
-      // Refresh only the wallets that need it
-      const refreshResults = await Promise.all(
-        wallets.map((wallet, index) => 
-          walletsNeedingRefresh.includes(wallet.address) 
-            ? refreshWallet(index) 
-            : Promise.resolve(false)
-        )
-      );
-      
-      // Save and re-render if any wallet was updated
-      if (refreshResults.some(result => result)) {
-        await saveWallets();
-        await renderWallets();
-      }
-    } else {
-      console.log('All wallets have valid cache, no refresh needed');
-    }
-    
-    // Setup remaining UI elements
-    console.log('Setting up UI elements...');
-    setupGlobalTabs();
-    setupAssetSearch();
-    startCacheRefreshMonitor();
-    setupTabSwitching();
-    
-    // Add initial storage update with a small delay to ensure all data is loaded
-    setTimeout(async () => {
-      await updateStorageUsage();
-    }, 1000);
-    
-    // Add periodic storage update (every 30 seconds)
-    setInterval(updateStorageUsage, 30000);
-    
-    console.log('Initialization complete!');
-  } catch (error) {
-    console.error('Error during initialization:', error);
-    throw error;
   }
 }
 

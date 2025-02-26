@@ -6,6 +6,7 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const NodeCache = require('node-cache');
 const crypto = require('crypto');
+const fs = require('fs').promises;
 
 dotenv.config();
 
@@ -428,9 +429,14 @@ app.get('/api/wallet/:address', async (req, res) => {
 app.get('/api/slots/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const slots = await getFromCache(`slots:${userId}`) || MAX_FREE_SLOTS;
-    console.log('Returning slots for user:', { userId, slots });
-    res.json({ slots });
+    
+    // Read from slots.json first
+    const slotsData = await fs.readFile(path.join(__dirname, 'slots.json'), 'utf8');
+    const slotsJson = JSON.parse(slotsData);
+    const userSlots = slotsJson[userId] || slotsJson.default || MAX_FREE_SLOTS;
+    
+    console.log('Returning slots for user:', { userId, slots: userSlots });
+    res.json({ slots: userSlots });
   } catch (error) {
     console.error('Error getting slots:', error);
     res.status(500).json({ error: 'Failed to get slots' });
@@ -440,9 +446,19 @@ app.get('/api/slots/:userId', async (req, res) => {
 // Update slots after payment verification
 async function updateUserSlots(userId, additionalSlots) {
   try {
-    const currentSlots = await getFromCache(`slots:${userId}`) || MAX_FREE_SLOTS;
+    // Read current slots data
+    const slotsPath = path.join(__dirname, 'slots.json');
+    const slotsData = await fs.readFile(slotsPath, 'utf8');
+    const slotsJson = JSON.parse(slotsData);
+    
+    // Calculate new slots
+    const currentSlots = slotsJson[userId] || slotsJson.default || MAX_FREE_SLOTS;
     const newSlots = Math.min(currentSlots + additionalSlots, MAX_TOTAL_SLOTS);
-    await setInCache(`slots:${userId}`, newSlots);
+    
+    // Update slots.json
+    slotsJson[userId] = newSlots;
+    await fs.writeFile(slotsPath, JSON.stringify(slotsJson, null, 2));
+    
     console.log('Updated slots:', { userId, oldSlots: currentSlots, newSlots });
     return newSlots;
   } catch (error) {
@@ -649,11 +665,9 @@ async function verifyPayment(txHash, retryCount = 0) {
                 await setInCache(key, payment);
                 
                 // Update user slots
-                const currentSlots = await getFromCache(`slots:${payment.userId}`) || MAX_FREE_SLOTS;
-                const newSlots = currentSlots + SLOTS_PER_PAYMENT;
-                console.log(`Updating slots for user ${payment.userId}: ${currentSlots} -> ${newSlots}`);
+                const currentSlots = await updateUserSlots(payment.userId, SLOTS_PER_PAYMENT);
+                console.log(`Updated slots for user ${payment.userId}: ${currentSlots}`);
                 
-                await setInCache(`slots:${payment.userId}`, newSlots);
                 return true;
             }
         }
@@ -673,51 +687,6 @@ async function verifyPayment(txHash, retryCount = 0) {
     }
 }
 
-// Get user slots endpoint
-app.get('/api/slots/:userId', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    console.log('Getting slots for user:', userId);
-    const slots = await getUserSlots(userId);
-    console.log('Current slots for user:', { userId, slots });
-    res.json({ slots });
-  } catch (error) {
-    console.error('Error getting slots:', error);
-    res.status(500).json({ error: 'Failed to get slots' });
-  }
-});
-
-// Update user slots endpoint
-app.post('/api/slots/:userId/sync', express.json(), async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { slots } = req.body;
-    
-    if (typeof slots !== 'number' || slots < MAX_FREE_SLOTS || slots > MAX_TOTAL_SLOTS) {
-      return res.status(400).json({ error: 'Invalid slots value' });
-    }
-
-    await updateUserSlots(userId, slots - await getUserSlots(userId));
-    res.json({ slots });
-  } catch (error) {
-    console.error('Error syncing user slots:', error);
-    res.status(500).json({ error: 'Failed to sync user slots' });
-  }
-});
-
-// Get current slot count endpoint
-app.get('/api/slot-count', async (req, res) => {
-  try {
-    const slots = await cache.keys('slots:*');
-    const slotCount = slots.length;
-    console.log('Current slot count:', slotCount);
-    res.json({ slotCount });
-  } catch (error) {
-    console.error('Error getting slot count:', error);
-    res.status(500).json({ error: 'Failed to get slot count' });
-  }
-});
-
 // Payment verification endpoint - supports both payment IDs and tx hashes
 app.get('/api/verify-payment/:paymentId', async (req, res) => {
   try {
@@ -731,7 +700,7 @@ app.get('/api/verify-payment/:paymentId', async (req, res) => {
 
     // If already verified, return the current slots
     if (payment.verified) {
-      const currentSlots = await getFromCache(`slots:${payment.userId}`) || MAX_FREE_SLOTS;
+      const currentSlots = await updateUserSlots(payment.userId, 0);
       return res.json({ 
         verified: true,
         slots: currentSlots,
