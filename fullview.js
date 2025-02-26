@@ -2360,8 +2360,11 @@ class SlotManager {
         const data = await response.json();
         const slots = data.slots;
         
-        // Update sync storage with server value
-        await chrome.storage.sync.set({ [`slots:${userId}`]: slots });
+        // Update sync storage with both keys
+        await chrome.storage.sync.set({ 
+          totalSlots: slots,
+          [`slots:${userId}`]: slots 
+        });
         
         // Update UI
         this.updateUI(slots);
@@ -2370,8 +2373,8 @@ class SlotManager {
       }
       
       // If server fails, fall back to sync storage
-      const storage = await chrome.storage.sync.get([`slots:${userId}`]);
-      const slots = storage[`slots:${userId}`] || MAX_FREE_SLOTS;
+      const storage = await chrome.storage.sync.get(['totalSlots']);
+      const slots = storage.totalSlots || MAX_FREE_SLOTS;
       
       // Update UI
       this.updateUI(slots);

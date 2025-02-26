@@ -35,15 +35,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Listen for storage changes to keep UI in sync
 chrome.storage.onChanged.addListener(async (changes, namespace) => {
-  if (namespace === 'sync' && (changes.wallet_index || changes.unlockedSlots || changes[`slots:${chrome.runtime.id}`])) {
+  if (namespace === 'sync' && (changes.wallet_index || changes.unlockedSlots || changes.totalSlots)) {
     if (changes.wallet_index || changes.unlockedSlots) {
       const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('fullview.html') });
       tabs.forEach(tab => {
         chrome.tabs.sendMessage(tab.id, { type: 'RELOAD_WALLETS' });
       });
     }
-    if (changes[`slots:${chrome.runtime.id}`]) {
-      const newSlots = changes[`slots:${chrome.runtime.id}`].newValue;
+    if (changes.totalSlots) {
+      const newSlots = changes.totalSlots.newValue;
       
       // Update popup
       chrome.runtime.sendMessage({ type: 'UPDATE_POPUP_SLOTS', slots: newSlots });
