@@ -303,28 +303,28 @@ function isValidUrl(url) {
 // Get wallet info
 app.get('/api/wallet/:address', async (req, res) => {
     try {
-        const { address } = req.params;
+        let walletAddress = req.params.address;
         const forceRefresh = req.query.forceRefresh === 'true';
-        console.log('Fetching wallet data for address:', address, 'Force refresh:', forceRefresh);
+        console.log('Fetching wallet data for address:', walletAddress, 'Force refresh:', forceRefresh);
         
         // Check if address is an ADA Handle
-        if (address.startsWith('$')) {
-          const resolvedAddress = await resolveAdaHandle(address);
+        if (walletAddress.startsWith('$')) {
+          const resolvedAddress = await resolveAdaHandle(walletAddress);
           if (resolvedAddress) {
-            address = resolvedAddress;
+            walletAddress = resolvedAddress;
           } else {
             return res.status(400).json({ error: 'Invalid ADA Handle' });
           }
         }
 
-        if (!isValidCardanoAddress(address)) {
-            console.error('Invalid address format:', address);
+        if (!isValidCardanoAddress(walletAddress)) {
+            console.error('Invalid address format:', walletAddress);
             return res.status(400).json({ error: 'Invalid Cardano address' });
         }
 
         // Clear asset caches if force refresh
         if (forceRefresh) {
-            const cacheKeys = await cache.keys(`asset_${address}_*`);
+            const cacheKeys = await cache.keys(`asset_${walletAddress}_*`);
             if (cacheKeys.length > 0) {
                 await Promise.all(cacheKeys.map(key => cache.del(key)));
                 console.log('Cleared asset caches:', cacheKeys.length);
@@ -333,7 +333,7 @@ app.get('/api/wallet/:address', async (req, res) => {
 
         // 1. Get address data from Blockfrost
         console.log('Fetching address data from Blockfrost...');
-        const addressData = await fetchBlockfrost(`/addresses/${address}`, 'fetch address data');
+        const addressData = await fetchBlockfrost(`/addresses/${walletAddress}`, 'fetch address data');
         console.log('Address data received:', addressData);
         
         // Process assets and get their details
@@ -362,7 +362,7 @@ app.get('/api/wallet/:address', async (req, res) => {
                 console.log('Processing asset:', amount.unit);
                 
                 // Get asset details from Blockfrost
-                const cacheKey = `asset_${address}_${amount.unit}`;
+                const cacheKey = `asset_${walletAddress}_${amount.unit}`;
                 let assetInfo = forceRefresh ? null : await getFromCache(cacheKey);
                 
                 if (!assetInfo) {
