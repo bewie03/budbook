@@ -1890,7 +1890,7 @@ function setupBuyButton() {
             'Origin': chrome.runtime.getURL('')
           },
           body: JSON.stringify({
-            userId: chrome.runtime.id
+            userId: await getUserId()  // Use Google ID instead of extension ID
           })
         });
 
@@ -2173,7 +2173,7 @@ function setupEventListeners() {
             'Origin': chrome.runtime.getURL('')
           },
           body: JSON.stringify({
-            userId: chrome.runtime.id
+            userId: await getUserId()  // Use Google ID instead of extension ID
           })
         });
 
@@ -2581,7 +2581,7 @@ async function initiatePayment() {
         'Origin': chrome.runtime.getURL('')
       },
       body: JSON.stringify({
-        userId: chrome.runtime.id
+        userId: await getUserId()  // Use Google ID instead of extension ID
       })
     });
 
@@ -3521,7 +3521,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (error) {
     console.error('Error during initialization:', error);
   }
-});
+}
 
 async function updateUI(slots) {
   try {
