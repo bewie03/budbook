@@ -175,18 +175,12 @@ async function loadWallets() {
     for (const address of walletIndex) {
       try {
         // Load stored metadata
-        const storedData = await new Promise((resolve) => {
-          chrome.storage.sync.get(`wallet_${address}`, (result) => {
-            resolve(result[`wallet_${address}`] || {});
-          });
-        });
+        const storedData = await chrome.storage.sync.get(`wallet_${address}`);
+        const metadata = storedData[`wallet_${address}`] || {};
 
         // Load custom icon if present
-        const iconData = await new Promise((resolve) => {
-          chrome.storage.local.get(`wallet_icon_${address}`, (result) => {
-            resolve(result[`wallet_icon_${address}`] || {});
-          });
-        });
+        const iconData = await chrome.storage.local.get(`wallet_icon_${address}`);
+        const customIcon = iconData[`wallet_icon_${address}`];
 
         // Check local storage cache
         const cacheKey = `wallet_data_${address}`;
@@ -199,95 +193,125 @@ async function loadWallets() {
           assets: [],
           stakingInfo: null
         };
-        
-        if (cache[cacheKey]) {
-          if (now - cache[cacheKey].timestamp < CACHE_DURATION) {
-            // Cache exists and is fresh
-            console.log('Using cached data for', address);
+
+        if (cache[cacheKey] && cache[cacheKey].timestamp) {
+          const age = now - cache[cacheKey].timestamp;
+          if (age < CACHE_DURATION) {
             walletData = cache[cacheKey].data;
             needsRefresh = false;
           }
         }
 
-        // Combine all data
-        tempWallets[address] = {
+        // Create wallet object with proper icon handling
+        const wallet = {
           address,
-          ...storedData,
-          ...walletData,
-          customIcon: iconData.customIcon,
-          isLoading: needsRefresh
+          name: metadata.name || truncateAddress(address),
+          walletType: metadata.walletType || 'Default',
+          customIcon: customIcon,  // Store customIcon separately
+          icon: null,  // Will be set in createWalletBox
+          ...walletData
         };
 
+        tempWallets[address] = wallet;
         if (needsRefresh) {
           walletsNeedingRefresh.push(address);
         }
       } catch (error) {
         console.error(`Error loading wallet ${address}:`, error);
-        walletsNeedingRefresh.push(address);
       }
     }
 
-    // Order wallets based on saved order
-    wallets = [];
-    
-    // First add wallets in saved order
-    for (const address of savedOrder) {
-      if (tempWallets[address]) {
-        wallets.push(tempWallets[address]);
-        delete tempWallets[address];
-      }
-    }
-    
-    // Then add any remaining wallets
-    for (const address of walletIndex) {
-      if (tempWallets[address]) {
-        wallets.push(tempWallets[address]);
+    // Update wallets array preserving order
+    wallets = savedOrder
+      .filter(address => tempWallets[address])
+      .map(address => tempWallets[address]);
+
+    // Add any wallets that weren't in the saved order
+    const remainingWallets = Object.values(tempWallets)
+      .filter(wallet => !savedOrder.includes(wallet.address));
+    wallets.push(...remainingWallets);
+
+    // Refresh wallets that need it
+    for (const address of walletsNeedingRefresh) {
+      const index = wallets.findIndex(w => w.address === address);
+      if (index !== -1) {
+        refreshWallet(index);
       }
     }
 
-    console.log('Loaded wallets:', wallets);
-    console.log('Wallets needing refresh:', walletsNeedingRefresh);
-    await updateStorageUsage();
-    return walletsNeedingRefresh;
+    // Update UI
+    await renderWallets();
+    updateSlotCount();
   } catch (error) {
     console.error('Error loading wallets:', error);
     showError('Failed to load wallets');
-    return null;
   }
 }
 
 async function saveWallets() {
   try {
-    await rateLimit(); // Add rate limiting before first storage operation
+    // Check if anything has actually changed to avoid unnecessary writes
+    const currentState = await chrome.storage.sync.get(['wallet_index', 'wallet_order']);
+    const currentIndex = currentState.wallet_index || [];
+    const currentOrder = currentState.wallet_order || [];
     
-    // Save wallet index and order first (these are essential)
-    const walletIndex = wallets.map(w => w.address);
-    const walletOrder = wallets.map(w => w.address);
+    const newIndex = wallets.map(w => w.address);
+    const newOrder = wallets.map(w => w.address);
     
-    await rateLimit(); // Add rate limiting before second storage operation
-    await chrome.storage.sync.set({ 
-      wallet_index: walletIndex,
-      wallet_order: walletOrder 
-    });
-    await updateStorageUsage();
+    if (JSON.stringify(currentIndex) === JSON.stringify(newIndex) && 
+        JSON.stringify(currentOrder) === JSON.stringify(newOrder)) {
+      console.log('No changes detected, skipping save');
+      return true;
+    }
 
-    // Save metadata for each wallet with longer delay to avoid quota
-    for (const wallet of wallets) {
-      const metadata = {
-        name: wallet.name,
-        walletType: wallet.walletType,
-        address: wallet.address,
-        lastUpdated: Date.now()
-      };
-      
+    // Save index and order first, with retry
+    let retries = 0;
+    const maxRetries = 3;
+    while (retries < maxRetries) {
       try {
-        await rateLimit(); // Add rate limiting before each wallet save
-        await chrome.storage.sync.set({ [`wallet_${wallet.address}`]: metadata });
-        // Add a longer delay between writes to avoid hitting quota
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await chrome.storage.sync.set({ 
+          wallet_index: newIndex,
+          wallet_order: newOrder 
+        });
+        break;
       } catch (error) {
-        console.warn(`Failed to save metadata for wallet ${wallet.address}:`, error);
-        // Continue with other wallets even if one fails
+        retries++;
+        if (retries === maxRetries) throw error;
+        await new Promise(resolve => setTimeout(resolve, 5000 * Math.pow(2, retries)));
+      }
+    }
+
+    // Save metadata in smaller batches with longer delays
+    const batchSize = 2; // Reduced batch size
+    for (let i = 0; i < wallets.length; i += batchSize) {
+      const batch = wallets.slice(i, i + batchSize);
+      const batchUpdates = {};
+      
+      batch.forEach(wallet => {
+        batchUpdates[`wallet_${wallet.address}`] = {
+          name: wallet.name,
+          walletType: wallet.walletType,
+          address: wallet.address,
+          lastUpdated: Date.now()
+        };
+      });
+
+      // Try to save this batch with retries
+      retries = 0;
+      while (retries < maxRetries) {
+        try {
+          await chrome.storage.sync.set(batchUpdates);
+          break;
+        } catch (error) {
+          retries++;
+          if (retries === maxRetries) throw error;
+          await new Promise(resolve => setTimeout(resolve, 5000 * Math.pow(2, retries)));
+        }
+      }
+
+      // Longer delay between batches (3 seconds)
+      if (i + batchSize < wallets.length) {
+        await new Promise(resolve => setTimeout(resolve, 3000));
       }
     }
 
@@ -295,18 +319,21 @@ async function saveWallets() {
     return true;
   } catch (error) {
     console.error('Error saving wallets:', error);
-    if (error.message.includes('MAX_WRITE_OPERATIONS_PER_MINUTE')) {
-      // If we hit the rate limit, wait a bit and try again
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      await saveWallets(); // Retry the save
-    } else {
-      showError('Failed to save wallets');
-      return false;
-    }
+    showError('Failed to save wallets. Please try again later.');
+    return false;
   }
 }
 
 async function fetchWalletData(address, forceFresh = false) {
+  if (!address) {
+    console.error('No address provided to fetchWalletData');
+    return {
+      balance: '0',
+      assets: [],
+      stakingInfo: null
+    };
+  }
+
   try {
     // Check cache first (unless forceFresh is true)
     if (!forceFresh) {
@@ -333,19 +360,34 @@ async function fetchWalletData(address, forceFresh = false) {
     }
 
     console.log('Fetching fresh data for', address);
-    const response = await fetch(`${API_BASE_URL}/api/wallet/${address}`);
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/wallet/${encodeURIComponent(address)}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' }
+    });
     
     if (!response.ok) {
+      console.error('Error response from server:', response.status, response.statusText);
+      const errorText = await response.text();
+      console.error('Error response body:', errorText);
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     
-    const data = await response.json();
+    let data;
+    try {
+      data = await response.json();
+    } catch (parseError) {
+      console.error('Failed to parse response:', parseError);
+      throw new Error('Failed to parse server response');
+    }
 
     // Get staking info
     let stakingInfo = null;
     if (data.stake_address) {
       try {
-        const stakingResponse = await fetch(`${API_BASE_URL}/api/accounts/${data.stake_address}`);
+        const stakingResponse = await fetchWithRetry(`${API_BASE_URL}/api/accounts/${data.stake_address}`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
+        });
         if (stakingResponse.ok) {
           stakingInfo = await stakingResponse.json();
         }
@@ -390,6 +432,44 @@ async function fetchWalletData(address, forceFresh = false) {
     return walletData;
   } catch (error) {
     console.error('Error fetching wallet data:', error);
+    // Return empty data structure on error
+    return {
+      balance: '0',
+      assets: [],
+      stakingInfo: null
+    };
+  }
+}
+
+// Retry configuration
+const RETRY_DELAYS = [1000, 2000, 4000, 8000]; // Exponential backoff delays in ms
+const RATE_LIMIT_DELAY = 60000; // 1 minute wait for rate limit
+
+async function fetchWithRetry(url, options, retryCount = 0) {
+  try {
+    const response = await fetch(url, options);
+    
+    if (response.status === 429) {
+      if (retryCount < RETRY_DELAYS.length) {
+        console.log(`Rate limited, waiting ${RATE_LIMIT_DELAY/1000}s before retry ${retryCount + 1}`);
+        await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+        return fetchWithRetry(url, options, retryCount + 1);
+      }
+      throw new Error('Rate limit exceeded after all retries');
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+    }
+
+    return response;
+  } catch (error) {
+    if (retryCount < RETRY_DELAYS.length) {
+      console.log(`Request failed, retrying in ${RETRY_DELAYS[retryCount]/1000}s...`);
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[retryCount]));
+      return fetchWithRetry(url, options, retryCount + 1);
+    }
     throw error;
   }
 }
@@ -551,6 +631,11 @@ function getAssetImage(asset) {
       if (url.startsWith('ipfs://') || url.includes('/ipfs/')) {
         return convertIpfsUrl(url);
       }
+
+      // Convert Arweave URL if needed
+      if (url.startsWith('ar://')) {
+        return `https://arweave.net/${url.slice(5)}`;
+      }
       
       // Validate URL
       if (!isValidUrl(url)) return null;
@@ -685,8 +770,8 @@ async function createWalletBox(wallet, index) {
     box.innerHTML = `
       <div class="wallet-header">
         <div class="wallet-info">
-          ${wallet.walletType === 'Custom' && wallet.customIcon ? 
-            `<img src="${wallet.customIcon}" alt="${wallet.name}" class="wallet-icon">` :
+          ${wallet.icon ? 
+            `<img src="${wallet.icon}" alt="${wallet.name}" class="wallet-icon">` :
             wallet.walletType && WALLET_LOGOS[wallet.walletType] ? 
               `<img src="${WALLET_LOGOS[wallet.walletType]}" alt="${wallet.walletType}" class="wallet-icon">` : 
               ''}
@@ -718,15 +803,12 @@ async function createWalletBox(wallet, index) {
   
   // Get wallet icon based on type
   let walletType = wallet.walletType || 'None';
-  if (wallet.address.startsWith('$')) {
-    walletType = 'Vesper';
-  }
-
-  // Get icon path or custom icon data
   let iconSrc = '';
-  if (walletType === 'Custom' && wallet.customIcon) {
+  if (wallet.icon) {
+    iconSrc = wallet.icon;
+  } else if (wallet.customIcon) {
     iconSrc = wallet.customIcon;
-  } else if (WALLET_LOGOS[walletType]) {
+  } else if (walletType && WALLET_LOGOS[walletType]) {
     iconSrc = WALLET_LOGOS[walletType];
   }
 
@@ -2720,9 +2802,7 @@ function pollPaymentStatus(paymentId, modal) {
       
       detailsDiv.innerHTML = `
         <div class="success-message">
-          <p>Thank you for your payment!</p>
-          <p>You now have ${data.slots} slots available.</p>
-          <p>Transaction: <a href="https://cardanoscan.io/transaction/${data.txHash}" target="_blank">${data.txHash.substring(0,8)}...</a></p>
+          Payment verified! Your slots have been updated.
         </div>
       `;
       
@@ -2818,21 +2898,33 @@ async function deleteWallet(index) {
     // Wait for animation to complete
     await new Promise(resolve => setTimeout(resolve, 400));
 
-    // Remove custom icon if exists
-    if (walletToDelete.walletType === 'Custom') {
-      await chrome.storage.local.remove(`wallet_icon_${walletToDelete.address}`);
-    }
+    // Clean up all storage keys related to this wallet
+    const keysToRemove = [
+      `wallet_${walletToDelete.address}`,
+      `wallet_icon_${walletToDelete.address}`,
+      `wallet_data_${walletToDelete.address}`
+    ];
+
+    // Remove from sync storage
+    await chrome.storage.sync.remove(keysToRemove[0]);
+    
+    // Remove from local storage
+    await chrome.storage.local.remove(keysToRemove.slice(1));
 
     // Remove from array
     wallets.splice(index, 1);
     
-    // Save changes
+    // Save changes and update wallet index
     await saveWallets();
+    
+    // Force a clean reload of wallets to ensure cache is cleared
+    await loadWallets();
     
     // Re-render UI
     await renderWallets();
   } catch (error) {
     console.error('Error deleting wallet:', error);
+    showError('Failed to delete wallet');
   }
 }
 
@@ -3485,3 +3577,26 @@ async function rateLimit() {
 
   STORAGE_RATE_LIMIT.operations++;
 }
+
+// Listen for messages from popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'WALLET_ADDED') {
+    loadWallets(); // Refresh the wallet list
+  }
+});
+
+// Listen for messages from popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('Received message in fullview:', message);
+  if (message.type === 'WALLET_ADDED' && message.wallet) {
+    // Refresh the wallet list and fetch details for the new wallet
+    loadWallets().then(() => {
+      fetchWalletData(message.wallet.address).catch(error => {
+        console.error('Error fetching wallet data:', error);
+      });
+    });
+  } else if (message.type === 'WALLET_DELETED') {
+    // Just reload wallets when a wallet is deleted
+    loadWallets();
+  }
+});

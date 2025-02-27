@@ -7,7 +7,8 @@
     "storage",
     "unlimitedStorage",
     "tabs",
-    "identity"
+    "identity",
+    "activeTab"
   ],
   "host_permissions": [
     "https://budbook-2410440cbb61.herokuapp.com/*",
@@ -26,7 +27,7 @@
     ]
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com https://ipfs.io https://accounts.google.com https://www.googleapis.com https://*.cardanolands.com https://*.arweave.net; img-src 'self' data: https://ipfs.io https://*.googleusercontent.com https://*.cardanolands.com https://*.arweave.net;"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' https://budbook-2410440cbb61.herokuapp.com https://ipfs.io https://accounts.google.com https://www.googleapis.com https://*.cardanolands.com https://*.arweave.net; img-src 'self' data: https://ipfs.io https://*.googleusercontent.com https://*.cardanolands.com https://*.arweave.net https://arweave.net;"
   },
   "action": {
     "default_popup": "popup.html",
