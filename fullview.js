@@ -3521,7 +3521,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (error) {
     console.error('Error during initialization:', error);
   }
-}
+});
 
 async function updateUI(slots) {
   try {
