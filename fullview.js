@@ -3541,3 +3541,18 @@ async function updateUI(slots) {
     console.error('Error updating UI:', error);
   }
 }
+
+// Get user's Google ID from storage
+async function getUserId() {
+  return new Promise((resolve, reject) => {
+    chrome.storage.sync.get(['userId'], function(result) {
+      if (chrome.runtime.lastError) {
+        reject(chrome.runtime.lastError);
+      } else if (!result.userId) {
+        reject(new Error('User ID not found in storage'));
+      } else {
+        resolve(result.userId);
+      }
+    });
+  });
+}
