@@ -159,7 +159,7 @@ async function fetchWalletData(address) {
         'Accept': 'application/json',
         'Content-Type': 'application/json'
       },
-      credentials: 'omit' // Don't send credentials for cross-origin requests
+      credentials: 'omit'
     });
     
     if (!response.ok) {
@@ -168,6 +168,17 @@ async function fetchWalletData(address) {
     }
     
     const data = await response.json();
+    
+    // Convert any ar:// or ipfs:// URLs in the data
+    if (data.assets) {
+      data.assets = data.assets.map(asset => {
+        if (asset.image) {
+          asset.image = convertArweaveUrl(convertIpfsUrl(asset.image));
+        }
+        return asset;
+      });
+    }
+    
     console.log('Received wallet data:', data);
 
     // Fetch staking info if we have a stake address
@@ -970,6 +981,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Helper Functions
 function setLoading(element, isLoading) {
+  if (!element) return; // Add null check
+  
   if (isLoading) {
     element.classList.add('loading');
     element.disabled = true;
@@ -990,9 +1003,16 @@ async function getWalletLogo(walletType, address) {
 
 async function addWallet() {
   try {
+    const addWalletBtn = document.getElementById('addWallet');
     const addressInput = document.getElementById('addressInput');
     const nameInput = document.getElementById('nameInput');
     const walletTypeSelect = document.getElementById('walletType');
+    
+    if (!addWalletBtn || !addressInput || !nameInput || !walletTypeSelect) {
+      console.error('Required form elements not found');
+      showError('Something went wrong. Please try again.');
+      return;
+    }
     
     const address = addressInput.value.trim();
     const name = nameInput.value.trim();
@@ -1050,7 +1070,7 @@ async function addWallet() {
       return;
     }
 
-    setLoading(document.getElementById('addWalletBtn'), true);
+    setLoading(addWalletBtn, true);
     
     // Create new wallet object
     const newWallet = {
@@ -1089,7 +1109,7 @@ async function addWallet() {
     console.error('Error adding wallet:', error);
     showError('Failed to add wallet');
   } finally {
-    setLoading(document.getElementById('addWalletBtn'), false);
+    setLoading(addWalletBtn, false);
   }
 }
 
