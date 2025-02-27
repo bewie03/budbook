@@ -2336,10 +2336,10 @@ async function updateSlotCount() {
     });
 
     // Update slot count display
-    const slotCountElement = document.getElementById('slotCount');
-    if (slotCountElement) {
-      slotCountElement.textContent = `${wallets.length}/${slotCount}`;
-    }
+    const slotCountElements = document.querySelectorAll('.slot-count, #slotCount');
+    slotCountElements.forEach(element => {
+      element.textContent = `${wallets.length}/${slotCount}`;
+    });
 
     // Update progress bar
     const slotProgressBar = document.getElementById('slotProgressBar');
@@ -2588,51 +2588,69 @@ async function initiatePayment() {
 
 async function pollPaymentStatus(paymentId, modal) {
   let attempts = 0;
-  const maxAttempts = 36; // 3 minutes total with increasing intervals
-  
-  const checkStatus = async () => {
-    attempts++;
-    const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
-    const data = await response.json();
+  const maxAttempts = 60;
+  const pollInterval = 3000;
 
-    if (data.verified) {
-      eventSource.close();
-      
-      // Update status and add slots
-      const statusDiv = modal.querySelector('.payment-status');
-      const detailsDiv = modal.querySelector('.payment-details');
-      
-      statusDiv.textContent = 'Payment verified!';
-      statusDiv.className = 'payment-status success';
-      
-      detailsDiv.innerHTML = `
-        <div class="success-message">
-          <p>Thank you for your payment!</p>
-          <p>You now have ${data.slots} slots available.</p>
-          <p>Transaction: <a href="https://cardanoscan.io/transaction/${data.txHash}" target="_blank">${data.txHash.substring(0, 8)}...</a></p>
-        </div>
-      `;
-      
-      // Update slots and refresh wallets
-      unlockedSlots = data.slots;
-      await loadWallets();
-      renderWallets();
-      await updateSlotCount();
-      
-      // Close modal after 2 seconds
-      setTimeout(async () => {
-        modal.remove();
-        updateUI();
-      }, 2000);
-    } else {
+  const pollTimer = setInterval(async () => {
+    try {
+      if (attempts >= maxAttempts) {
+        clearInterval(pollTimer);
+        modal.querySelector('.modal-content').innerHTML = `
+          <div class="error-message">
+            Payment verification timed out. Please contact support if payment was sent.
+          </div>
+        `;
+        return;
+      }
+
       attempts++;
-      // Calculate next delay with exponential backoff
-      const nextDelay = Math.min(2000 * Math.pow(1.2, attempts), 10000); // Cap at 10 seconds
-      setTimeout(checkStatus, nextDelay);
+
+      const response = await fetch(`${API_BASE_URL}/api/verify-payment/${paymentId}`);
+      const data = await response.json();
+
+      if (data.verified) {
+        clearInterval(pollTimer);
+        modal.querySelector('.modal-content').innerHTML = `
+          <div class="success-message">
+            Payment verified! Your slots have been updated.
+          </div>
+        `;
+        
+        // Get user ID and sync slots with server
+        const userInfo = await chrome.storage.sync.get(['userInfo']);
+        if (userInfo.userInfo && userInfo.userInfo.id) {
+          const userId = userInfo.userInfo.id;
+          
+          // First sync with server to get latest slot count
+          const slotsResponse = await fetch(`${API_BASE_URL}/api/slots/${userId}`);
+          const slotsData = await slotsResponse.json();
+          
+          // Update storage with server's slot count
+          await chrome.storage.sync.set({ totalSlots: slotsData.slots });
+          
+          // Update UI with new slot count
+          const slotCountElements = document.querySelectorAll('.slot-count, #slotCount');
+          slotCountElements.forEach(element => {
+            element.textContent = `${wallets.length}/${slotsData.slots}`;
+          });
+          
+          // Notify background script
+          chrome.runtime.sendMessage({ 
+            type: 'SLOTS_UPDATED', 
+            slots: slotsData.slots, 
+            usedSlots: wallets.length 
+          });
+          
+          // Close modal after 2 seconds
+          setTimeout(() => {
+            modal.remove();
+          }, 2000);
+        }
+      }
+    } catch (error) {
+      console.error('Error polling payment status:', error);
     }
-  };
-  
-  checkStatus();
+  }, pollInterval);
 }
 
 function formatBalance(balance) {
@@ -2704,7 +2722,7 @@ function pollPaymentStatus(paymentId, modal) {
         <div class="success-message">
           <p>Thank you for your payment!</p>
           <p>You now have ${data.slots} slots available.</p>
-          <p>Transaction: <a href="https://cardanoscan.io/transaction/${data.txHash}" target="_blank">${data.txHash.substring(0, 8)}...</a></p>
+          <p>Transaction: <a href="https://cardanoscan.io/transaction/${data.txHash}" target="_blank">${data.txHash.substring(0,8)}...</a></p>
         </div>
       `;
       
@@ -3425,7 +3443,7 @@ async function updateUI(slots) {
     const usedSlots = wallets.length;
     
     // Update all UI elements showing slot count
-    const slotCountElements = document.querySelectorAll('.slot-count');
+    const slotCountElements = document.querySelectorAll('.slot-count, #slotCount');
     slotCountElements.forEach(element => {
       element.textContent = `${usedSlots}/${slots}`;
     });

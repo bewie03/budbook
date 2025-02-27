@@ -64,7 +64,7 @@ class SlotManager {
         console.log('Received slot data:', data);
         
         // Update available slots in storage
-        const newSlots = data.availableSlots || DEFAULT_PURCHASED_SLOTS;
+        const newSlots = data.slots;
         await chrome.storage.sync.set({ totalSlots: newSlots });
         
         return newSlots;
@@ -111,7 +111,7 @@ class SlotManager {
         }
 
         // Update with server's slot count
-        const serverSlots = data.availableSlots;
+        const serverSlots = data.slots;
         await chrome.storage.sync.set({ totalSlots: serverSlots });
         
         return serverSlots;
