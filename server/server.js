@@ -176,6 +176,37 @@ async function fetchBlockfrost(endpoint, errorContext = '') {
   }
 }
 
+// Helper to resolve ADA Handle to address
+async function resolveAdaHandle(handle) {
+  try {
+    // Remove the $ prefix if present
+    handle = handle.replace(/^\$/, '');
+    console.log(`Attempting to resolve ADA Handle: ${handle}`);
+    
+    const response = await fetch(`https://api.handle.me/handles/${handle}`);
+    const responseText = await response.text();
+    console.log(`Handle.me API Response: ${responseText}`);
+    
+    if (response.status === 200) {
+      const data = JSON.parse(responseText);
+      if (data && typeof data === 'object') {
+        const resolved = data.resolved_addresses || {};
+        const address = resolved.ada;
+        if (address) {
+          console.log(`Successfully resolved ${handle} to address: ${address}`);
+          return address;
+        }
+      }
+    }
+    
+    console.log(`Could not resolve ADA Handle: ${handle}`);
+    return null;
+  } catch (error) {
+    console.error(`Error resolving ADA Handle ${handle}:`, error);
+    return null;
+  }
+}
+
 // Helper to validate Cardano address format
 function isValidCardanoAddress(address) {
   // Basic validation - let Blockfrost API handle detailed validation
@@ -270,6 +301,16 @@ app.get('/api/wallet/:address', async (req, res) => {
         const forceRefresh = req.query.forceRefresh === 'true';
         console.log('Fetching wallet data for address:', address, 'Force refresh:', forceRefresh);
         
+        // Check if address is an ADA Handle
+        if (address.startsWith('$')) {
+          const resolvedAddress = await resolveAdaHandle(address);
+          if (resolvedAddress) {
+            address = resolvedAddress;
+          } else {
+            return res.status(400).json({ error: 'Invalid ADA Handle' });
+          }
+        }
+
         if (!isValidCardanoAddress(address)) {
             console.error('Invalid address format:', address);
             return res.status(400).json({ error: 'Invalid Cardano address' });

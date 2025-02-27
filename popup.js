@@ -997,11 +997,38 @@ async function addWallet() {
       return;
     }
     
-    // Check if we have available slots
-    const availableSlots = await slotManager.getAvailableSlots();
-    if (wallets.length >= availableSlots) {
-      showError('No available slots. Please purchase more slots to add additional wallets.');
-      return;
+    // Check if it's an ADA handle
+    if (address.startsWith('$')) {
+      // Basic validation for ADA handle format
+      const handle = address.substring(1); // Remove $ prefix
+      if (handle.length === 0) {
+        showError('Invalid ADA handle format');
+        return;
+      }
+    } else {
+      // Basic validation - let the API handle detailed validation
+      if (!address || typeof address !== 'string') {
+        showError('Invalid address format');
+        return;
+      }
+      
+      // Just check if it starts with a valid prefix
+      const validPrefixes = ['addr1', 'Ae2', 'DdzFF', 'stake1'];
+      const hasValidPrefix = validPrefixes.some(prefix => address.startsWith(prefix));
+      
+      // Minimum length check (reasonable minimum for any Cardano address)
+      const hasValidLength = address.length >= 50;
+      
+      console.log('Address validation:', {
+        address,
+        hasValidPrefix,
+        hasValidLength,
+      });
+      
+      if (!hasValidPrefix || !hasValidLength) {
+        showError('Invalid address format');
+        return;
+      }
     }
     
     // Check for duplicate address
@@ -1085,6 +1112,13 @@ function getImageDimensions(file) {
 }
 
 function validateAddress(address) {
+  // Check if it's an ADA handle
+  if (address.startsWith('$')) {
+    // Basic validation for ADA handle format
+    const handle = address.substring(1); // Remove $ prefix
+    return handle.length > 0; // Just ensure it's not empty after $
+  }
+
   // Basic validation - let the API handle detailed validation
   if (!address || typeof address !== 'string') return false;
   
@@ -1099,7 +1133,6 @@ function validateAddress(address) {
     address,
     hasValidPrefix,
     hasValidLength,
-    length: address.length
   });
 
   return hasValidPrefix && hasValidLength;
