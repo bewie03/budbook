@@ -209,6 +209,12 @@ async function resolveAdaHandle(handle) {
 
 // Helper to validate Cardano address format
 function isValidCardanoAddress(address) {
+  // Check if it's an ADA handle
+  if (address.startsWith('$')) {
+    // We'll let the API endpoint handle the actual resolution
+    return true;
+  }
+
   // Basic validation - let Blockfrost API handle detailed validation
   if (!address || typeof address !== 'string') return false;
   

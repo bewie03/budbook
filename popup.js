@@ -1019,16 +1019,17 @@ async function addWallet() {
       // Minimum length check (reasonable minimum for any Cardano address)
       const hasValidLength = address.length >= 50;
       
-      console.log('Address validation:', {
-        address,
-        hasValidPrefix,
-        hasValidLength,
-      });
-      
       if (!hasValidPrefix || !hasValidLength) {
         showError('Invalid address format');
         return;
       }
+    }
+
+    // Check if we have available slots
+    const availableSlots = await slotManager.getAvailableSlots();
+    if (wallets.length >= availableSlots) {
+      showError('No available slots. Please purchase more slots to add additional wallets.');
+      return;
     }
     
     // Check for duplicate address
