@@ -2386,15 +2386,23 @@ class SlotManager {
     }
   }
 
-  updateUI(slots) {
-    // Update all UI elements showing slot count
-    const slotCountElements = document.querySelectorAll('.slot-count');
-    slotCountElements.forEach(element => {
-      element.textContent = `${slots}/${MAX_TOTAL_SLOTS}`;
-    });
-    
-    // Notify background script to update popup
-    chrome.runtime.sendMessage({ type: 'SLOTS_UPDATED', slots });
+  async updateUI(slots) {
+    try {
+      // Get number of wallets from storage
+      const { wallets = [] } = await chrome.storage.sync.get(['wallets']);
+      const usedSlots = wallets.length;
+      
+      // Update all UI elements showing slot count
+      const slotCountElements = document.querySelectorAll('.slot-count');
+      slotCountElements.forEach(element => {
+        element.textContent = `${usedSlots}/${slots}`;
+      });
+      
+      // Notify background script to update popup
+      chrome.runtime.sendMessage({ type: 'SLOTS_UPDATED', slots, usedSlots });
+    } catch (error) {
+      console.error('Error updating UI:', error);
+    }
   }
 
   async startSync(userId) {
@@ -3514,3 +3522,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error('Error during initialization:', error);
   }
 });
+
+async function updateUI(slots) {
+  try {
+    // Get number of wallets from storage
+    const { wallets = [] } = await chrome.storage.sync.get(['wallets']);
+    const usedSlots = wallets.length;
+    
+    // Update all UI elements showing slot count
+    const slotCountElements = document.querySelectorAll('.slot-count');
+    slotCountElements.forEach(element => {
+      element.textContent = `${usedSlots}/${slots}`;
+    });
+    
+    // Notify background script to update popup
+    chrome.runtime.sendMessage({ type: 'SLOTS_UPDATED', slots, usedSlots });
+  } catch (error) {
+    console.error('Error updating UI:', error);
+  }
+}
