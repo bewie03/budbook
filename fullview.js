@@ -2323,111 +2323,6 @@ function setupEventListeners() {
   }
 }
 
-// Rate limiting for storage operations
-const STORAGE_RATE_LIMIT = {
-  operations: 0,
-  lastReset: Date.now(),
-  maxOperations: 30, // Maximum operations per minute
-  resetInterval: 60000, // Reset counter every minute
-};
-
-async function rateLimit() {
-  const now = Date.now();
-  if (now - STORAGE_RATE_LIMIT.lastReset >= STORAGE_RATE_LIMIT.resetInterval) {
-    STORAGE_RATE_LIMIT.operations = 0;
-    STORAGE_RATE_LIMIT.lastReset = now;
-  }
-
-  if (STORAGE_RATE_LIMIT.operations >= STORAGE_RATE_LIMIT.maxOperations) {
-    throw new Error('Storage operation rate limit exceeded. Please try again in a minute.');
-  }
-
-  STORAGE_RATE_LIMIT.operations++;
-}
-
-// Slot Manager for handling slot-related operations
-class SlotManager {
-  constructor() {
-    this.cache = new Map();
-    this.syncInterval = null;
-  }
-
-  async getSlots(userId) {
-    try {
-      // First try to get from server
-      const response = await fetch(`${API_BASE_URL}/api/slots/${userId}`);
-      if (response.ok) {
-        const data = await response.json();
-        const slots = data.slots;
-        
-        // Update sync storage with both keys
-        await chrome.storage.sync.set({ 
-          totalSlots: slots,
-          [`slots:${userId}`]: slots 
-        });
-        
-        // Update UI
-        this.updateUI(slots);
-        
-        return slots;
-      }
-      
-      // If server fails, fall back to sync storage
-      const storage = await chrome.storage.sync.get(['totalSlots']);
-      const slots = storage.totalSlots || MAX_FREE_SLOTS;
-      
-      // Update UI
-      this.updateUI(slots);
-      
-      return slots;
-    } catch (error) {
-      console.error('Error getting slots:', error);
-      return MAX_FREE_SLOTS;
-    }
-  }
-
-  async updateUI(slots) {
-    try {
-      // Get number of wallets from storage
-      const { wallets = [] } = await chrome.storage.sync.get(['wallets']);
-      const usedSlots = wallets.length;
-      
-      // Update all UI elements showing slot count
-      const slotCountElements = document.querySelectorAll('.slot-count');
-      slotCountElements.forEach(element => {
-        element.textContent = `${usedSlots}/${slots}`;
-      });
-      
-      // Notify background script to update popup
-      chrome.runtime.sendMessage({ type: 'SLOTS_UPDATED', slots, usedSlots });
-    } catch (error) {
-      console.error('Error updating UI:', error);
-    }
-  }
-
-  async startSync(userId) {
-    // Clear any existing sync interval
-    if (this.syncInterval) {
-      clearInterval(this.syncInterval);
-    }
-    
-    // Sync immediately
-    await this.getSlots(userId);
-    
-    // Then sync every minute
-    this.syncInterval = setInterval(() => {
-      this.getSlots(userId);
-    }, 60000);
-  }
-
-  stopSync() {
-    if (this.syncInterval) {
-      clearInterval(this.syncInterval);
-      this.syncInterval = null;
-    }
-  }
-}
-
 async function updateSlotCount() {
   try {
     // Get total slots from sync storage
@@ -3544,15 +3439,31 @@ async function updateUI(slots) {
 
 // Get user's Google ID from storage
 async function getUserId() {
-  return new Promise((resolve, reject) => {
-    chrome.storage.sync.get(['userId'], function(result) {
-      if (chrome.runtime.lastError) {
-        reject(chrome.runtime.lastError);
-      } else if (!result.userId) {
-        reject(new Error('User ID not found in storage'));
-      } else {
-        resolve(result.userId);
-      }
-    });
-  });
+  const userInfo = await chrome.storage.sync.get(['userInfo']);
+  if (!userInfo.userInfo || !userInfo.userInfo.id) {
+    throw new Error('Please sign in with Google first');
+  }
+  return userInfo.userInfo.id;
+}
+
+// Rate limiting for storage operations
+const STORAGE_RATE_LIMIT = {
+  operations: 0,
+  lastReset: Date.now(),
+  maxOperations: 30, // Maximum operations per minute
+  resetInterval: 60000, // Reset counter every minute
+};
+
+async function rateLimit() {
+  const now = Date.now();
+  if (now - STORAGE_RATE_LIMIT.lastReset >= STORAGE_RATE_LIMIT.resetInterval) {
+    STORAGE_RATE_LIMIT.operations = 0;
+    STORAGE_RATE_LIMIT.lastReset = now;
+  }
+
+  if (STORAGE_RATE_LIMIT.operations >= STORAGE_RATE_LIMIT.maxOperations) {
+    throw new Error('Storage operation rate limit exceeded. Please try again in a minute.');
+  }
+
+  STORAGE_RATE_LIMIT.operations++;
 }
