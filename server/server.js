@@ -20,6 +20,13 @@ const app = express();
 // Trust proxy - required for Heroku
 app.set('trust proxy', 1);
 
+// Enable CORS for all routes
+app.use(cors({
+  origin: '*', // Since this is a Chrome extension, we need to allow all origins
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Origin']
+}));
+
 const port = process.env.PORT || 3000;
 const BLOCKFROST_API_KEY = process.env.BLOCKFROST_API_KEY;
 const BLOCKFROST_BASE_URL = 'https://cardano-mainnet.blockfrost.io/api/v0';

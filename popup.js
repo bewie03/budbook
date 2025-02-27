@@ -153,17 +153,17 @@ const slotManager = new SlotManager();
 async function fetchWalletData(address) {
   try {
     console.log('Fetching data for address:', address);
-    const response = await fetch(`${API_BASE_URL}/api/wallet/${address}`, {
+    const response = await fetch(`${API_BASE_URL}/api/wallet/${encodeURIComponent(address)}`, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Origin': chrome.runtime.getURL('')
-      }
+        'Content-Type': 'application/json'
+      },
+      credentials: 'omit' // Don't send credentials for cross-origin requests
     });
     
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
+      const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
       throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
     }
     
@@ -173,7 +173,13 @@ async function fetchWalletData(address) {
     // Fetch staking info if we have a stake address
     if (data.stake_address) {
       try {
-        const stakingResponse = await fetch(`${API_BASE_URL}/api/accounts/${data.stake_address}`);
+        const stakingResponse = await fetch(`${API_BASE_URL}/api/accounts/${encodeURIComponent(data.stake_address)}`, {
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          credentials: 'omit'
+        });
         if (stakingResponse.ok) {
           data.stakingInfo = await stakingResponse.json();
         }
@@ -1043,6 +1049,8 @@ async function addWallet() {
       showError('A wallet with this name already exists');
       return;
     }
+
+    setLoading(document.getElementById('addWalletBtn'), true);
     
     // Create new wallet object
     const newWallet = {
@@ -1050,17 +1058,14 @@ async function addWallet() {
       name,
       walletType,
       customIcon: walletType === 'Custom' ? customIconData : null,
-      addedAt: Date.now()
+      addedAt: Date.now(),
+      balance: null, // Will be populated later
+      assets: [], // Will be populated later
+      stakingInfo: null // Will be populated later
     };
-    
-    // Fetch initial wallet data
-    const walletData = await fetchWalletData(address);
-    Object.assign(newWallet, walletData);
-    
-    // Add to wallets array
+
+    // Add the wallet immediately
     wallets.push(newWallet);
-    
-    // Save to storage
     await saveWallets();
     
     // Clear form
@@ -1068,28 +1073,23 @@ async function addWallet() {
     nameInput.value = '';
     walletTypeSelect.value = 'None';
     customIconData = null;
+    document.getElementById('customIconPreview').src = WALLET_LOGOS['None'];
     
     // Update UI
-    await updateUI();
+    await renderWallets();
     showSuccess('Wallet added successfully');
 
-    // Notify fullview to refresh
-    chrome.tabs.query({}, function(tabs) {
-      tabs.forEach(function(tab) {
-        if (tab.url && tab.url.includes('fullview.html')) {
-          chrome.tabs.sendMessage(tab.id, { action: 'REFRESH_ALL_WALLETS' });
-        }
-      });
+    // Fetch wallet details in the background
+    fetchWalletData(address).catch(error => {
+      console.error('Error fetching initial wallet data:', error);
+      // Don't show error to user since the wallet is already added
     });
 
-    // Close add wallet form
-    const addWalletForm = document.getElementById('addWalletForm');
-    if (addWalletForm) {
-      addWalletForm.style.display = 'none';
-    }
   } catch (error) {
     console.error('Error adding wallet:', error);
-    showError(error.message || 'Failed to add wallet');
+    showError('Failed to add wallet');
+  } finally {
+    setLoading(document.getElementById('addWalletBtn'), false);
   }
 }
 
