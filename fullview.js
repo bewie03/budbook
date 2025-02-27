@@ -2390,7 +2390,7 @@ class SlotManager {
     // Update all UI elements showing slot count
     const slotCountElements = document.querySelectorAll('.slot-count');
     slotCountElements.forEach(element => {
-      element.textContent = slots;
+      element.textContent = `${slots}/${MAX_TOTAL_SLOTS}`;
     });
     
     // Notify background script to update popup
