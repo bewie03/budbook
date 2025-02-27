@@ -433,8 +433,14 @@ app.get('/api/slots/:userId', async (req, res) => {
     // Read from slots.json first
     const slotsData = await fs.readFile(path.join(__dirname, 'slots.json'), 'utf8');
     const slotsJson = JSON.parse(slotsData);
-    const userSlots = slotsJson[userId] || slotsJson.default || MAX_FREE_SLOTS;
     
+    // If user doesn't exist, add them with default slots
+    if (!slotsJson[userId]) {
+      slotsJson[userId] = slotsJson.default;
+      await fs.writeFile(path.join(__dirname, 'slots.json'), JSON.stringify(slotsJson, null, 2));
+    }
+    
+    const userSlots = slotsJson[userId];
     console.log('Returning slots for user:', { userId, slots: userSlots });
     res.json({ slots: userSlots });
   } catch (error) {
