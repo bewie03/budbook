@@ -2,17 +2,13 @@
 import { auth } from './js/auth.js';
 
 // Constants
-const MAX_FREE_SLOTS = 5;
-const SLOTS_PER_PAYMENT = 5;
-const MAX_TOTAL_SLOTS = 500;
-const DEFAULT_PURCHASED_SLOTS = 35; // Default number of slots purchased by users
-const BONE_PAYMENT_AMOUNT = 100;
+const MAX_FREE_SLOTS = 0; // Start with 0 slots
+const SLOTS_PER_PAYMENT = 100; // Get 100 slots per payment
+const MAX_TOTAL_SLOTS = 1000; // Maximum slots allowed
+const ADA_PAYMENT_AMOUNT = 2; // 2 ADA payment required
 const API_BASE_URL = 'https://budbook-2410440cbb61.herokuapp.com';
-const MAX_STORED_ASSETS = 5; // Store only top 5 assets by value
 const ADA_LOVELACE = 1000000; // 1 ADA = 1,000,000 Lovelace
-const BONE_POLICY_ID = ''; // Add your BONE token policy ID here
-const BONE_ASSET_NAME = ''; // Add your BONE token asset name here
-const CACHE_DURATION = 300000; // 5 minutes
+const REQUIRED_PAYMENT = ADA_PAYMENT_AMOUNT * ADA_LOVELACE; // Payment in lovelace
 
 // Available wallet logos
 const WALLET_LOGOS = {
@@ -34,115 +30,86 @@ let wallets = [];
 let currentPaymentId = null;
 let eventSource = null;
 let customIconData = null;
+let userSlots = 0;
+let isAuthenticated = false;
 
 // Slot Manager class definition
 class SlotManager {
   async syncWithServer(userId) {
     try {
-      // First try to get slots from storage
-      const { totalSlots } = await chrome.storage.sync.get(['totalSlots']);
-      
-      try {
-        // Then try to sync with server
-        const response = await fetch(`${API_BASE_URL}/api/slots/${userId}`, {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-            'Origin': chrome.runtime.getURL('')
-          }
-        });
-        
-        if (!response.ok) {
-          if (response.status === 429) {
-            console.log('Rate limited, using stored slot count:', totalSlots);
-            return totalSlots || DEFAULT_PURCHASED_SLOTS;
-          }
-          throw new Error(`HTTP error! status: ${response.status}`);
+      const response = await fetch(`${API_BASE_URL}/api/user/status`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${await auth.getToken()}`
         }
-        
-        const data = await response.json();
-        console.log('Received slot data:', data);
-        
-        // Update available slots in storage
-        const newSlots = data.slots;
-        await chrome.storage.sync.set({ totalSlots: newSlots });
-        
-        return newSlots;
-      } catch (error) {
-        // If server sync fails, fall back to stored value
-        console.log('Server sync failed, using stored slot count:', totalSlots);
-        return totalSlots || DEFAULT_PURCHASED_SLOTS;
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
+      
+      const data = await response.json();
+      console.log('Received user status:', data);
+      
+      // Update global state
+      userSlots = data.slots;
+      isAuthenticated = true;
+      
+      return data.slots;
     } catch (error) {
-      console.error('Error syncing slots:', error);
-      return DEFAULT_PURCHASED_SLOTS; // Default fallback
+      console.error('Error syncing with server:', error);
+      return userSlots;
     }
   }
 
-  async addSlots(slots) {
+  async addSlots() {
     try {
-      const userId = await auth.getUserId();
-      if (!userId) {
-        console.error('No user ID found');
-        return MAX_FREE_SLOTS;
+      if (!isAuthenticated) {
+        throw new Error('Please log in with Google first');
       }
 
-      // First update local storage optimistically
-      const { totalSlots } = await chrome.storage.sync.get(['totalSlots']);
-      const newCount = (totalSlots || MAX_FREE_SLOTS) + slots;
-      await chrome.storage.sync.set({ totalSlots: newCount });
-
-      try {
-        // Then try to sync with server
-        const response = await fetch(`${API_BASE_URL}/api/add-slots/${userId}`, {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'Origin': chrome.runtime.getURL('')
-          },
-          body: JSON.stringify({ slots })
-        });
-
-        const data = await response.json();
-        
-        if (!response.ok) {
-          throw new Error(data.error || `Server error: ${response.status}`);
+      // Generate payment ID
+      const response = await fetch(`${API_BASE_URL}/api/payments/initiate`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await auth.getToken()}`
         }
+      });
 
-        // Update with server's slot count
-        const serverSlots = data.slots;
-        await chrome.storage.sync.set({ totalSlots: serverSlots });
-        
-        return serverSlots;
-      } catch (error) {
-        console.error('Server sync failed, keeping local slot count:', newCount);
-        return newCount;
+      if (!response.ok) {
+        throw new Error('Failed to initiate payment');
       }
+
+      const data = await response.json();
+      currentPaymentId = data.paymentId;
+
+      // Start payment status check
+      this.checkPaymentStatus(data.paymentId);
+
+      return {
+        paymentAddress: data.paymentAddress,
+        requiredAmount: ADA_PAYMENT_AMOUNT,
+        message: `Send exactly ${ADA_PAYMENT_AMOUNT} ADA to get ${SLOTS_PER_PAYMENT} slots`
+      };
     } catch (error) {
-      console.error('Error adding slots:', error);
-      return MAX_FREE_SLOTS;
+      console.error('Error initiating payment:', error);
+      throw error;
     }
   }
 
   async getTotalSlots() {
-    try {
-      const { totalSlots } = await chrome.storage.sync.get(['totalSlots']);
-      return totalSlots || MAX_FREE_SLOTS;
-    } catch (error) {
-      console.error('Error getting total slots:', error);
+    if (!isAuthenticated) {
       return MAX_FREE_SLOTS;
     }
+    return userSlots;
   }
 
   async getAvailableSlots() {
-    try {
-      const totalSlots = await this.getTotalSlots(); // Use getTotalSlots which has proper fallback
-      return Math.max(0, totalSlots - wallets.length);
-    } catch (error) {
-      console.error('Error getting available slots:', error);
-      return Math.max(0, MAX_FREE_SLOTS - wallets.length);
-    }
+    const totalSlots = await this.getTotalSlots();
+    return Math.max(0, totalSlots - wallets.length);
   }
 }
 

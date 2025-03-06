@@ -4,75 +4,197 @@ const fetch = require('node-fetch');
 const dotenv = require('dotenv');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
-const NodeCache = require('node-cache');
-const crypto = require('crypto');
-const fs = require('fs').promises;
+const db = require('./db');
+const auth = require('./auth/google');
 
 dotenv.config();
 
-// Slot configuration
-const MAX_FREE_SLOTS = 5;
-const SLOTS_PER_PAYMENT = 5;
-const MAX_TOTAL_SLOTS = 500;
-
 const app = express();
+const port = process.env.PORT || 3000;
+
+// Constants
+const BLOCKFROST_API_KEY = process.env.BLOCKFROST_API_KEY;
+const BLOCKFROST_BASE_URL = 'https://cardano-mainnet.blockfrost.io/api/v0';
+const PAYMENT_ADDRESS = process.env.PAYMENT_ADDRESS;
+const REQUIRED_ADA_PAYMENT = 2; // 2 ADA required for activation
+const SLOTS_PER_PAYMENT = 100; // Get 100 slots per payment
+const BLOCKFROST_WEBHOOK_ID = process.env.BLOCKFROST_WEBHOOK_ID;
+const BLOCKFROST_WEBHOOK_TOKEN = process.env.BLOCKFROST_WEBHOOK_TOKEN;
 
 // Trust proxy - required for Heroku
 app.set('trust proxy', 1);
 
 // Enable CORS for all routes
 app.use(cors({
-  origin: '*', // Since this is a Chrome extension, we need to allow all origins
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Origin']
 }));
 
-const port = process.env.PORT || 3000;
-const BLOCKFROST_API_KEY = process.env.BLOCKFROST_API_KEY;
-const BLOCKFROST_BASE_URL = 'https://cardano-mainnet.blockfrost.io/api/v0';
-const PAYMENT_ADDRESS = process.env.PAYMENT_ADDRESS;
-const REQUIRED_BONE_PAYMENT = parseInt(process.env.REQUIRED_BONE_PAYMENT || 1);
-const BLOCKFROST_WEBHOOK_ID = process.env.BLOCKFROST_WEBHOOK_ID;
-const BLOCKFROST_WEBHOOK_TOKEN = process.env.BLOCKFROST_WEBHOOK_TOKEN;
-const BONE_POLICY_ID = process.env.BONE_POLICY_ID;
-const BONE_ASSET_NAME = process.env.BONE_ASSET_NAME;
-
-// Initialize cache with 1 hour TTL
-const cache = new NodeCache({ stdTTL: 3600 });
-
-// Helper functions for Cache
-function getFromCache(key) {
-    const value = cache.get(key);
-    console.log('Getting from cache:', { key, value });
-    return value;
-}
-
-function setInCache(key, value, ttl = 3600) {
-    console.log('Setting in cache:', { key, value });
-    return cache.set(key, value, ttl);
-}
-
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100
 });
 
 app.use(limiter);
+app.use(express.json());
 
-// Configure CORS for Chrome extension
-app.use(cors({
-  origin: '*', // Allow all origins in development
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type', 'Blockfrost-Signature', 'Origin', 'Accept']
-}));
+// Authentication middleware
+const requireAuth = async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split('Bearer ')[1];
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
 
-app.use(express.json({
-  verify: (req, res, buf) => {
-    // Store raw body for webhook signature verification
-    req.rawBody = buf.toString();
+    const user = await auth.verifyGoogleToken(token);
+    req.user = user;
+    next();
+  } catch (error) {
+    console.error('Auth error:', error);
+    res.status(401).json({ error: 'Invalid token' });
   }
-}));
+};
+
+// Auth endpoints
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const { token } = req.body;
+    const userStatus = await auth.verifyGoogleToken(token);
+    
+    // Return user status with payment info if needed
+    res.json({
+      user: userStatus,
+      message: userStatus.needsPayment ? 
+        `Please send ${REQUIRED_ADA_PAYMENT} ADA to unlock ${SLOTS_PER_PAYMENT} wallet slots` : 
+        `Account activated with ${SLOTS_PER_PAYMENT} slots`
+    });
+  } catch (error) {
+    console.error('Google auth error:', error);
+    res.status(401).json({ error: 'Authentication failed' });
+  }
+});
+
+// Get user status and slot info
+app.get('/api/user/status', requireAuth, async (req, res) => {
+  try {
+    const status = await auth.checkPaymentStatus(req.user.id);
+    res.json({
+      ...status,
+      message: status.paid ? 
+        `You have ${status.slots} slots available` : 
+        `Send ${REQUIRED_ADA_PAYMENT} ADA to unlock ${SLOTS_PER_PAYMENT} slots`
+    });
+  } catch (error) {
+    console.error('Error getting user status:', error);
+    res.status(500).json({ error: 'Failed to get user status' });
+  }
+});
+
+// Generate payment ID for tracking
+app.post('/api/payments/initiate', requireAuth, async (req, res) => {
+  try {
+    // Check if user has already paid
+    const status = await auth.checkPaymentStatus(req.user.id);
+    if (status.paid) {
+      return res.status(400).json({ 
+        error: 'Already activated',
+        message: 'Your account is already activated with 100 slots'
+      });
+    }
+
+    // Generate new payment tracking ID
+    const payment = await auth.generatePaymentId(req.user.id);
+    res.json({
+      ...payment,
+      message: `Please send exactly ${REQUIRED_ADA_PAYMENT} ADA to ${payment.paymentAddress}`,
+      note: 'Your slots will be unlocked automatically after payment confirmation'
+    });
+  } catch (error) {
+    console.error('Error initiating payment:', error);
+    res.status(500).json({ error: 'Failed to initiate payment' });
+  }
+});
+
+// Manual payment verification endpoint
+app.post('/api/payments/verify/:paymentId', requireAuth, async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const result = await auth.verifyPayment(paymentId);
+    res.json({
+      ...result,
+      message: `Payment verified! You now have ${SLOTS_PER_PAYMENT} wallet slots available.`
+    });
+  } catch (error) {
+    console.error('Error verifying payment:', error);
+    res.status(500).json({ error: 'Failed to verify payment' });
+  }
+});
+
+// Wallet management endpoints
+app.post('/api/wallets', requireAuth, async (req, res) => {
+  try {
+    const { address, label } = req.body;
+    
+    // Validate address
+    if (!isValidCardanoAddress(address)) {
+      return res.status(400).json({ error: 'Invalid Cardano address' });
+    }
+
+    const wallet = await db.addWallet(req.user.id, address, label);
+    res.json(wallet);
+  } catch (error) {
+    console.error('Error adding wallet:', error);
+    res.status(500).json({ error: 'Failed to add wallet' });
+  }
+});
+
+app.get('/api/wallets', requireAuth, async (req, res) => {
+  try {
+    const wallets = await db.getUserWallets(req.user.id);
+    res.json(wallets);
+  } catch (error) {
+    console.error('Error getting wallets:', error);
+    res.status(500).json({ error: 'Failed to get wallets' });
+  }
+});
+
+// Webhook endpoint for transaction monitoring
+app.post('/webhook', async (req, res) => {
+  try {
+    const signature = req.headers['blockfrost-signature'];
+    if (!verifyBlockfrostSignature(signature, req.rawBody, BLOCKFROST_WEBHOOK_TOKEN)) {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+
+    const { type, payload } = req.body;
+    if (type === 'transaction') {
+      const txHash = payload.tx.hash;
+      const tx = await fetchBlockfrost(`/txs/${txHash}`);
+      
+      // Process transaction outputs
+      for (const output of tx.outputs) {
+        if (output.address === PAYMENT_ADDRESS) {
+          const lovelaceAmount = output.amount.find(a => a.unit === 'lovelace')?.quantity || 0;
+          const adaAmount = parseInt(lovelaceAmount) / 1000000;
+          
+          if (adaAmount >= REQUIRED_ADA_PAYMENT) {
+            const payment = await db.confirmPayment(txHash);
+            if (payment) {
+              await db.updatePaymentStatus(payment.user_id, true);
+            }
+          }
+        }
+      }
+    }
+
+    res.json({ status: 'ok' });
+  } catch (error) {
+    console.error('Webhook error:', error);
+    res.status(500).json({ error: 'Webhook processing failed' });
+  }
+});
 
 // Test webhook endpoint
 app.post('/test-webhook', express.json(), (req, res) => {
@@ -512,8 +634,8 @@ async function updateUserSlots(userId, additionalSlots) {
     const slotsJson = JSON.parse(slotsData);
     
     // Calculate new slots
-    const currentSlots = slotsJson[userId] || slotsJson.default || MAX_FREE_SLOTS;
-    const newSlots = Math.min(currentSlots + additionalSlots, MAX_TOTAL_SLOTS);
+    const currentSlots = slotsJson[userId] || slotsJson.default || 5;
+    const newSlots = Math.min(currentSlots + additionalSlots, 500);
     
     // Update slots.json
     slotsJson[userId] = newSlots;
@@ -561,7 +683,7 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
     // Store payment details with user ID
     const payment = {
       userId,
-      boneAmount: REQUIRED_BONE_PAYMENT,
+      boneAmount: 1,
       adaAmount: lovelaceAmount,
       timestamp: Date.now(),
       verified: false
@@ -580,7 +702,7 @@ app.post('/api/initiate-payment', express.json(), async (req, res) => {
       paymentId,
       address: PAYMENT_ADDRESS,
       adaAmount: adaAmount,
-      boneAmount: REQUIRED_BONE_PAYMENT
+      boneAmount: 1
     });
 
   } catch (error) {
@@ -725,7 +847,7 @@ async function verifyPayment(txHash, retryCount = 0) {
                 await setInCache(key, payment);
                 
                 // Update user slots
-                const currentSlots = await updateUserSlots(payment.userId, SLOTS_PER_PAYMENT);
+                const currentSlots = await updateUserSlots(payment.userId, 5);
                 console.log(`Updated slots for user ${payment.userId}: ${currentSlots}`);
                 
                 return true;
@@ -891,21 +1013,69 @@ app.post('/webhook', async (req, res) => {
                         
                         // Process each output
                         for (const output of outputs) {
-                            const lovelaceAmount = output.amount.find(a => a.unit === 'lovelace')?.quantity;
-                            const boneAmount = output.amount.find(a => a.unit === `${BONE_POLICY_ID}${BONE_ASSET_NAME}`)?.quantity;
+                            const lovelaceAmount = parseInt(output.amount.find(a => a.unit === 'lovelace')?.quantity || '0');
+                            const requiredLovelace = REQUIRED_ADA_PAYMENT * 1_000_000; // Convert ADA to lovelace
                             
                             console.log('Payment received:', {
                                 tx: tx.tx.hash,
                                 lovelace: lovelaceAmount,
-                                bone: boneAmount,
+                                required: requiredLovelace,
                                 timestamp: new Date().toISOString()
                             });
 
-        // Verify the payment
-                            const verified = await verifyPayment(tx.tx.hash);
+                            // Check if this is exactly 2 ADA (2_000_000 lovelace)
+                            if (lovelaceAmount === requiredLovelace) {
+                                // Look for payment record with this address
+                                const paymentKey = `payment:${tx.tx.hash}`;
+                                const existingPayment = await getFromCache(paymentKey);
+                                
+                                if (existingPayment && !existingPayment.verified) {
+                                    console.log('Found matching payment record:', existingPayment);
+                                    
+                                    // Update payment status
+                                    const updatedPayment = {
+                                        ...existingPayment,
+                                        verified: true,
+                                        verifiedAt: new Date().toISOString(),
+                                        txHash: tx.tx.hash
+                                    };
+                                    
+                                    // Save verified payment
+                                    await setInCache(paymentKey, updatedPayment);
+                                    
+                                    // Update user's slot count in database
+                                    await db.query(`
+                                        UPDATE users
+                                        SET payment_status = true,
+                                            slot_count = SLOTS_PER_PAYMENT,
+                                            updated_at = CURRENT_TIMESTAMP
+                                        WHERE id = $1
+                                    `, [existingPayment.userId]);
+                                    
+                                    // Notify connected clients about payment verification
+                                    if (global.clients) {
+                                        for (const [clientId, client] of global.clients.entries()) {
+                                            if (client.paymentId === existingPayment.paymentId) {
+                                                try {
+                                                    client.res.write(`data: ${JSON.stringify({
+                                                        verified: true,
+                                                        slots: SLOTS_PER_PAYMENT,
+                                                        message: `Payment verified! You now have ${SLOTS_PER_PAYMENT} wallet slots.`
+                                                    })}\n\n`);
+                                                } catch (error) {
+                                                    console.error('Error notifying client:', error);
+                                                    global.clients.delete(clientId);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             results.push({
                                 txHash: tx.tx.hash,
-                                verified,
+                                amount: lovelaceAmount,
+                                verified: lovelaceAmount === REQUIRED_ADA_PAYMENT * 1_000_000,
                                 timestamp: new Date().toISOString()
                             });
                         }
